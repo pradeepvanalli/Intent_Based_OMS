@@ -1,0 +1,11 @@
+# gitleaks false positives, reviewed by hand. Format: <file>:<rule-id>:<start-line> (commit-agnostic).
+# Re-verify with `gitleaks detect --source . --no-git` after editing either flagged line; update the line
+# number here if the finding moves.
+
+# Synthetic 44-char value used only to exercise ProductionReadinessCheck's "is this a real-looking prod
+# secret, not a dev default" validation. Not a credential for any real system.
+backend/oms-app/src/test/java/ai/intentoms/app/ProductionReadinessCheckTest.java:generic-api-key:32
+
+# A gap-analysis table cell mentioning CI scanning tools by name trips the generic-api-key entropy
+# heuristic on ordinary English prose. No secret value present.
+docs/GAP_ANALYSIS.md:generic-api-key:18

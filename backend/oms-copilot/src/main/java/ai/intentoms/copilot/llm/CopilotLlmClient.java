@@ -106,7 +106,7 @@ public class CopilotLlmClient {
     private HttpResult post(String body) {
         return client.post().uri("/chat/completions")
             .header("Authorization", "Bearer " + props.apiKey())
-            .header("HTTP-Referer", "https://github.com/intentoms/intent-oms")
+            .header("HTTP-Referer", "https://github.com/pradeepvanalli/Intent_Based_OMS")
             .header("X-Title", "Intent OMS Copilot")
             .contentType(MediaType.APPLICATION_JSON).body(body)
             .exchange((rq, rs) -> new HttpResult(rs.getStatusCode().value(), new String(rs.getBody().readAllBytes(), StandardCharsets.UTF_8)), false);

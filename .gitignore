@@ -11,3 +11,4 @@ ui/node_modules/
 backend/oms-app/src/main/resources/static/
 .oms/
 __pycache__/
+*.tsbuildinfo

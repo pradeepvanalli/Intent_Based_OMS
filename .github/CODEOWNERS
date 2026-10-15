@@ -1,0 +1,8 @@
+# Default owner for everything not matched below. See docs/GOVERNANCE.md for how review and merge rights evolve
+# as the project gains maintainers.
+*       @pradeepvanalli
+
+# Security-sensitive areas get an extra look even after there are other maintainers.
+/SECURITY.md                                   @pradeepvanalli
+/backend/oms-platform/src/main/java/ai/intentoms/platform/security/   @pradeepvanalli
+/.github/workflows/                            @pradeepvanalli

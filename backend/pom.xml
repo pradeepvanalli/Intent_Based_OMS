@@ -42,6 +42,7 @@
     <java.version>21</java.version>
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <surefire.argLine>-XX:+EnableDynamicAgentLoading -Xshare:off</surefire.argLine>
     <cel.version>0.14.0</cel.version>
     <caffeine.version>3.2.3</caffeine.version>
     <bucket4j.version>8.21.0</bucket4j.version>
@@ -91,7 +92,9 @@
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-surefire-plugin</artifactId>
           <configuration>
-            <argLine>-XX:+EnableDynamicAgentLoading -Xshare:off</argLine>
+            <!-- surefire.argLine has a default below; override per-environment, e.g. on a smaller CI runner:
+                 mvn -Dsurefire.argLine="-Xmx1500m -XX:+EnableDynamicAgentLoading -Xshare:off" verify -->
+            <argLine>${surefire.argLine}</argLine>
           </configuration>
         </plugin>
         <plugin>

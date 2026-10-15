@@ -38,15 +38,15 @@ jobs:
         ports: ["5440:5432"]
         options: --health-cmd "pg_isready -U oms" --health-interval 5s --health-timeout 3s --health-retries 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with: { node-version: "22", cache: npm, cache-dependency-path: ui/package-lock.json }
       - name: UI lint, test, build
         working-directory: ui
         run: npm ci --no-audit --no-fund && npm run lint && npm test -- --run && npm run build
       - name: Copy UI into the backend static folder
         run: rm -rf backend/oms-app/src/main/resources/static && mkdir -p backend/oms-app/src/main/resources/static && cp -R ui/dist/. backend/oms-app/src/main/resources/static/
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with: { distribution: temurin, java-version: "21", cache: maven }
       - name: Backend verify (tests) + SBOM
         working-directory: backend
@@ -63,9 +63,9 @@ jobs:
           for f in backend/target/sbom*.json backend/target/sbom*.xml; do [ -f "$f" ] && cp "$f" "dist/$(basename "${f%.*}")-${V}.${f##*.}"; done
           ( cd dist && sha256sum * > "SHA256SUMS-${V}.txt" )
           ls -la dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: release-assets, path: dist/*, if-no-files-found: error }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with: { name: surefire-reports, path: backend/**/target/surefire-reports/*.xml, if-no-files-found: ignore }
 
@@ -76,16 +76,16 @@ jobs:
     outputs:
       digest: ${{ steps.push.outputs.digest }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Lowercase image name (GHCR requires it; github.repository preserves case)
         run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       - name: Image tags
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE }}
           flavor: latest=false
@@ -101,7 +101,7 @@ jobs:
             org.opencontainers.image.licenses=Apache-2.0
       - name: Build and push (linux/amd64, linux/arm64)
         id: push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: backend/oms-app/Dockerfile
@@ -118,14 +118,14 @@ jobs:
           sbom: true
       - name: Build provenance attestation
         continue-on-error: true
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
       - name: cosign keyless signature (optional)
         continue-on-error: true
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@v4
       - name: Sign the image (keyless, Sigstore)
         continue-on-error: true
         env: { COSIGN_YES: "true" }
@@ -134,13 +134,13 @@ jobs:
           echo "verify with: cosign verify ${IMAGE}@${{ steps.push.outputs.digest }} --certificate-identity-regexp '^https://github.com/${{ github.repository }}/' --certificate-oidc-issuer https://token.actions.githubusercontent.com"
       - name: Image SBOM (CycloneDX, from the pushed image)
         continue-on-error: true
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE }}@${{ steps.push.outputs.digest }}
           format: cyclonedx
           output: sbom-image-${{ env.VERSION }}.cdx.json
           exit-code: "0"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: sbom-image, path: sbom-image-*.cdx.json, if-no-files-found: ignore }
 
   release:
@@ -148,12 +148,12 @@ jobs:
     needs: [build-test, image]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Lowercase image name (GHCR requires it; github.repository preserves case) — same fix as the image job, which runs in its own environment
         run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: release-assets, path: dist }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         continue-on-error: true
         with: { name: sbom-image, path: dist }
       - name: Release notes
@@ -180,7 +180,7 @@ jobs:
             echo "Full changelog: ${{ github.server_url }}/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md · Upgrade notes: docs/DEPLOYMENT.md §10"
           } > notes.md
           cat notes.md
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.VERSION }}
           name: Intent OMS ${{ env.VERSION }}

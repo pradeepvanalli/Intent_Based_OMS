@@ -17,21 +17,26 @@ jobs:
         ports: ["5440:5432"]
         options: --health-cmd "pg_isready -U oms" --health-interval 5s --health-timeout 3s --health-retries 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with: { distribution: temurin, java-version: '21', cache: maven }
       - name: Build and test
         working-directory: backend
-        run: mvn -B -ntp verify
-      - uses: actions/upload-artifact@v4
+        # GitHub-hosted runners are 2-core/7GB; a 16-module Spring Boot Reactor build with many per-class
+        # application contexts can OOM or thrash well below that on a developer machine. Cap the Reactor's
+        # own JVM and each forked Surefire JVM explicitly rather than relying on JVM defaults.
+        env:
+          MAVEN_OPTS: -Xmx2g
+        run: mvn -B -ntp "-Dsurefire.argLine=-Xmx1500m -XX:+EnableDynamicAgentLoading -Xshare:off" verify
+      - uses: actions/upload-artifact@v7
         if: always()
         with: { name: surefire-reports, path: backend/**/target/surefire-reports/*.xml }
 
   ui:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with: { node-version: '22', cache: npm, cache-dependency-path: ui/package-lock.json }
       - working-directory: ui
         run: npm ci && npm run lint && npm test -- --run && npm run build
@@ -44,9 +49,9 @@ jobs:
     name: gitleaks secret scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 }   # scan full history
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true"
@@ -55,9 +60,9 @@ jobs:
     name: trivy fs (dependencies, IaC, secrets)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Trivy filesystem scan (SARIF)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -67,11 +72,11 @@ jobs:
           format: sarif
           output: trivy-fs.sarif
           exit-code: "0"
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: github/codeql-action/upload-sarif@v4
         if: always()
         with: { sarif_file: trivy-fs.sarif, category: trivy-fs }
       - name: Trivy filesystem scan (fail on fixable HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -85,8 +90,8 @@ jobs:
     name: CycloneDX SBOM
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with: { distribution: temurin, java-version: '21', cache: maven }
       - name: Generate SBOM (backend, aggregate)
         working-directory: backend
@@ -94,7 +99,7 @@ jobs:
       - name: Generate SBOM (ui)
         working-directory: ui
         run: npx --yes @cyclonedx/cyclonedx-npm --output-format JSON --output-file ../backend/target/sbom-ui.cdx.json --ignore-npm-errors || echo "ui sbom skipped"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sbom
           path: |
@@ -108,11 +113,11 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/build-push-action@v6
+      - uses: actions/checkout@v7
+      - uses: docker/build-push-action@v7
         with: { context: ., file: backend/oms-app/Dockerfile, push: false, load: true, tags: "intent-oms:${{ github.sha }}" }
       - name: Trivy image scan (SARIF)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: intent-oms:${{ github.sha }}
           severity: HIGH,CRITICAL
@@ -120,11 +125,11 @@ jobs:
           format: sarif
           output: trivy-image.sarif
           exit-code: "0"
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: github/codeql-action/upload-sarif@v4
         if: always()
         with: { sarif_file: trivy-image.sarif, category: trivy-image }
       - name: Trivy image scan (fail on fixable HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: intent-oms:${{ github.sha }}
           severity: HIGH,CRITICAL
@@ -132,11 +137,11 @@ jobs:
           format: table
           exit-code: "1"
       - name: Image SBOM
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: intent-oms:${{ github.sha }}
           format: cyclonedx
           output: sbom-image.cdx.json
           exit-code: "0"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: sbom-image, path: sbom-image.cdx.json }

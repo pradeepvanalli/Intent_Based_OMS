@@ -1,0 +1,27 @@
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /backend
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 10
+    groups:
+      spring:
+        patterns: ["org.springframework*"]
+      testing:
+        patterns: ["org.testcontainers*", "org.junit*", "org.mockito*", "org.assertj*"]
+
+  - package-ecosystem: npm
+    directory: /ui
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 10
+    groups:
+      dev-dependencies:
+        dependency-type: development
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+
+  - package-ecosystem: docker
+    directory: /backend/oms-app
+    schedule: { interval: weekly }

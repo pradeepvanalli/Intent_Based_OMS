@@ -47,7 +47,7 @@ public class OpenAiCompatibleDecisionProvider implements DecisionProvider {
         try {
             res = HttpSupport.withBudget(NAME, budget, () -> client.post().uri("/chat/completions")
                 .header("Authorization", "Bearer " + props.openaiApiKey())
-            .header("HTTP-Referer", "https://github.com/intentoms/intent-oms")
+            .header("HTTP-Referer", "https://github.com/pradeepvanalli/Intent_Based_OMS")
             .header("X-Title", "Intent OMS").contentType(MediaType.APPLICATION_JSON).body(body)
                 .exchange((rq, rs) -> new HttpSupport.HttpResult(rs.getStatusCode().value(), new String(rs.getBody().readAllBytes(), StandardCharsets.UTF_8)), false));
         } finally {

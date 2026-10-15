@@ -21,7 +21,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check the site folder
         run: |
           test -f docs/site/index.html || { echo "docs/site/index.html is missing; nothing to publish" >&2; exit 1; }
@@ -31,8 +31,8 @@ jobs:
           cp docs/images/*.png docs/site/images/ 2>/dev/null || true
           touch docs/site/.nojekyll   # serve files and folders starting with an underscore as-is
           du -sh docs/site
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
         with: { path: docs/site }
 
   deploy:
@@ -43,4 +43,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

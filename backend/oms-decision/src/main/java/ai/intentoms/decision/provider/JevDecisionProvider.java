@@ -71,7 +71,7 @@ public class JevDecisionProvider implements DecisionProvider {
     private HttpSupport.HttpResult post(String body) {
         return client.post().uri("/v1/systemone")
             .header("Authorization", "Bearer " + props.apiKey())
-            .header("HTTP-Referer", "https://github.com/intentoms/intent-oms")   // OpenRouter attribution (ignored by TypeSafe)
+            .header("HTTP-Referer", "https://github.com/pradeepvanalli/Intent_Based_OMS")   // OpenRouter attribution (ignored by TypeSafe)
             .header("X-Title", "Intent OMS")
             .contentType(MediaType.APPLICATION_JSON)
             .body(body)
