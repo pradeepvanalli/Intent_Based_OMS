@@ -11,8 +11,8 @@ Work top to bottom. Nothing below "Make the repository public" happens until eve
 - [ ] Run gitleaks locally before the first push (`gitleaks detect --source .`); CI runs it too but the first push is
       what gets indexed.
 - [ ] Remove `.DS_Store` files and add `.DS_Store` to `.gitignore`.
-- [x] GitHub org/repo decided and wired in: `github.com/pradeepvanalli/Invent_Based_OMS`, image
-      `ghcr.io/pradeepvanalli/invent_based_oms` (GHCR requires lowercase; the exact-case repo name is preserved only
+- [x] GitHub org/repo decided and wired in: `github.com/pradeepvanalli/Intent_Based_OMS`, image
+      `ghcr.io/pradeepvanalli/intent_based_oms` (GHCR requires lowercase; the exact-case repo name is preserved only
       in GitHub URLs). Verify no stray placeholder remains before every future release:
       `grep -rln "intent-oms/intent-oms" . --exclude-dir=.git --exclude-dir=node_modules`.
 - [ ] Replace the LinkedIn placeholder (`REPLACE_ME`) in `README.md`, `docs/site/index.html`,

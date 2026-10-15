@@ -2,7 +2,7 @@
  * Outbound links. Change REPO_URL when the project moves; everything else derives from it.
  * The placeholder below is replaced before the open-source launch.
  */
-export const REPO_URL = 'https://github.com/pradeepvanalli/Invent_Based_OMS';
+export const REPO_URL = 'https://github.com/pradeepvanalli/Intent_Based_OMS';
 export const DOCS_URL = `${REPO_URL}/blob/main/docs`;
 export const DISCUSSIONS_URL = `${REPO_URL}/discussions`;
 export const ISSUES_URL = `${REPO_URL}/issues`;

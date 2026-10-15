@@ -25,7 +25,7 @@ RUN --mount=type=cache,target=/root/.m2 mvn -q -B -ntp -f backend/pom.xml -Dskip
 # see docker-compose.yml `oms` and deploy/k8s/oms.yaml). Config is baked read-only under /config.
 FROM eclipse-temurin:21-jre-alpine
 ARG VERSION=dev
-ARG SOURCE_URL=https://github.com/pradeepvanalli/Invent_Based_OMS
+ARG SOURCE_URL=https://github.com/pradeepvanalli/Intent_Based_OMS
 LABEL org.opencontainers.image.title="Intent OMS" \
       org.opencontainers.image.description="Open-source order management system with typed, explainable AI decisions" \
       org.opencontainers.image.source="${SOURCE_URL}" \

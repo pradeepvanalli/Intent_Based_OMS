@@ -33,5 +33,5 @@ cd /path/to/intent-oms/docs/site && mkdir -p images && cp ../images/*.png images
 * No external scripts, fonts or stylesheets. The page must render offline.
 * Check both colour schemes (`prefers-color-scheme` emulation in the browser devtools) and a 400 px viewport.
 * Numbers on the page must exist in the docs (`docs/DEMO_SAMPLES.md`, `README.md`). Do not invent benchmarks.
-* The repository URL is wired in (`github.com/pradeepvanalli/Invent_Based_OMS`); `REPLACE_ME` (LinkedIn) still needs
+* The repository URL is wired in (`github.com/pradeepvanalli/Intent_Based_OMS`); `REPLACE_ME` (LinkedIn) still needs
   filling in before launch (`docs/launch/LAUNCH_CHECKLIST.md`).

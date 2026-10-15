@@ -58,4 +58,4 @@ owns the policies. The deferred items (EDI, parallel regions, visual designer, S
 ## Next step
 
 Thirty minutes with the person who owns your order flow, and one order export. Repository:
-`https://github.com/pradeepvanalli/Invent_Based_OMS`. LinkedIn: `https://www.linkedin.com/in/REPLACE_ME`.
+`https://github.com/pradeepvanalli/Intent_Based_OMS`. LinkedIn: `https://www.linkedin.com/in/REPLACE_ME`.

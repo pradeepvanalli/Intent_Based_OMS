@@ -1,6 +1,6 @@
 # Deployment
 
-Intent OMS is one stateless JVM service (`intent-oms.jar`, container `ghcr.io/pradeepvanalli/invent_based_oms`) over PostgreSQL
+Intent OMS is one stateless JVM service (`intent-oms.jar`, container `ghcr.io/pradeepvanalli/intent_based_oms`) over PostgreSQL
 16, with Redis optional for the shared promise cache. Horizontal scale is more instances behind a load balancer;
 Postgres row locks and `FOR UPDATE SKIP LOCKED` workers keep every instance stateless (ADR-001). This page covers the
 ways to run it (Compose, Kubernetes with Helm or plain manifests, bare JVM), sizing, the database, secrets, OIDC,
@@ -34,8 +34,8 @@ Without a checkout, `docker-compose.quickstart.yml` runs the **published image**
 PostgreSQL/Redis services and demo settings:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/pradeepvanalli/Invent_Based_OMS/main/docker-compose.quickstart.yml -o docker-compose.yml
-OMS_IMAGE=ghcr.io/pradeepvanalli/invent_based_oms:v0.1.0 docker compose up -d     # OMS_IMAGE defaults to :latest
+curl -fsSL https://raw.githubusercontent.com/pradeepvanalli/Intent_Based_OMS/main/docker-compose.quickstart.yml -o docker-compose.yml
+OMS_IMAGE=ghcr.io/pradeepvanalli/intent_based_oms:v0.1.0 docker compose up -d     # OMS_IMAGE defaults to :latest
 ```
 
 For a production-shaped run use the standalone `docker-compose.prod.yml`:

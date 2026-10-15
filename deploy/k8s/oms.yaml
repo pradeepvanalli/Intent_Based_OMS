@@ -25,7 +25,7 @@ spec:
         - { maxSkew: 1, topologyKey: topology.kubernetes.io/zone, whenUnsatisfiable: ScheduleAnyway, labelSelector: { matchLabels: { app: intent-oms } } }
       containers:
         - name: oms
-          image: ghcr.io/pradeepvanalli/invent_based_oms:latest
+          image: ghcr.io/pradeepvanalli/intent_based_oms:latest
           ports: [{ containerPort: 8080 }]
           securityContext:
             allowPrivilegeEscalation: false

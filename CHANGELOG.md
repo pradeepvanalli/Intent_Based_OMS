@@ -85,5 +85,5 @@ Initial public release.
   crypto-shredding.
 * React operator UI, demo tenant with five scripted scenarios, k6 load test, Kubernetes reference manifests.
 
-[Unreleased]: https://github.com/pradeepvanalli/Invent_Based_OMS/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/pradeepvanalli/Invent_Based_OMS/releases/tag/v0.1.0
+[Unreleased]: https://github.com/pradeepvanalli/Intent_Based_OMS/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/pradeepvanalli/Intent_Based_OMS/releases/tag/v0.1.0

@@ -177,6 +177,6 @@ if [ "$FAILS" -eq 0 ]; then
   exit 0
 else
   bold "$FAILS problem(s) found, $WARNS warning(s). Apply the fixes above and re-run scripts/doctor.sh."
-  echo "  More help: docs/QUICKSTART.md, docs/GETTING_STARTED.md, https://github.com/pradeepvanalli/Invent_Based_OMS/discussions"
+  echo "  More help: docs/QUICKSTART.md, docs/GETTING_STARTED.md, https://github.com/pradeepvanalli/Intent_Based_OMS/discussions"
   exit 1
 fi

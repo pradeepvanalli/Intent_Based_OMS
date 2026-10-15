@@ -7,7 +7,7 @@ replicaCount: 3
 
 image:
   # ghcr.io/<owner>/<repo> as published by .github/workflows/release.yml; "intent-oms" is the placeholder owner.
-  repository: ghcr.io/pradeepvanalli/invent_based_oms
+  repository: ghcr.io/pradeepvanalli/intent_based_oms
   tag: ""            # defaults to .Chart.appVersion; pin by digest below in production
   digest: ""         # e.g. sha256:...; when set it wins over tag
   pullPolicy: IfNotPresent

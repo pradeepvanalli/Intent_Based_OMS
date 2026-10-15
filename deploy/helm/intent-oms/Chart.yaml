@@ -3,14 +3,14 @@ name: intent-oms
 description: Intent OMS - open-source order management system with typed, explainable AI decisions (Java 21 / Spring Boot over PostgreSQL 16)
 type: application
 version: 0.1.0          # chart version
-appVersion: "0.1.0"     # default image tag (ghcr.io/pradeepvanalli/invent_based_oms:<appVersion>); override with image.tag
+appVersion: "0.1.0"     # default image tag (ghcr.io/pradeepvanalli/intent_based_oms:<appVersion>); override with image.tag
 kubeVersion: ">=1.25.0-0"
-home: https://github.com/pradeepvanalli/Invent_Based_OMS
-sources: [https://github.com/pradeepvanalli/Invent_Based_OMS]
+home: https://github.com/pradeepvanalli/Intent_Based_OMS
+sources: [https://github.com/pradeepvanalli/Intent_Based_OMS]
 keywords: [oms, order-management, retail, commerce, ai, spring-boot]
 maintainers:
   - name: Intent OMS maintainers
-    url: https://github.com/pradeepvanalli/Invent_Based_OMS
+    url: https://github.com/pradeepvanalli/Intent_Based_OMS
 annotations:
   artifacthub.io/license: Apache-2.0
   artifacthub.io/category: integration-delivery

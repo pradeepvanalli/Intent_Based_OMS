@@ -7,15 +7,15 @@ LLM restricted to strict JSON, then a person. Change a policy from a sentence, r
 show the customer why.
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![CI](https://github.com/pradeepvanalli/Invent_Based_OMS/actions/workflows/ci.yml/badge.svg)](https://github.com/pradeepvanalli/Invent_Based_OMS/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/pradeepvanalli/invent_based_oms?include_prereleases&label=release)](https://github.com/pradeepvanalli/Invent_Based_OMS/releases)
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/pradeepvanalli/Invent_Based_OMS?quickstart=1)
-[![Container](https://img.shields.io/badge/ghcr.io-pradeepvanalli%2Finvent_based_oms-blue?logo=docker)](https://github.com/pradeepvanalli/Invent_Based_OMS/pkgs/container/invent_based_oms)
+[![CI](https://github.com/pradeepvanalli/Intent_Based_OMS/actions/workflows/ci.yml/badge.svg)](https://github.com/pradeepvanalli/Intent_Based_OMS/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/pradeepvanalli/intent_based_oms?include_prereleases&label=release)](https://github.com/pradeepvanalli/Intent_Based_OMS/releases)
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/pradeepvanalli/Intent_Based_OMS?quickstart=1)
+[![Container](https://img.shields.io/badge/ghcr.io-pradeepvanalli%2Fintent_based_oms-blue?logo=docker)](https://github.com/pradeepvanalli/Intent_Based_OMS/pkgs/container/intent_based_oms)
 [![Try in 3 minutes](https://img.shields.io/badge/try%20it-3%20minutes-success)](#try-it-in-3-minutes)
 [![Java 21](https://img.shields.io/badge/Java-21-007396?logo=openjdk&logoColor=white)](https://adoptium.net)
 [![Spring Boot 3.5](https://img.shields.io/badge/Spring%20Boot-3.5-6DB33F?logo=springboot&logoColor=white)](https://spring.io/projects/spring-boot)
 [![PostgreSQL 16](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org)
-[![Docs](https://img.shields.io/badge/docs-intent--oms.github.io-informational)](https://intent-oms.github.io/intent-oms/)
+[![Docs](https://img.shields.io/badge/docs-pradeepvanalli.github.io-informational)](https://pradeepvanalli.github.io/Intent_Based_OMS/)
 
 ![Playground: place an order and watch the decision trace](docs/images/hero-playground.png)
 
@@ -29,12 +29,12 @@ the LLM.
 **1. Docker, nothing else** (published image; no JDK, Node or checkout)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/pradeepvanalli/Invent_Based_OMS/main/docker-compose.quickstart.yml -o docker-compose.yml && docker compose up -d
+curl -fsSL https://raw.githubusercontent.com/pradeepvanalli/Intent_Based_OMS/main/docker-compose.quickstart.yml -o docker-compose.yml && docker compose up -d
 ```
 
 Open http://localhost:8080, tenant `demo`, user `admin`, password `admin`.
 
-**2. In the browser** with [GitHub Codespaces](https://codespaces.new/pradeepvanalli/Invent_Based_OMS?quickstart=1)
+**2. In the browser** with [GitHub Codespaces](https://codespaces.new/pradeepvanalli/Intent_Based_OMS?quickstart=1)
 
 The badge above builds and starts everything in a 2-core / 8 GB codespace. Click the **Intent OMS** port when it
 appears.
@@ -42,7 +42,7 @@ appears.
 **3. From source**
 
 ```bash
-git clone https://github.com/pradeepvanalli/Invent_Based_OMS.git && cd Invent_Based_OMS
+git clone https://github.com/pradeepvanalli/Intent_Based_OMS.git && cd Intent_Based_OMS
 make try                  # Docker only: builds the image (UI + backend), starts Postgres, Redis and the service, prints logins, opens the browser
 scripts/bootstrap.sh      # or: local JDK 21 + Maven + Node 22 for development, service on :8080
 ```
@@ -56,10 +56,16 @@ own tenant from the starter. Kubernetes: `deploy/helm/intent-oms`. Full guide: `
 
 ## What makes it different
 
+* **Agentic Control Tower.** When an order stalls, nobody should have to cross-reference four systems to find out why.
+  A typed decision — `stuck_order_diagnosis` — weighs payment, inventory, address, carrier and node signals together
+  and names the single most likely cause. Inside hard, tenant-owned guardrails (a daily action cap, a dollar cap per
+  action, an allow-list, a kill switch) it resolves the order on its own, fully audited and reversible; refunds and
+  cancellations are never autonomous, by rule, no matter the configuration. Outside those guardrails it hands a person
+  the diagnosis instead of a blank slate. See `docs/UC_AGENTIC_CONTROL_TOWER.md`.
 * **Typed decisions with confidence bands.** A decision is a YAML object with a risk tier, enumerated options, an
-  escape option and a default. The model answers inside those options and reports a calibrated confidence; the band
-  (act, confirm, escalate) decides whether it acts, asks an LLM to confirm, or opens a task for a person. Measured in
-  the demo: 350 to 850 ms end to end through OpenRouter at about $0.00002 per call.
+  escape option and a default. Jev (TypeSafe's System One model) answers inside those options and reports a
+  calibrated confidence; the band (act, confirm, escalate) decides whether it acts, asks an LLM to confirm, or opens a
+  task for a person. Measured in the demo: 350 to 850 ms end to end through OpenRouter at about $0.00002 per call.
 * **Policy from a sentence.** "Gold customers returning under $250 with a receipt get an instant refund" becomes a
   validated draft with a diff, generated golden cases and the approvals it needs. The copilot never publishes; the
   studio runs lint, an impact diff on real history, a golden-set gate, separation of duties and a canary.
@@ -72,13 +78,14 @@ own tenant from the starter. Kubernetes: `deploy/helm/intent-oms`. Full guide: `
 * **Everything is data.** State models, decisions, compliance rules, playbooks, SLAs, order types, nodes and rate cards
   are YAML in `config/tenants/<tenant>/`, versioned, replayable from an append-only ledger, and editable at runtime
   behind a publish pipeline. No AI key is required to run.
-* **Agentic Control Tower.** When an order stalls, nobody should have to cross-reference four systems to find out why.
-  The control tower now diagnoses the likely root cause on its own and fixes it within hard guardrails — or, when it
-  cannot act safely, hands a person the diagnosis instead of a blank slate. See `docs/UC_AGENTIC_CONTROL_TOWER.md`.
 
-| Decision trace | Margin replay | Copilot change set |
-|---|---|---|
-| ![Decision trace](docs/images/decision-trace.png) | ![Margin replay](docs/images/margin-replay.png) | ![Copilot change set](docs/images/copilot-changeset.png) |
+| Agentic Control Tower | Decision trace |
+|---|---|
+| ![Agentic Control Tower: an anomaly diagnosed and resolved autonomously](docs/images/control-tower-agentic.png) | ![Decision trace](docs/images/decision-trace.png) |
+
+| Margin replay | Copilot change set |
+|---|---|
+| ![Margin replay](docs/images/margin-replay.png) | ![Copilot change set](docs/images/copilot-changeset.png) |
 
 ## Reference implementations
 
@@ -168,8 +175,8 @@ The full matrix, provider setup and degraded-mode behaviour are in `docs/FEATURE
 
 ## Give feedback / get involved
 
-* Found a bug or want a feature: open an [issue](https://github.com/pradeepvanalli/Invent_Based_OMS/issues). Questions and
-  ideas: [Discussions](https://github.com/pradeepvanalli/Invent_Based_OMS/discussions).
+* Found a bug or want a feature: open an [issue](https://github.com/pradeepvanalli/Intent_Based_OMS/issues). Questions and
+  ideas: [Discussions](https://github.com/pradeepvanalli/Intent_Based_OMS/discussions).
 * In the app, the **Feedback** button in the header sends a note with the page and tenant you are on.
 * Contributions start with `CONTRIBUTING.md` (setup, conventions, good first issues, how to add a reference
   implementation). Security issues go through `SECURITY.md`, never a public issue.

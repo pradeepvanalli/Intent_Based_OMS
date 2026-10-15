@@ -6,23 +6,23 @@ missing and how to fix it.
 
 | Path | You need | Time | Command |
 |---|---|---|---|
-| **1. Docker one-liner** | Docker Desktop / Engine with compose v2 | ~2 min (image pull) | `curl -fsSL https://raw.githubusercontent.com/pradeepvanalli/Invent_Based_OMS/main/docker-compose.quickstart.yml -o docker-compose.yml && docker compose up -d` |
+| **1. Docker one-liner** | Docker Desktop / Engine with compose v2 | ~2 min (image pull) | `curl -fsSL https://raw.githubusercontent.com/pradeepvanalli/Intent_Based_OMS/main/docker-compose.quickstart.yml -o docker-compose.yml && docker compose up -d` |
 | **2. GitHub Codespaces** | a browser | ~8 min first build, then 1 min | Code → Codespaces → Create codespace on `main` |
 | **3. From source** | Docker, or JDK 21 + Maven + Node 22 | ~10 min | `scripts/try.sh` (containers) or `scripts/bootstrap.sh` (local JVM) |
 
 ## 1. Docker one-liner (published image)
 
-Pulls `ghcr.io/pradeepvanalli/invent_based_oms:latest` plus PostgreSQL 16 and Redis. No Java, Node or Maven on your machine.
+Pulls `ghcr.io/pradeepvanalli/intent_based_oms:latest` plus PostgreSQL 16 and Redis. No Java, Node or Maven on your machine.
 
 ```bash
-mkdir intent-oms && cd Invent_Based_OMS
-curl -fsSL https://raw.githubusercontent.com/pradeepvanalli/Invent_Based_OMS/main/docker-compose.quickstart.yml -o docker-compose.yml
+mkdir intent-oms && cd Intent_Based_OMS
+curl -fsSL https://raw.githubusercontent.com/pradeepvanalli/Intent_Based_OMS/main/docker-compose.quickstart.yml -o docker-compose.yml
 docker compose up -d
 docker compose logs -f oms          # Ctrl-C when you see "Demo seed summary"; the first start takes about a minute
 ```
 
 Open http://localhost:8080 and log in with tenant `demo`, user `admin`, password `admin`. Pin a version with
-`OMS_IMAGE=ghcr.io/pradeepvanalli/invent_based_oms:v0.1.0 docker compose up -d`; change the host port with `OMS_PORT=8090`.
+`OMS_IMAGE=ghcr.io/pradeepvanalli/intent_based_oms:v0.1.0 docker compose up -d`; change the host port with `OMS_PORT=8090`.
 From a checkout, `scripts/try.sh --pull` (or `.\scripts\try.ps1 -Pull` on Windows) runs the same file and additionally
 waits for health, prints the login table and opens the browser.
 
@@ -49,7 +49,7 @@ Useful commands inside the codespace: `scripts/bootstrap.sh --stop`, `make build
 ### 3a. Containers only (`scripts/try.sh`)
 
 ```bash
-git clone https://github.com/pradeepvanalli/Invent_Based_OMS.git && cd Invent_Based_OMS
+git clone https://github.com/pradeepvanalli/Intent_Based_OMS.git && cd Intent_Based_OMS
 scripts/try.sh                     # Windows PowerShell: .\scripts\try.ps1      make equivalents: make try / reset / down
 ```
 

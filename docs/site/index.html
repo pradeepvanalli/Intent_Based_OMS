@@ -177,7 +177,7 @@
       <a href="#tenants">Reference implementations</a>
       <a href="#screens">Screens</a>
       <a href="#who">Who it is for</a>
-      <a class="cta" href="https://github.com/pradeepvanalli/Invent_Based_OMS">GitHub</a>
+      <a class="cta" href="https://github.com/pradeepvanalli/Intent_Based_OMS">GitHub</a>
     </nav>
   </div>
 </header>
@@ -192,10 +192,10 @@
       <p class="lead">Sourcing, promising, returns, exceptions and agent-placed orders run on one decision fabric: rules first, then a typed decision model with a confidence score, then an LLM restricted to strict JSON, then a person. Change a policy from a sentence. Replay your own orders. Show the customer why.</p>
       <div class="try">
         <div class="label">Try it in 3 minutes</div>
-<pre><span class="prompt">$ </span>git clone https://github.com/pradeepvanalli/Invent_Based_OMS.git
-<span class="prompt">$ </span>cd Invent_Based_OMS
+<pre><span class="prompt">$ </span>git clone https://github.com/pradeepvanalli/Intent_Based_OMS.git
+<span class="prompt">$ </span>cd Intent_Based_OMS
 <span class="prompt">$ </span>make try</pre>
-        <p class="note">Docker only. Builds the image in Docker and opens http://localhost:8080 with four tenants seeded. No AI key needed; add one to switch the typed layer on. Or open it in <a href="https://codespaces.new/pradeepvanalli/Invent_Based_OMS?quickstart=1">GitHub Codespaces</a>.</p>
+        <p class="note">Docker only. Builds the image in Docker and opens http://localhost:8080 with four tenants seeded. No AI key needed; add one to switch the typed layer on. Or open it in <a href="https://codespaces.new/pradeepvanalli/Intent_Based_OMS?quickstart=1">GitHub Codespaces</a>.</p>
       </div>
       <div class="badges">
         <span>Java 21 · Spring Boot 3.5 · PostgreSQL 16</span>
@@ -265,7 +265,7 @@
     <p class="legend">Below the layers: kill switches per decision, per provider and for the whole AI layer; a per-tenant daily AI budget; a deterministic fallback provider and a default on every definition. With no key at all the system still captures, sources, ships and returns.</p>
     <div class="trace"><span class="k">decision</span> fulfilment_intent v1 tier T1 | <span class="k">layer</span> <span class="v">L1_SYSTEM_ONE</span> | <span class="k">band</span> <span class="b">ACT</span> | <span class="k">action</span> act | <span class="k">value</span> <span class="v">ship_complete</span> | <span class="k">confidence</span> 1.0 | <span class="k">provider</span> jev
 <span class="k">decision</span> return_risk v2 tier T2 | <span class="k">layer</span> <span class="v">L3_HUMAN</span> | <span class="k">band</span> <span class="b">CONFIRM</span> | <span class="k">action</span> escalate | <span class="k">value</span> <span class="v">1.39</span> | <span class="k">confidence</span> 0.66 | <span class="k">provider</span> jev</div>
-    <p class="muted" style="font-size:13px;margin-top:8px">Two lines from the captured demo run (<a href="https://github.com/pradeepvanalli/Invent_Based_OMS/blob/main/docs/DEMO_SAMPLES.md">docs/DEMO_SAMPLES.md</a>): a gift note read as ship-complete, and a mixed-history return scored below the T2 act band and sent to a reviewer.</p>
+    <p class="muted" style="font-size:13px;margin-top:8px">Two lines from the captured demo run (<a href="https://github.com/pradeepvanalli/Intent_Based_OMS/blob/main/docs/DEMO_SAMPLES.md">docs/DEMO_SAMPLES.md</a>): a gift note read as ship-complete, and a mixed-history return scored below the T2 act band and sent to a reviewer.</p>
   </div>
 </section>
 
@@ -312,7 +312,7 @@
     <div class="callout">
       <p><strong>Building a new OMS?</strong> I am looking to work with teams doing exactly that. The one-pager explains what you get, what adoption takes, and what I bring.</p>
       <div>
-        <a class="cta" href="https://github.com/pradeepvanalli/Invent_Based_OMS/blob/main/docs/launch/PITCH_ONE_PAGER.md">Read the one-pager</a>
+        <a class="cta" href="https://github.com/pradeepvanalli/Intent_Based_OMS/blob/main/docs/launch/PITCH_ONE_PAGER.md">Read the one-pager</a>
         &nbsp; <a href="https://www.linkedin.com/in/REPLACE_ME">LinkedIn</a>
       </div>
     </div>
@@ -324,12 +324,12 @@
 <footer>
   <div class="wrap">
     <nav>
-      <a href="https://github.com/pradeepvanalli/Invent_Based_OMS">Repository</a>
-      <a href="https://github.com/pradeepvanalli/Invent_Based_OMS/blob/main/docs/GETTING_STARTED.md">Getting started</a>
-      <a href="https://github.com/pradeepvanalli/Invent_Based_OMS/blob/main/docs/WHY.md">Why</a>
-      <a href="https://github.com/pradeepvanalli/Invent_Based_OMS/blob/main/docs/COMPARISON.md">Comparison</a>
-      <a href="https://github.com/pradeepvanalli/Invent_Based_OMS/blob/main/docs/ROADMAP.md">Roadmap</a>
-      <a href="https://github.com/pradeepvanalli/Invent_Based_OMS/discussions">Discussions</a>
+      <a href="https://github.com/pradeepvanalli/Intent_Based_OMS">Repository</a>
+      <a href="https://github.com/pradeepvanalli/Intent_Based_OMS/blob/main/docs/GETTING_STARTED.md">Getting started</a>
+      <a href="https://github.com/pradeepvanalli/Intent_Based_OMS/blob/main/docs/WHY.md">Why</a>
+      <a href="https://github.com/pradeepvanalli/Intent_Based_OMS/blob/main/docs/COMPARISON.md">Comparison</a>
+      <a href="https://github.com/pradeepvanalli/Intent_Based_OMS/blob/main/docs/ROADMAP.md">Roadmap</a>
+      <a href="https://github.com/pradeepvanalli/Intent_Based_OMS/discussions">Discussions</a>
       <a href="https://www.linkedin.com/in/REPLACE_ME">LinkedIn</a>
     </nav>
     <div>Intent OMS · Apache License 2.0</div>

@@ -176,7 +176,7 @@ Reference implementations live in `docs/examples/extensions/`.
 
 ## Good first issues
 
-Issues labelled [`good first issue`](https://github.com/pradeepvanalli/Invent_Based_OMS/labels/good%20first%20issue) are scoped
+Issues labelled [`good first issue`](https://github.com/pradeepvanalli/Intent_Based_OMS/labels/good%20first%20issue) are scoped
 to one afternoon, touch one module or one tenant folder, and have a test or a script that shows they are done. Typical
 shapes:
 

@@ -5,7 +5,7 @@
 # PostgreSQL is expected to be a managed/external service reachable via OMS_DB_URL.
 services:
   oms:
-    image: ${OMS_IMAGE:-ghcr.io/pradeepvanalli/invent_based_oms:latest}
+    image: ${OMS_IMAGE:-ghcr.io/pradeepvanalli/intent_based_oms:latest}
     build:
       context: .
       dockerfile: backend/oms-app/Dockerfile

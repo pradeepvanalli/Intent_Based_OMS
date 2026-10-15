@@ -1,6 +1,6 @@
 # intent-oms Helm chart
 
-Deploys Intent OMS (`ghcr.io/pradeepvanalli/invent_based_oms`) with a ConfigMap for non-secret settings, a Secret (chart-managed
+Deploys Intent OMS (`ghcr.io/pradeepvanalli/intent_based_oms`) with a ConfigMap for non-secret settings, a Secret (chart-managed
 or yours), optional bundled PostgreSQL, Ingress, HPA, PodDisruptionBudget, NetworkPolicy and a ServiceAccount.
 Production-shaped by default: `prod` Spring profile, read-only root filesystem, non-root, all capabilities dropped.
 

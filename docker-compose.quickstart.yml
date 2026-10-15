@@ -1,11 +1,11 @@
 # Intent OMS quick start: the PUBLISHED image, no build, no Java/Node/Maven on your machine. One command:
 #
-#   curl -fsSL https://raw.githubusercontent.com/pradeepvanalli/Invent_Based_OMS/main/docker-compose.quickstart.yml -o docker-compose.yml && docker compose up -d
+#   curl -fsSL https://raw.githubusercontent.com/pradeepvanalli/Intent_Based_OMS/main/docker-compose.quickstart.yml -o docker-compose.yml && docker compose up -d
 #
 # then open http://localhost:8080 (tenant demo, user admin, password admin; see docs/QUICKSTART.md for all logins).
 # From a checkout: `scripts/try.sh --pull` (or `.\scripts\try.ps1 -Pull`) wraps this file with health waiting and logins.
 #
-# Image: ghcr.io/pradeepvanalli/invent_based_oms — "intent-oms" is the GitHub owner the release workflow publishes under
+# Image: ghcr.io/pradeepvanalli/intent_based_oms — "intent-oms" is the GitHub owner the release workflow publishes under
 # (ghcr.io/<owner>/<repo>). Running a fork? Set OMS_IMAGE, e.g. OMS_IMAGE=ghcr.io/you/intent-oms:v0.2.0 docker compose up -d
 #
 # Local/demo settings only (dev users, demo seed, default JWT secret): never expose this configuration publicly.
@@ -33,7 +33,7 @@ services:
     restart: unless-stopped
 
   oms:
-    image: ${OMS_IMAGE:-ghcr.io/pradeepvanalli/invent_based_oms:latest}
+    image: ${OMS_IMAGE:-ghcr.io/pradeepvanalli/intent_based_oms:latest}
     depends_on:
       postgres: { condition: service_healthy }
     environment:
