@@ -14,7 +14,7 @@ COPY ui/ .
 RUN npm run build
 
 # ---- build backend ----
-FROM maven:3.9-eclipse-temurin-21 AS build
+FROM maven:3.9-eclipse-temurin-26 AS build
 WORKDIR /src
 COPY backend/ backend/
 COPY --from=ui /ui/dist backend/oms-app/src/main/resources/static/
