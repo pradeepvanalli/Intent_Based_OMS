@@ -47,7 +47,7 @@
     <caffeine.version>3.2.3</caffeine.version>
     <bucket4j.version>8.21.0</bucket4j.version>
     <jjwt.version>0.13.0</jjwt.version>
-    <springdoc.version>2.8.13</springdoc.version>
+    <springdoc.version>3.1.1</springdoc.version>
     <wiremock.version>3.13.1</wiremock.version>
     <json-schema-validator.version>1.5.8</json-schema-validator.version>
     <cyclonedx.version>2.9.1</cyclonedx.version>
