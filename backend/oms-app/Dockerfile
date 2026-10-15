@@ -6,7 +6,7 @@
 # mounts keep npm and Maven downloads between builds, so a rebuild after a code change takes a fraction of the first.
 
 # ---- build UI ----
-FROM node:22-alpine AS ui
+FROM node:25-alpine AS ui
 WORKDIR /ui
 COPY ui/package*.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
