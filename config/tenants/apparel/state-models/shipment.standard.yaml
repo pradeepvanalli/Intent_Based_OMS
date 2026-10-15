@@ -1,0 +1,23 @@
+# Parcel shipment lifecycle driven by carrier scans. A carrier exception that is not cleared within two days runs the
+# carrier_exception playbook; a lost parcel (returned_to_sender or no scan) becomes a carrier_lost exception.
+stateModel: shipment.standard
+version: 1
+entity: shipment
+quantityLevel: false
+states:
+  - { id: created, meta: Created }
+  - { id: label_created }
+  - { id: in_transit }
+  - { id: out_for_delivery }
+  - { id: delivered, meta: Terminal }
+  - { id: exception, sla: { maxAge: P2D, onBreach: playbook.carrier_exception } }
+  - { id: returned_to_sender, meta: Terminal }
+transitions:
+  - { from: created, to: label_created, trigger: event.label_created }
+  - { from: label_created, to: in_transit, trigger: event.carrier_scan }
+  - { from: in_transit, to: out_for_delivery, trigger: event.out_for_delivery }
+  - { from: [in_transit, out_for_delivery], to: delivered, trigger: event.delivered, actions: [notify_customer_delivered] }
+  - { from: [label_created, in_transit, out_for_delivery], to: exception, trigger: event.carrier_exception, actions: [raise_exception] }
+  - { from: exception, to: in_transit, trigger: event.carrier_scan, guards: ["event.scan_type == 'in_transit'"] }
+  - { from: exception, to: delivered, trigger: event.delivered, actions: [notify_customer_delivered] }
+  - { from: exception, to: returned_to_sender, trigger: event.returned_to_sender, actions: [raise_exception] }

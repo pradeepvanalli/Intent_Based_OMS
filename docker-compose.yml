@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: oms
+      POSTGRES_USER: oms
+      POSTGRES_PASSWORD: oms
+    command: ["postgres", "-c", "max_connections=300", "-c", "shared_buffers=512MB", "-c", "synchronous_commit=on", "-c", "wal_level=logical"]
+    ports: ["5440:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oms -d oms"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+
+  # Local/demo service: dev users, demo seed and permissive CORS. Never expose this configuration publicly.
+  oms:
+    build:
+      context: .
+      dockerfile: backend/oms-app/Dockerfile
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      OMS_DB_URL: jdbc:postgresql://postgres:5432/oms
+      OMS_DB_USER: oms
+      OMS_DB_PASSWORD: oms
+      OMS_JWT_SECRET: ${OMS_JWT_SECRET:-dev-only-secret-change-me-32-characters!!}
+      # AI keys are optional; scripts/try.sh copies OPENROUTER_API_KEY from your shell into .env, which compose reads.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OMS_REDIS_URL: redis://redis:6379
+      OMS_DEMO_SEED: "true"
+      # Tenant folders under config/tenants to seed; folders that do not exist yet are skipped with a warning.
+      OMS_DEMO_TENANTS: ${OMS_DEMO_TENANTS:-demo,retail,electronics,apparel}
+    ports: ["${OMS_PORT:-8080}:8080"]   # host port; OMS_PORT=8090 scripts/try.sh when 8080 is taken
+    read_only: true
+    tmpfs: ["/tmp:size=256m,mode=1777"]
+
+  # Production-shaped example: see docker-compose.prod.yml (kept separate because compose interpolates the required
+  # `${VAR:?}` secrets of every service, even in inactive profiles, which would break plain `docker compose up`).
+
+volumes:
+  pgdata: {}

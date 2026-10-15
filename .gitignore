@@ -1,0 +1,13 @@
+target/
+node_modules/
+dist/
+*.log
+.env
+.DS_Store
+.idea/
+*.iml
+.vscode/
+ui/node_modules/
+backend/oms-app/src/main/resources/static/
+.oms/
+__pycache__/

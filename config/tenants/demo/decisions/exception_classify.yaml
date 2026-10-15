@@ -1,0 +1,41 @@
+# Exception type (PRD section 9, FR-MON-03). Tier T0: classify at >= 0.5, otherwise "unclear" goes to the triage queue.
+# Demo: minAccuracyInActBand relaxed to 0.6 (production 0.90 / 0.05).
+decision: exception_classify
+version: 1
+owner: control-tower
+tier: T0
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: unclear
+state:
+  include:
+    - exception.source
+    - exception.code
+    - exception.message
+    - order.channel
+    - order.status
+questions:
+  type:
+    type: choice
+    instructions: What kind of exception is this?
+    feeds: playbook_routing
+    escapeOption: unclear
+    criteria:
+      address: Address problem such as invalid, unverifiable or undeliverable address
+      inventory_short: Inventory shortage such as short pick, stockout or oversold
+      carrier_delay: Carrier delay, missed scan, lost in transit or late delivery
+      payment: Payment problem such as authorization declined, expired or capture failure
+      store_reject: Store or node rejected the release or could not fulfil
+      system: System error, timeout, integration failure or bad data
+      other: A real exception that fits none of the categories
+      unclear: Not enough information to classify
+bands:
+  act: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+cache:
+  ttl: PT1H
+evaluation:
+  goldenSet: exception_classify_gold
+  minAccuracyInActBand: 0.6
+  maxCalibrationError: 0.5

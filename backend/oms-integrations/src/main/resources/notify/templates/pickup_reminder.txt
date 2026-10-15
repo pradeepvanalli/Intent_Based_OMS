@@ -1,0 +1,7 @@
+subject: {{brand}}: order {{order_number}} is waiting for pickup
+---
+Hi {{customer_name}},
+
+Your order {{order_number}} is ready at {{store_name}} ({{store_address}}). Please pick it up by {{pickup_by}}; after that the order is cancelled and refunded.
+
+{{brand}}

@@ -1,0 +1,90 @@
+# Stuck-order root-cause diagnosis (Agentic Control Tower). An order can stall for several overlapping reasons at
+# once (a late carrier scan, a payment retry, an inventory short, a stale hold) and a rules engine can only check one
+# condition at a time; this Choice decision picks the single most likely root cause from every signal together with a
+# calibrated confidence, so the autonomy executor (oms-orchestration autonomy package) knows whether to act, ask a
+# human to confirm, or hand the case to a person with the diagnosis already attached. Tier T2 because the chosen
+# value can drive a real remediation action (re-source, re-promise, retry payment, notify the customer).
+# L0 rules below cover the clear-cut cases so Jev only has to adjudicate genuinely ambiguous ones (layered philosophy,
+# docs/DECISIONS_GUIDE.md). Demo: minAccuracyInActBand/maxCalibrationError relaxed to 0.6/0.5 like the other demo
+# decisions so the golden set passes with the heuristic provider when no Jev/LLM key is configured.
+decision: stuck_order_diagnosis
+version: 1
+owner: control-tower
+tier: T2
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: unclear
+state:
+  include:
+    - order.state
+    - order.hours_in_state
+    - payment.status
+    - payment.retry_count
+    - payment.retries_remaining
+    - carrier.hours_since_last_scan
+    - carrier.shipment_status
+    - inventory.atp_delta
+    - inventory.short_sku
+    - address.verified
+    - address.type
+    - node.backlog_units
+    - node.reject_rate
+    - holds.active
+    - holds.types
+    - tasks.open_count
+    - customer.notes_count
+    - customer.latest_note
+rules:
+  # Clear-cut: a declined authorisation with retries left is always worth retrying before anything else is considered.
+  - id: payment_declined_with_retries
+    when: "has(input.payment) && input.payment.status == 'declined' && input.payment.retries_remaining > 0"
+    then: payment_retry_needed
+    reason: declined_payment_retryable
+    priority: 10
+  # Clear-cut: an address that failed verification blocks release/carrier pickup regardless of anything else going on.
+  - id: address_unverified
+    when: "has(input.address) && input.address.verified == false"
+    then: address_confirmation_needed
+    reason: address_unverified
+    priority: 20
+  # Clear-cut only when inventory is the ONLY signal: a genuine short against the promise with no carrier delay, no
+  # payment problem and no node-capacity story competing for the explanation (node capacity > 30 backlog units makes
+  # the case ambiguous between a short pick and a backed-up node, so Jev adjudicates those instead of this rule).
+  - id: inventory_short_no_other_signal
+    when: >-
+      has(input.inventory) && input.inventory.atp_delta < 0
+      && !(has(input.carrier) && input.carrier.hours_since_last_scan > 48)
+      && !(has(input.payment) && input.payment.status == 'declined')
+      && !(has(input.node) && input.node.backlog_units > 30)
+    then: inventory_reallocation_needed
+    reason: inventory_short_clear
+    priority: 30
+questions:
+  root_cause:
+    type: choice
+    instructions: >-
+      Why has this order stalled? Weigh every signal together (payment, inventory, address, carrier, node, holds,
+      customer notes) and pick the single most likely root cause, not just the first thing you notice. When two
+      signals compete and neither clearly dominates, say unclear instead of guessing.
+    feeds: autonomy_executor
+    escapeOption: unclear
+    criteria:
+      payment_retry_needed: Payment authorisation failed or is about to expire and a retry/reauthorisation can plausibly fix it; nothing else explains the stall as well.
+      inventory_reallocation_needed: Inventory at the sourcing node is short against the promised quantity and no payment, address or carrier problem explains the delay better.
+      address_confirmation_needed: The shipping address failed verification or looks undeliverable, blocking release or carrier pickup until the customer confirms it.
+      carrier_lost_in_transit: The order shipped but the carrier has not scanned the parcel in a long time; it is likely lost or stalled somewhere in the network.
+      node_capacity_backlog: The sourcing node itself is backed up (high backlog or reject rate) and that alone explains the delay, with payment, address and inventory all otherwise clear.
+      awaiting_customer_response: The order is waiting on the customer, such as an open customer-facing hold or an unanswered question in the notes, rather than on an internal system.
+      unclear: The signals genuinely conflict or there is not enough evidence to pick one cause with confidence.
+bands:
+  act: { confidence_gte: 0.9 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+postChecks:
+  # Never act on a payment retry when there is nothing left to retry (guards against a stale or mis-scored answer).
+  - "!(decision.value == 'payment_retry_needed' && has(input.payment) && input.payment.retries_remaining <= 0)"
+evaluation:
+  goldenSet: stuck_order_diagnosis_gold
+  minAccuracyInActBand: 0.6
+  maxCalibrationError: 0.5

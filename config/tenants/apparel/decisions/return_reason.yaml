@@ -1,0 +1,37 @@
+# Return reason normalisation. Tier T0 choice over the apparel taxonomy (tenant key returns.reason_taxonomy mirrors
+# these options). Feeds disposition, the fit feedback loop to merchandising ("size 28 runs small") and the risk score.
+decision: return_reason
+version: 1
+owner: returns-and-fit
+tier: T0
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: unclear
+state:
+  include:
+    - return.customer_reason_text
+    - return.reason_code
+    - return.item_condition
+    - item.category
+    - item.size
+    - order.line_count
+questions:
+  reason:
+    type: choice
+    instructions: Which taxonomy reason best describes why the customer is returning the garment?
+    feeds: disposition_and_fit_feedback
+    criteria:
+      wrong_size: The size is too small or too large, the shopper names a size problem
+      didnt_fit_as_expected: The size is nominally right but the cut, length or drape is not what she expected
+      bracketing: The shopper ordered several sizes or colours on purpose and is returning the ones she is not keeping
+      quality: A defect such as a seam opening, pilling, a broken zip, dye transfer or damage after a first wash
+      changed_mind: No longer wanted, found cheaper elsewhere or bought on impulse
+      wrong_item: Received a different style, colour or size than ordered
+      not_as_described: Colour or fabric differs from the photos or the product page
+      arrived_late: Arrived too late for the occasion it was bought for
+      not_received: The customer says the parcel never arrived
+      unclear: Not enough information to tell
+bands:
+  act: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }

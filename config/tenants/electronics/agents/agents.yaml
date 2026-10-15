@@ -1,0 +1,6 @@
+# Voltline Electronics — agent registry seed (FR-AGT-03/04). Secrets are generated at seed time and shown once.
+# Limits fit the AOV: the marketplace bot may place a laptop order, the concierge assistant may not.
+agents:
+  - { id: marketplace-ucp,  owner: "Marketplace order bot (UCP)",           protocol: ucp, trustTier: 2, allowedActions: [order_get, order_search, promise, order_create, order_modify, order_cancel, return_create, inventory_check], maxOrderValueUsd: 3000, maxRefundUsd: 500, ratePerMinute: 600, confirmActions: [order_cancel] }
+  - { id: concierge-acp,    owner: "Shopping assistant (ACP)",              protocol: acp, trustTier: 1, allowedActions: [order_get, promise, order_create, return_create], maxOrderValueUsd: 1500, maxRefundUsd: 300, ratePerMinute: 120, confirmActions: [order_create, return_create] }
+  - { id: ops-copilot,      owner: "Internal ops agent (control tower MCP)", protocol: mcp, trustTier: 3, allowedActions: [order_get, order_search, order_modify, task_list, task_complete, decision_why, inventory_check], maxOrderValueUsd: 0, maxRefundUsd: 0, ratePerMinute: 1200, confirmActions: [order_modify] }

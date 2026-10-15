@@ -1,0 +1,166 @@
+{
+  "goldenSet": "stuck_order_diagnosis_gold",
+  "cases": [
+    {
+      "caseId": "sod_01",
+      "input": {
+        "order": { "state": "awaiting_sourcing", "hours_in_state": 36 },
+        "payment": { "status": "declined", "retry_count": 1, "retries_remaining": 2 },
+        "address": { "verified": true, "type": "residential" }
+      },
+      "expected": { "value": "payment_retry_needed" },
+      "notes": "L0 rule: declined with retries remaining, nothing else wrong."
+    },
+    {
+      "caseId": "sod_02",
+      "input": {
+        "order": { "state": "released", "hours_in_state": 20 },
+        "payment": { "status": "authorized", "retry_count": 0, "retries_remaining": 3 },
+        "address": { "verified": true, "type": "residential" },
+        "node": { "backlog_units": 5, "reject_rate": 0.01 }
+      },
+      "expected": { "value": "payment_retry_needed" },
+      "notes": "Provider-judged: authorization expiring soon, no decline, nothing else competes."
+    },
+    {
+      "caseId": "sod_03",
+      "input": {
+        "order": { "state": "awaiting_sourcing", "hours_in_state": 18 },
+        "inventory": { "atp_delta": -4, "short_sku": "SOCK-3PK" },
+        "payment": { "status": "authorized", "retry_count": 0, "retries_remaining": 3 },
+        "address": { "verified": true, "type": "residential" },
+        "node": { "backlog_units": 8, "reject_rate": 0.01 }
+      },
+      "expected": { "value": "inventory_reallocation_needed" },
+      "notes": "L0 rule: clear inventory short, healthy node, nothing else wrong."
+    },
+    {
+      "caseId": "sod_04",
+      "input": {
+        "order": { "state": "awaiting_sourcing", "hours_in_state": 14 },
+        "inventory": { "atp_delta": -1, "short_sku": "MUG-CER" },
+        "address": { "verified": true, "type": "residential" },
+        "node": { "backlog_units": 6, "reject_rate": 0.01 }
+      },
+      "expected": { "value": "inventory_reallocation_needed" },
+      "notes": "Provider-judged: a small, clean inventory shortfall with a healthy node."
+    },
+    {
+      "caseId": "sod_05",
+      "input": {
+        "order": { "state": "awaiting_sourcing", "hours_in_state": 30 },
+        "address": { "verified": false, "type": "unverified" },
+        "payment": { "status": "authorized", "retry_count": 0, "retries_remaining": 3 }
+      },
+      "expected": { "value": "address_confirmation_needed" },
+      "notes": "L0 rule: address failed verification, nothing else wrong."
+    },
+    {
+      "caseId": "sod_06",
+      "input": {
+        "order": { "state": "released", "hours_in_state": 22 },
+        "address": { "verified": true, "type": "po_box" },
+        "customer": { "notes_count": 1, "latest_note": "I think I gave you the wrong apartment number, can you confirm before it ships?" },
+        "payment": { "status": "authorized", "retry_count": 0, "retries_remaining": 3 }
+      },
+      "expected": { "value": "address_confirmation_needed" },
+      "notes": "Provider-judged: verification passed technically, but the customer's own note flags the address."
+    },
+    {
+      "caseId": "sod_07",
+      "input": {
+        "order": { "state": "shipped", "hours_in_state": 96 },
+        "carrier": { "hours_since_last_scan": 72, "shipment_status": "in_transit" },
+        "payment": { "status": "captured", "retry_count": 0, "retries_remaining": 0 },
+        "address": { "verified": true, "type": "residential" }
+      },
+      "expected": { "value": "carrier_lost_in_transit" },
+      "notes": "Clear: shipped a long time ago, no carrier scan in 3 days, nothing else wrong."
+    },
+    {
+      "caseId": "sod_08",
+      "input": {
+        "order": { "state": "shipped", "hours_in_state": 60 },
+        "carrier": { "hours_since_last_scan": 50, "shipment_status": "in_transit" },
+        "node": { "backlog_units": 2, "reject_rate": 0.01 }
+      },
+      "expected": { "value": "carrier_lost_in_transit" },
+      "notes": "Provider-judged: long since the last scan, node is healthy so capacity does not compete."
+    },
+    {
+      "caseId": "sod_09",
+      "input": {
+        "order": { "state": "awaiting_sourcing", "hours_in_state": 16 },
+        "node": { "backlog_units": 45, "reject_rate": 0.12 },
+        "payment": { "status": "authorized", "retry_count": 0, "retries_remaining": 3 },
+        "address": { "verified": true, "type": "residential" }
+      },
+      "expected": { "value": "node_capacity_backlog" },
+      "notes": "Clear: node backlog and reject rate are both high, nothing else wrong."
+    },
+    {
+      "caseId": "sod_10",
+      "input": {
+        "order": { "state": "released", "hours_in_state": 10 },
+        "node": { "backlog_units": 38, "reject_rate": 0.1 },
+        "payment": { "status": "authorized", "retry_count": 0, "retries_remaining": 3 }
+      },
+      "expected": { "value": "node_capacity_backlog" },
+      "notes": "Provider-judged: node is clearly backed up, everything else is clean."
+    },
+    {
+      "caseId": "sod_11",
+      "input": {
+        "order": { "state": "awaiting_sourcing", "hours_in_state": 20 },
+        "inventory": { "atp_delta": -3, "short_sku": "CNDL-SOY" },
+        "node": { "backlog_units": 40, "reject_rate": 0.12 },
+        "payment": { "status": "authorized", "retry_count": 0, "retries_remaining": 3 },
+        "address": { "verified": true, "type": "residential" }
+      },
+      "expected": { "value": "unclear" },
+      "notes": "Ambiguous: a genuine inventory short AND a backed-up node at the same time, neither clearly dominates (L0 rule intentionally excludes this overlap)."
+    },
+    {
+      "caseId": "sod_12",
+      "input": {
+        "order": { "state": "shipped", "hours_in_state": 55 },
+        "carrier": { "hours_since_last_scan": 40, "shipment_status": "in_transit" },
+        "node": { "backlog_units": 42, "reject_rate": 0.11 }
+      },
+      "expected": { "value": "unclear" },
+      "notes": "Ambiguous: a stale carrier scan at a node that is itself backed up; could be either carrier_lost_in_transit or node_capacity_backlog."
+    },
+    {
+      "caseId": "sod_13",
+      "input": {
+        "order": { "state": "released", "hours_in_state": 12 },
+        "holds": { "active": true, "types": ["customer_response"] },
+        "tasks": { "open_count": 1 },
+        "customer": { "notes_count": 2, "latest_note": "Still deciding between the two gift-wrap options, will reply this week." },
+        "payment": { "status": "authorized", "retry_count": 0, "retries_remaining": 3 },
+        "address": { "verified": true, "type": "residential" }
+      },
+      "expected": { "value": "awaiting_customer_response" },
+      "notes": "Clear: an open customer-facing hold plus a note that the order is genuinely waiting on the customer, nothing else wrong."
+    },
+    {
+      "caseId": "sod_14",
+      "input": {
+        "order": { "state": "released", "hours_in_state": 15 },
+        "customer": { "notes_count": 1, "latest_note": "Waiting to hear back from the customer on the substitution offer." },
+        "payment": { "status": "authorized", "retry_count": 0, "retries_remaining": 3 },
+        "node": { "backlog_units": 4, "reject_rate": 0.01 }
+      },
+      "expected": { "value": "awaiting_customer_response" },
+      "notes": "Provider-judged: no hold recorded, but the note alone is a clear customer-response signal with everything else clean."
+    },
+    {
+      "caseId": "sod_15",
+      "input": {
+        "order": { "state": "awaiting_sourcing", "hours_in_state": 8 }
+      },
+      "expected": { "value": "unclear" },
+      "notes": "Escape: no signal beyond a short time in state, not enough evidence to pick a cause."
+    }
+  ]
+}

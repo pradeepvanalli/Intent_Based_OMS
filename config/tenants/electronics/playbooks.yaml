@@ -1,0 +1,99 @@
+# Voltline Electronics — playbooks (FR-MON-04): configured remediation steps gated by decision confidence and spend
+# limits. Actions with handlers: notify, create_task, hold, classify, log (built in); resource, repromise,
+# contact_customer, reship, refund, cancel, reauthorize, retry_workflow (orchestration). A step with no handler is
+# recorded `skipped`. Every queue named here exists in exception-taxonomy.yaml.
+playbooks:
+  - name: resource
+    description: Re-source the affected lines to the next best node and penalise the rejecting node
+    steps:
+      - { action: resource, minConfidence: 0.0 }
+      - { action: notify, channel: slack, template: resourced }
+  - name: repromise
+    description: Recompute the promise and tell the customer when on-time probability drops
+    steps:
+      - { action: repromise, minConfidence: 0.5 }
+      - { action: contact_customer, template: delay_notice, requiresDecision: sla_breach_risk, minConfidence: 0.8 }
+  - name: vendor_repromise
+    description: Drop-ship vendor missed its 48 h ship SLA; re-promise from the vendor's new date, tell the customer, open a vendor-ops task and ping the vendor channel
+    steps:
+      - { action: repromise, minConfidence: 0.0 }
+      - { action: contact_customer, template: vendor_delay_notice }
+      - { action: create_task, queue: vendor_ops }
+      - { action: notify, channel: slack, template: vendor_sla_breach }
+      - { action: resource, minConfidence: 0.8, when: "exception.age_minutes > 1440" }   # after a further 24 h try a DC that stocks the SKU
+  - name: carrier_damage_claim
+    description: Parcel damaged in transit; file the claim, apologise, reship within the spend limit or ask CS
+    steps:
+      - { action: contact_customer, template: damage_apology }
+      - { action: reship, minConfidence: 0.8, when: "exception.order_total_usd <= 400" }   # cheap accessories ship again immediately
+      - { action: create_task, queue: cs_exceptions }
+      - { action: notify, channel: slack, template: carrier_damage }
+  - name: carrier_exception
+    description: Shipment stuck in a carrier exception for two days; classify and re-promise or escalate
+    steps:
+      - { action: classify }
+      - { action: repromise, minConfidence: 0.5 }
+      - { action: create_task, queue: ops_exceptions, onFailure: true }
+  - name: address_fix
+    description: Address undeliverable, PO box for a lithium or oversized item; hold and ask the customer for a street address
+    steps:
+      - { action: hold, holdType: address, blocks: [release] }
+      - { action: contact_customer, template: address_confirm }
+      - { action: create_task, queue: cs_exceptions }
+  - name: high_value_review
+    description: High-value order with a risky address (score 3-4); hold release and route to the risk desk
+    steps:
+      - { action: hold, holdType: address_risk, blocks: [release, event.shipped] }
+      - { action: create_task, queue: risk_review }
+      - { action: notify, channel: slack, template: high_value_hold }
+  - name: launch_allocation
+    description: Pre-order could not be allocated by rule; the launch desk decides with the preorder_allocation recommendation attached
+    steps:
+      - { action: create_task, queue: launch_desk }
+      - { action: contact_customer, template: preorder_waitlist, requiresDecision: preorder_allocation, minConfidence: 0.9 }
+  - name: substitute_reminder
+    description: Customer has not answered a substitute offer for three days
+    steps:
+      - { action: contact_customer, template: substitute_reminder }
+      - { action: create_task, queue: cs_exceptions, when: "exception.age_minutes > 4320" }
+  - name: payment_retry
+    steps:
+      - { action: reauthorize }
+      - { action: hold, holdType: payment, blocks: [release], onFailure: true }
+      - { action: create_task, queue: finance_exceptions, onFailure: true }
+  - name: notify_oncall
+    steps:
+      - { action: notify, channel: pagerduty }
+      - { action: create_task, queue: platform_oncall }
+  - name: diagnose_stuck
+    steps:
+      - { action: classify }
+      - { action: retry_workflow }
+      - { action: create_task, queue: ops_exceptions, onFailure: true }
+  - name: store_backlog
+    steps:
+      - { action: notify, channel: slack, template: store_backlog }
+      - { action: resource, minConfidence: 0.8, when: "exception.age_minutes > 240" }
+  - name: margin_review
+    steps:
+      - { action: create_task, queue: margin_floor_approvals }
+  - name: agent_review
+    steps:
+      - { action: hold, holdType: agent_verification, blocks: [release] }
+      - { action: create_task, queue: risk_review }
+  - name: return_not_received
+    steps:
+      - { action: contact_customer, template: return_reminder }
+      - { action: create_task, queue: cs_exceptions, when: "exception.age_minutes > 10080" }
+  - name: rtv_claim
+    description: Bench confirmed a vendor defect; open the return-to-vendor claim with the vendor-ops team
+    steps:
+      - { action: create_task, queue: vendor_ops }
+      - { action: notify, channel: slack, template: rtv_claim }
+  - name: manual_review
+    steps:
+      - { action: create_task, queue: ops_exceptions }
+spendLimits:
+  reship_usd: 400          # a reship above this (any device) needs a person
+  refund_usd: 1000         # mirrors returns.refund_requires_approval_above_usd
+  appeasement_usd: 50

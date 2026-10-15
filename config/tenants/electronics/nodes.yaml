@@ -1,0 +1,118 @@
+# Voltline Electronics — fulfilment network (FR-SRC-01). Health signals feed sourcing_node_score; costProfile feeds
+# the order P&L. Two DCs, four ship-from-store locations, one drop-ship vendor (monitors and TVs) and one
+# refurbishment centre that stocks certified-refurbished SKUs and receives warranty RMAs. Node ids are stable: WMS
+# webhooks address nodes by id (/webhooks/wms/{nodeId}).
+nodes:
+  - id: DC-MEM
+    name: Memphis TN distribution centre
+    type: dc
+    lat: 35.0456
+    lon: -89.9823
+    country: US
+    state: TN
+    zip: "38118"
+    capabilities: [ship, hazmat]              # hazmat: certified to ship loose lithium packs (UN3480) by ground
+    dailyCapacity: 14000
+    cutoff: "18:00"                            # late cutoff next to the air hub; ground only for batteries
+    timezone: America/Chicago
+    health: { backlog: 900, pick_rate: 0.97, reject_rate: 0.003, staffing: 0.94 }
+    costProfile: { labour_per_unit: 1.35, packaging: 1.10, handling: 0.55 }   # serial scan + tamper seal per unit
+  - id: DC-SPK
+    name: Sparks NV distribution centre
+    type: dc
+    lat: 39.5349
+    lon: -119.7527
+    country: US
+    state: NV
+    zip: "89431"
+    capabilities: [ship, hazmat]
+    dailyCapacity: 9000
+    cutoff: "16:30"
+    timezone: America/Los_Angeles
+    health: { backlog: 350, pick_rate: 0.98, reject_rate: 0.002, staffing: 0.92 }
+    costProfile: { labour_per_unit: 1.45, packaging: 1.10, handling: 0.55 }
+  - id: ST-AUS-01
+    name: Austin Domain store
+    type: store
+    lat: 30.4019
+    lon: -97.7254
+    country: US
+    state: TX
+    zip: "78758"
+    capabilities: [ship, bopis, sfs, same_day]   # no hazmat: stores never ship loose battery packs
+    dailyCapacity: 90
+    cutoff: "15:00"
+    timezone: America/Chicago
+    health: { backlog: 6, pick_rate: 0.9, reject_rate: 0.05, staffing: 0.8 }
+    costProfile: { labour_per_unit: 2.80, packaging: 1.40, handling: 0.70 }
+  - id: ST-CHI-02
+    name: Chicago Michigan Ave store
+    type: store
+    lat: 41.8919
+    lon: -87.6244
+    country: US
+    state: IL
+    zip: "60611"
+    capabilities: [ship, bopis, sfs, same_day]
+    dailyCapacity: 120
+    cutoff: "15:00"
+    timezone: America/Chicago
+    health: { backlog: 14, pick_rate: 0.88, reject_rate: 0.06, staffing: 0.75 }
+    costProfile: { labour_per_unit: 2.90, packaging: 1.40, handling: 0.70 }
+  - id: ST-NWK-03
+    name: Newark Ironbound store
+    type: store
+    lat: 40.7357
+    lon: -74.1724
+    country: US
+    state: NJ
+    zip: "07105"
+    capabilities: [ship, bopis, sfs]
+    dailyCapacity: 80
+    cutoff: "14:30"
+    timezone: America/New_York
+    health: { backlog: 21, pick_rate: 0.84, reject_rate: 0.09, staffing: 0.65 }
+    costProfile: { labour_per_unit: 3.10, packaging: 1.40, handling: 0.70 }
+  - id: ST-SJC-04
+    name: San Jose Santana Row store
+    type: store
+    lat: 37.3211
+    lon: -121.9470
+    country: US
+    state: CA
+    zip: "95128"
+    capabilities: [ship, bopis, sfs, same_day]
+    dailyCapacity: 110
+    cutoff: "15:00"
+    timezone: America/Los_Angeles
+    health: { backlog: 4, pick_rate: 0.93, reject_rate: 0.03, staffing: 0.9 }
+    costProfile: { labour_per_unit: 3.20, packaging: 1.40, handling: 0.70 }
+  - id: VND-LUMEN
+    name: Lumen Display Co. drop-ship warehouse (Carson CA)
+    type: vendor
+    lat: 33.8317
+    lon: -118.2817
+    country: US
+    state: CA
+    zip: "90746"
+    capabilities: [ship]                       # oversized TV freight; vendor SLA 48 h to ship (sla.yaml drop_ship)
+    dailyCapacity: 600
+    cutoff: "13:00"
+    timezone: America/Los_Angeles
+    health: { backlog: 180, pick_rate: 0.91, reject_rate: 0.02, staffing: 0.85 }
+    costProfile: { labour_per_unit: 0.00, packaging: 0.00, handling: 4.50 }   # vendor invoices a per-order handling fee
+    landedCost: { originCountry: US }
+  - id: RFB-LOU
+    name: Louisville KY refurbishment centre
+    type: 3pl                                   # operated by a partner; stocks certified-refurbished SKUs, receives RMAs
+    lat: 38.1740
+    lon: -85.7360
+    country: US
+    state: KY
+    zip: "40209"
+    capabilities: [ship, hazmat]
+    dailyCapacity: 700
+    cutoff: "16:00"
+    timezone: America/New_York
+    health: { backlog: 60, pick_rate: 0.95, reject_rate: 0.01, staffing: 0.9 }
+    costProfile: { labour_per_unit: 2.10, packaging: 1.60, handling: 1.20 }   # diagnostic bench + re-kitting

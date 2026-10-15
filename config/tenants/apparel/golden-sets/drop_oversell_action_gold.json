@@ -1,0 +1,362 @@
+{
+  "goldenSet": "drop_oversell_action_gold",
+  "cases": [
+    {
+      "caseId": "drop_01",
+      "input": {
+        "drop": {
+          "sku": "JKT-BMB-ECR-M",
+          "oversold_units": 5,
+          "restock_planned": true,
+          "restock_eta_days": 12,
+          "substitute_available": false,
+          "substitute_sku": "",
+          "demand_spike_source": "influencer"
+        },
+        "order": {
+          "channel": "web",
+          "notes": "",
+          "placed_minutes_after_drop": 5,
+          "value_usd": 325.0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 2
+          }
+        }
+      },
+      "expected": {
+        "value": "backorder_with_eta"
+      },
+      "notes": "restock_within_two_weeks rule"
+    },
+    {
+      "caseId": "drop_02",
+      "input": {
+        "drop": {
+          "sku": "JKT-BMB-ECR-M",
+          "oversold_units": 5,
+          "restock_planned": false,
+          "restock_eta_days": 0,
+          "substitute_available": false,
+          "substitute_sku": "",
+          "demand_spike_source": "influencer"
+        },
+        "order": {
+          "channel": "web",
+          "notes": "",
+          "placed_minutes_after_drop": 5,
+          "value_usd": 325.0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 2
+          }
+        }
+      },
+      "expected": {
+        "value": "waitlist"
+      },
+      "notes": "nothing_to_offer rule"
+    },
+    {
+      "caseId": "drop_03",
+      "input": {
+        "drop": {
+          "sku": "JKT-BMB-ECR-M",
+          "oversold_units": 5,
+          "restock_planned": true,
+          "restock_eta_days": 45,
+          "substitute_available": true,
+          "substitute_sku": "JKT-BMB-OLV-M",
+          "demand_spike_source": "influencer"
+        },
+        "order": {
+          "channel": "web",
+          "notes": "Would love the olive too if the ecru is gone.",
+          "placed_minutes_after_drop": 5,
+          "value_usd": 325.0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 2
+          }
+        }
+      },
+      "expected": {
+        "value": "substitute_colour"
+      }
+    },
+    {
+      "caseId": "drop_04",
+      "input": {
+        "drop": {
+          "sku": "JKT-BMB-ECR-M",
+          "oversold_units": 5,
+          "restock_planned": true,
+          "restock_eta_days": 45,
+          "substitute_available": false,
+          "substitute_sku": "",
+          "demand_spike_source": "influencer"
+        },
+        "order": {
+          "channel": "web",
+          "notes": "If it's sold out please just cancel, I don't want to wait.",
+          "placed_minutes_after_drop": 5,
+          "value_usd": 325.0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 2
+          }
+        }
+      },
+      "expected": {
+        "value": "cancel_and_apologise"
+      }
+    },
+    {
+      "caseId": "drop_05",
+      "input": {
+        "drop": {
+          "sku": "JKT-BMB-ECR-M",
+          "oversold_units": 5,
+          "restock_planned": true,
+          "restock_eta_days": 30,
+          "substitute_available": false,
+          "substitute_sku": "",
+          "demand_spike_source": "influencer"
+        },
+        "order": {
+          "channel": "web",
+          "notes": "",
+          "placed_minutes_after_drop": 5,
+          "value_usd": 325.0
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "orders_12m": 9
+          }
+        }
+      },
+      "expected": {
+        "value": "backorder_with_eta"
+      },
+      "notes": "a month, loyal customer, no objection"
+    },
+    {
+      "caseId": "drop_06",
+      "input": {
+        "drop": {
+          "sku": "JKT-BMB-ECR-M",
+          "oversold_units": 5,
+          "restock_planned": true,
+          "restock_eta_days": 90,
+          "substitute_available": false,
+          "substitute_sku": "",
+          "demand_spike_source": "influencer"
+        },
+        "order": {
+          "channel": "web",
+          "notes": "",
+          "placed_minutes_after_drop": 5,
+          "value_usd": 325.0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 2
+          }
+        }
+      },
+      "expected": {
+        "value": "cancel_and_apologise"
+      },
+      "notes": "three months away, nothing to offer"
+    },
+    {
+      "caseId": "drop_07",
+      "input": {
+        "drop": {
+          "sku": "JKT-BMB-ECR-M",
+          "oversold_units": 5,
+          "restock_planned": false,
+          "restock_eta_days": 0,
+          "substitute_available": true,
+          "substitute_sku": "JKT-BMB-OLV-M",
+          "demand_spike_source": "influencer"
+        },
+        "order": {
+          "channel": "web",
+          "notes": "",
+          "placed_minutes_after_drop": 5,
+          "value_usd": 325.0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 2
+          }
+        }
+      },
+      "expected": {
+        "value": "waitlist"
+      },
+      "notes": "substitute exists but nothing suggests she would take it"
+    },
+    {
+      "caseId": "drop_08",
+      "input": {
+        "drop": {
+          "sku": "JKT-BMB-ECR-M",
+          "oversold_units": 5,
+          "restock_planned": false,
+          "restock_eta_days": 0,
+          "substitute_available": true,
+          "substitute_sku": "JKT-BMB-OLV-M",
+          "demand_spike_source": "influencer"
+        },
+        "order": {
+          "channel": "web",
+          "notes": "Any colour works, I just want the bomber.",
+          "placed_minutes_after_drop": 5,
+          "value_usd": 325.0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 2
+          }
+        }
+      },
+      "expected": {
+        "value": "substitute_colour"
+      }
+    },
+    {
+      "caseId": "drop_09",
+      "input": {
+        "drop": {
+          "sku": "JKT-BMB-ECR-M",
+          "oversold_units": 5,
+          "restock_planned": true,
+          "restock_eta_days": 7,
+          "substitute_available": true,
+          "substitute_sku": "JKT-BMB-OLV-M",
+          "demand_spike_source": "influencer"
+        },
+        "order": {
+          "channel": "web",
+          "notes": "Need it soon!",
+          "placed_minutes_after_drop": 5,
+          "value_usd": 325.0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 2
+          }
+        }
+      },
+      "expected": {
+        "value": "backorder_with_eta"
+      },
+      "notes": "restock_within_two_weeks rule"
+    },
+    {
+      "caseId": "drop_10",
+      "input": {
+        "drop": {
+          "sku": "JKT-BMB-ECR-M",
+          "oversold_units": 5,
+          "restock_planned": true,
+          "restock_eta_days": 21,
+          "substitute_available": true,
+          "substitute_sku": "JKT-BMB-OLV-M",
+          "demand_spike_source": "influencer"
+        },
+        "order": {
+          "channel": "web",
+          "notes": "Need it for a wedding on the 25th.",
+          "placed_minutes_after_drop": 5,
+          "value_usd": 325.0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 2
+          }
+        }
+      },
+      "expected": {
+        "value": "substitute_colour"
+      },
+      "notes": "date is before the restock, substitute ships now"
+    },
+    {
+      "caseId": "drop_11",
+      "input": {
+        "drop": {
+          "sku": "JKT-BMB-ECR-M",
+          "oversold_units": 5,
+          "restock_planned": true,
+          "restock_eta_days": 21,
+          "substitute_available": false,
+          "substitute_sku": "",
+          "demand_spike_source": "influencer"
+        },
+        "order": {
+          "channel": "web",
+          "notes": "Need it for a wedding on the 25th.",
+          "placed_minutes_after_drop": 5,
+          "value_usd": 325.0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 2
+          }
+        }
+      },
+      "expected": {
+        "value": "cancel_and_apologise"
+      },
+      "notes": "date is before the restock, nothing to substitute"
+    },
+    {
+      "caseId": "drop_12",
+      "input": {
+        "drop": {
+          "sku": "JKT-BMB-ECR-M",
+          "oversold_units": 5,
+          "restock_planned": true,
+          "restock_eta_days": 20,
+          "substitute_available": false,
+          "substitute_sku": "",
+          "demand_spike_source": "influencer"
+        },
+        "order": {
+          "channel": "web",
+          "notes": "",
+          "placed_minutes_after_drop": 11,
+          "value_usd": 325.0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": "backorder_with_eta"
+      },
+      "notes": "first order, no objection"
+    }
+  ]
+}

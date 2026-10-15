@@ -1,0 +1,66 @@
+# Return (RMA) lifecycle: eligibility decision, receipt SLA, inspection, refund or keep-it (FR-RET-01..05).
+stateModel: return.standard
+version: 1
+entity: return
+quantityLevel: false
+states:
+  - { id: requested, meta: Created }
+  - { id: approved }
+  - { id: awaiting_receipt, sla: { maxAge: P14D, onBreach: playbook.return_not_received } }
+  - { id: received }
+  - { id: inspected }
+  - { id: refunded, meta: Terminal }
+  - { id: rejected, meta: Terminal }
+  - { id: cancelled, meta: Terminal }
+  - { id: keep_it_refunded, meta: Terminal }
+transitions:
+  - from: requested
+    to: rejected
+    trigger: decision.return_eligibility
+    guards: ["decision.value == 'reject'"]
+    actions: [notify_customer_rejected]
+  - from: requested
+    to: keep_it_refunded
+    trigger: decision.return_eligibility
+    guards: ["decision.value == 'keep_it'"]
+    actions: [issue_refund, notify_customer_keep_it]
+  - from: requested
+    to: approved
+    trigger: decision.return_eligibility
+    guards: ["decision.value != 'reject' && decision.value != 'escalate' || approval.present"]
+    actions: [issue_return_label]
+  - from: approved
+    to: awaiting_receipt
+    trigger: event.label_issued
+  - from: approved
+    to: keep_it_refunded
+    trigger: decision.keep_it
+    guards: ["decision.value == 'keep_it'"]
+    actions: [issue_refund, notify_customer_keep_it]
+  - from: awaiting_receipt
+    to: received
+    trigger: event.received
+  - from: awaiting_receipt
+    to: refunded
+    trigger: event.refund_issued
+    # the refund-timing decision outcome is passed by the returns module as ctx.refund_timing (CEL reserves the word "return")
+    guards: ["ctx.refund_timing == 'instant' || ctx.refund_timing == 'on_carrier_scan'"]
+  - from: received
+    to: inspected
+    trigger: event.inspected
+    actions: [run_disposition]
+  - from: received
+    to: refunded
+    trigger: event.refund_issued
+  - from: inspected
+    to: refunded
+    trigger: event.refund_issued
+  - from: inspected
+    to: rejected
+    trigger: api.reject_return
+    permission: return.decide
+    actions: [notify_customer_rejected]
+  - from: [requested, approved, awaiting_receipt]
+    to: cancelled
+    trigger: api.cancel_return
+    permission: return.decide

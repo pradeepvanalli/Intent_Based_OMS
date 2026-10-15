@@ -1,0 +1,10 @@
+# Agent registry seed (FR-AGT-03/04). Secrets are generated at seed time and printed once to the log.
+#   shopbot-ucp      a marketplace shopping agent buying on a customer's behalf (tier 2)
+#   stylist-acp      the brand's own conversational stylist; low trust because it reasons over free text (tier 1)
+#   wholesale-portal the boutique ordering portal, places b2b orders on net terms, no refunds (tier 2)
+#   ops-copilot      internal MCP agent for the control tower (tier 3), cannot create orders or move money
+agents:
+  - { id: shopbot-ucp,      owner: "Marketplace shopping agent (UCP)",    protocol: ucp, trustTier: 2, allowedActions: [order_get, order_search, promise, order_create, order_modify, order_cancel, return_create, inventory_check], maxOrderValueUsd: 1200, maxRefundUsd: 200, ratePerMinute: 600, confirmActions: [order_cancel] }
+  - { id: stylist-acp,      owner: "Lumen & Loom stylist assistant (ACP)", protocol: acp, trustTier: 1, allowedActions: [order_get, promise, order_create, return_create, inventory_check], maxOrderValueUsd: 600, maxRefundUsd: 150, ratePerMinute: 120, confirmActions: [order_create, return_create] }
+  - { id: wholesale-portal, owner: "Boutique ordering portal (MCP)",       protocol: mcp, trustTier: 2, allowedActions: [order_get, order_search, promise, order_create, order_modify, inventory_check], maxOrderValueUsd: 25000, maxRefundUsd: 0, ratePerMinute: 60, confirmActions: [order_modify] }
+  - { id: ops-copilot,      owner: "Internal ops agent (MCP)",             protocol: mcp, trustTier: 3, allowedActions: [order_get, order_search, order_modify, task_list, task_complete, decision_why, inventory_check], maxOrderValueUsd: 0, maxRefundUsd: 0, ratePerMinute: 1200, confirmActions: [order_modify] }

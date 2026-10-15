@@ -1,0 +1,56 @@
+# Voltline Electronics — SKU catalogue. Keys the platform reads: sku, name, price, cogs, weightKg, hazmat, hazmatClass,
+# ageRestricted, minAge, category, lithium, exportControlled, oversized, finalSale, digital, restrictedStates, hsCode.
+# Compliance rules see them on order lines as snake_case (lithium → lithium_battery, exportControlled →
+# export_controlled, price → catalog_price). Extra keys (serialised, releaseDate, bundleRole, vendorReturns, batteryWh)
+# are kept as raw catalogue attributes for reporting and the copilot; the loaders ignore what they do not know.
+#
+# lithium:true alone = device with an installed battery (UN3481, may fly as cargo). category:battery + hazmat:true =
+# loose lithium pack (UN3480): ground only, never to a PO box, adult signature.
+products:
+  # ---- Phones --------------------------------------------------------------------------------------------------------
+  - { sku: PHN-NOVA-X2-256,  name: "Nova X2 256GB (pre-order, ships 2026-10-24)", price: 1099.00, cogs: 760.00, weightKg: 0.45, lithium: true, category: phone, serialised: true, releaseDate: "2026-10-24", batteryWh: 19 }
+  - { sku: PHN-NOVA-X1-128,  name: "Nova X1 128GB",                                price: 799.00,  cogs: 540.00, weightKg: 0.45, lithium: true, category: phone, serialised: true, batteryWh: 17, vendorReturns: true }
+  - { sku: PHN-NOVA-X1-256,  name: "Nova X1 256GB",                                price: 899.00,  cogs: 600.00, weightKg: 0.45, lithium: true, category: phone, serialised: true, batteryWh: 17, vendorReturns: true }
+  - { sku: PHN-PULSE-A5,     name: "Pulse A5 mid-range phone 128GB",               price: 449.00,  cogs: 300.00, weightKg: 0.42, lithium: true, category: phone, serialised: true, batteryWh: 18, vendorReturns: true }
+  # ---- Laptops -------------------------------------------------------------------------------------------------------
+  - { sku: LAP-AERO-14,      name: "Aero 14 ultrabook 16GB/512GB",                 price: 1299.00, cogs: 920.00,  weightKg: 1.60, lithium: true, category: laptop, serialised: true, batteryWh: 72, vendorReturns: true }
+  - { sku: LAP-FORGE-16,     name: "Forge 16 creator laptop 32GB/1TB (RTX)",       price: 2399.00, cogs: 1700.00, weightKg: 2.40, lithium: true, category: laptop, serialised: true, batteryWh: 99, exportControlled: true, hsCode: "8471.30", vendorReturns: true }
+  # ---- TVs (oversized; drop-shipped by Lumen Display Co.) ------------------------------------------------------------
+  - { sku: TV-OLED-65,       name: "Lumen OLED 65in 4K TV",                        price: 1799.00, cogs: 1250.00, weightKg: 24.0, oversized: true, category: tv, serialised: true, vendorReturns: true }
+  - { sku: TV-QLED-55,       name: "Lumen QLED 55in 4K TV",                        price: 899.00,  cogs: 620.00,  weightKg: 17.0, oversized: true, category: tv, serialised: true, vendorReturns: true }
+  - { sku: TV-LED-43,        name: "Lumen LED 43in 4K TV",                         price: 379.00,  cogs: 260.00,  weightKg: 9.0,  oversized: true, category: tv, serialised: true, vendorReturns: true }
+  # ---- Monitors (drop-shipped by Lumen Display Co.) ------------------------------------------------------------------
+  - { sku: MON-4K-27,        name: "Lumen 27in 4K IPS monitor",                    price: 449.00,  cogs: 300.00, weightKg: 6.5, category: monitor, serialised: true, vendorReturns: true }
+  - { sku: MON-UW-34,        name: "Lumen 34in ultrawide monitor",                 price: 699.00,  cogs: 470.00, weightKg: 9.2, oversized: true, category: monitor, serialised: true, vendorReturns: true }
+  - { sku: MON-GAME-27,      name: "Lumen 27in 240Hz gaming monitor",              price: 549.00,  cogs: 380.00, weightKg: 7.1, category: monitor, serialised: true, vendorReturns: true }
+  # ---- Headphones and audio ------------------------------------------------------------------------------------------
+  - { sku: HDP-ANC-PRO,      name: "Nova ANC Pro over-ear headphones",             price: 349.00,  cogs: 150.00, weightKg: 0.35, lithium: true, category: audio, serialised: true, batteryWh: 3, vendorReturns: true }
+  - { sku: HDP-BUDS-2,       name: "Nova Buds 2 wireless earbuds",                 price: 179.00,  cogs: 70.00,  weightKg: 0.12, lithium: true, category: audio, serialised: true, batteryWh: 2 }
+  - { sku: SPK-BT-GO,        name: "Nova Go bluetooth speaker",                    price: 129.00,  cogs: 55.00,  weightKg: 0.60, lithium: true, category: audio, batteryWh: 15 }
+  # ---- Chargers ------------------------------------------------------------------------------------------------------
+  - { sku: CHG-GAN-65,       name: "65W GaN USB-C charger",                        price: 49.00,   cogs: 16.00,  weightKg: 0.14, category: charger, bundleRole: charger }
+  - { sku: CHG-GAN-140,      name: "140W GaN dual USB-C charger",                  price: 89.00,   cogs: 34.00,  weightKg: 0.26, category: charger }
+  - { sku: CHG-WLS-PAD,      name: "15W wireless charging pad",                    price: 39.00,   cogs: 13.00,  weightKg: 0.18, category: charger }
+  # ---- Loose lithium battery packs (UN3480: ground only, no PO box, adult signature) ----------------------------------
+  - { sku: BAT-PWR-10K,      name: "10,000 mAh power bank",                        price: 39.00,   cogs: 14.00,  weightKg: 0.24, lithium: true, hazmat: true, hazmatClass: "9 lithium battery", category: battery, batteryWh: 37 }
+  - { sku: BAT-PWR-27K,      name: "27,000 mAh power bank (laptop)",               price: 89.00,   cogs: 32.00,  weightKg: 0.58, lithium: true, hazmat: true, hazmatClass: "9 lithium battery", category: battery, batteryWh: 99 }
+  - { sku: BAT-LAP-AERO,     name: "Aero 14 replacement battery",                  price: 119.00,  cogs: 45.00,  weightKg: 0.30, lithium: true, hazmat: true, hazmatClass: "9 lithium battery", category: battery, batteryWh: 72 }
+  # ---- Cases ---------------------------------------------------------------------------------------------------------
+  - { sku: CAS-X2-CLR,       name: "Nova X2 clear case",                           price: 29.00,   cogs: 6.00,   weightKg: 0.06, category: case, bundleRole: case }
+  - { sku: CAS-X1-LTH,       name: "Nova X1 leather case",                         price: 49.00,   cogs: 12.00,  weightKg: 0.08, category: case, bundleRole: case }
+  - { sku: CAS-AERO-SLV,     name: "Aero 14 sleeve",                               price: 39.00,   cogs: 10.00,  weightKg: 0.20, category: case }
+  # ---- Cables --------------------------------------------------------------------------------------------------------
+  - { sku: CBL-USBC-2M,      name: "USB-C to USB-C 2m 100W cable",                 price: 19.00,   cogs: 4.00,   weightKg: 0.07, category: cable }
+  - { sku: CBL-HDMI-21,      name: "HDMI 2.1 8K cable 2m",                         price: 24.00,   cogs: 5.00,   weightKg: 0.12, category: cable }
+  - { sku: CBL-TB4-1M,       name: "Thunderbolt 4 cable 1m",                       price: 59.00,   cogs: 18.00,  weightKg: 0.08, category: cable }
+  # ---- Gift cards (digital, no fulfilment) ---------------------------------------------------------------------------
+  - { sku: GC-DIGITAL-100,   name: "Voltline gift card $100 (digital)",            price: 100.00,  cogs: 0.00,   weightKg: 0.00, digital: true, category: gift_card }
+  - { sku: GC-DIGITAL-250,   name: "Voltline gift card $250 (digital)",            price: 250.00,  cogs: 0.00,   weightKg: 0.00, digital: true, category: gift_card }
+  # ---- Extended warranty (digital attach) ----------------------------------------------------------------------------
+  - { sku: WTY-PHONE-2Y,     name: "VoltCare 2-year phone protection",             price: 149.00,  cogs: 40.00,  weightKg: 0.00, digital: true, category: warranty }
+  - { sku: WTY-LAP-3Y,       name: "VoltCare 3-year laptop protection",            price: 249.00,  cogs: 60.00,  weightKg: 0.00, digital: true, category: warranty }
+  - { sku: WTY-TV-4Y,        name: "VoltCare 4-year TV protection",                price: 199.00,  cogs: 50.00,  weightKg: 0.00, digital: true, category: warranty }
+  # ---- Certified refurbished (stocked at RFB-LOU only; 14-day returns, final sale on open-box) -----------------------
+  - { sku: RFB-PHN-X1-128,   name: "Nova X1 128GB (certified refurbished)",        price: 549.00,  cogs: 330.00, weightKg: 0.45, lithium: true, category: refurbished, serialised: true, batteryWh: 17 }
+  - { sku: RFB-LAP-AERO-14,  name: "Aero 14 ultrabook (certified refurbished)",    price: 899.00,  cogs: 600.00, weightKg: 1.60, lithium: true, category: refurbished, serialised: true, batteryWh: 72 }
+  - { sku: RFB-HDP-ANC,      name: "Nova ANC Pro headphones (certified refurbished)", price: 219.00, cogs: 100.00, weightKg: 0.35, lithium: true, category: refurbished, serialised: true, batteryWh: 3, finalSale: true }

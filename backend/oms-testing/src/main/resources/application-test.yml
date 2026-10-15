@@ -1,0 +1,16 @@
+spring:
+  flyway:
+    enabled: true
+  threads:
+    virtual:
+      enabled: true
+oms:
+  outbox:
+    enabled: false
+  decision:
+    jev:
+      enabled: false
+logging:
+  level:
+    root: warn
+    ai.intentoms: info

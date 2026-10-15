@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>ai.intentoms</groupId>
+    <artifactId>oms-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+  <artifactId>oms-monitoring</artifactId>
+  <name>oms-monitoring</name>
+  <dependencies>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-platform</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-decision</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-workflow</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-order</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-statemachine</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-testing</artifactId><scope>test</scope></dependency>
+  </dependencies>
+</project>

@@ -1,0 +1,32 @@
+# Keep the Docker build context small and reproducible: the image build (backend/oms-app/Dockerfile) needs only
+# ui/ (sources + lockfile), backend/ (sources + poms) and config/. Everything below is either generated locally,
+# secret, or irrelevant to the image.
+.git
+.github
+.devcontainer
+.oms
+.idea
+.vscode
+.DS_Store
+**/.DS_Store
+*.iml
+*.log
+
+# Secrets and local overrides (never bake these into an image)
+.env
+.env.*
+!.env.example
+
+# Locally built outputs: the Dockerfile rebuilds the UI and every Maven module from source
+**/node_modules
+ui/dist
+ui/coverage
+**/target
+backend/oms-app/src/main/resources/static
+
+# Not needed inside the image
+docs
+deploy
+load
+scripts
+docker-compose*.yml

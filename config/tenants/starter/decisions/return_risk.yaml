@@ -1,0 +1,86 @@
+# Starter tenant — decision `return_risk`. Copied from the demo tenant with production evaluation gates
+# (minAccuracyInActBand 0.90, maxCalibrationError 0.05). Review: owner, tier, bands, criteria wording, and add a
+# golden set under golden-sets/ before publishing through the normal approval path. fallbackProvider stays
+# `heuristic` so the tenant works without AI keys; switch to `llm.structured` once an LLM key is configured.
+# Return abuse risk (PRD section 9, FR-RET-02/03). Score 0-4 plus reason-code Nouls (section 9 rule 6), tier T2.
+# L0 policy rules win first (FR-DEC-03): out-of-window and final-sale denials never reach the model.
+# GR-16: no protected attributes in state; denials carry reason codes.
+decision: return_risk
+version: 1
+owner: returns-and-risk          # change to the team that owns this policy
+tier: T2
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: on_inspection
+mainQuestion: abuse_risk
+state:
+  include:
+    - return.reason
+    - return.days_since_delivery
+    - return.receipt
+    - return.item_condition
+    - return.value_usd
+    - order.channel
+    - customer.history.returns_12m
+    - customer.history.not_received_claims
+    - customer.history.flags
+    - policy.window_days
+rules:
+  # Business-owned fast lanes (FR-DEC-03): the clear-cut ends of the spectrum are decided by rules the returns team
+  # edits in the studio; Jev handles the judgement calls in the middle; people handle what neither is sure about.
+  - id: flagged_customer
+    when: "'flagged_customer' in input.customer.history.flags || input.customer.history.not_received_claims >= 2"
+    then: 4
+    reason: flagged_or_repeated_not_received_claims
+    priority: 30
+  - id: trusted_customer
+    when: "input.return.receipt == true && input.customer.history.returns_12m <= 1 && input.customer.history.not_received_claims == 0 && input.return.value_usd <= 250"
+    then: 0
+    reason: trusted_customer_fast_lane
+    priority: 40
+  - id: out_of_window
+    when: "input.return.days_since_delivery > input.policy.window_days"
+    then: deny_out_of_window
+    reason: out_of_window
+    priority: 10
+  - id: final_sale
+    when: "input.order.final_sale == true"
+    then: deny_final_sale
+    reason: final_sale
+    priority: 20
+questions:
+  abuse_risk:
+    type: score
+    instructions: How high is the abuse risk of this return given history, item, channel and receipt?
+    feeds: refund_timing
+    criteria:
+      - No abuse signals, first return this year, receipt present, item condition matches
+      - Low risk, occasional returns within policy, receipt present, resalable condition
+      - Moderate risk, frequent returns recently or receipt missing
+      - High risk, repeated not received claims or value mismatch against the refund
+      - Severe risk, serial returner flagged with multiple not received claims and value mismatch
+  many_not_received_claims:
+    type: noul
+    statement: The customer has made repeated not received claims recently.
+    reasonCode: true
+  serial_returner:
+    type: noul
+    statement: The customer is a serial returner.
+    reasonCode: true
+  high_value_mismatch:
+    type: noul
+    statement: The returned item value does not match the order, a mismatch.
+    reasonCode: true
+  receipt_missing:
+    type: noul
+    statement: The receipt is missing for this return.
+    reasonCode: true
+bands:
+  act: { confidence_gte: 0.9 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+evaluation:
+  goldenSet: return_risk_gold
+  minAccuracyInActBand: 0.90
+  maxCalibrationError: 0.05

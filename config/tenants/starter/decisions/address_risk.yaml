@@ -1,0 +1,36 @@
+# Starter tenant — decision `address_risk`. Copied from the demo tenant with production evaluation gates
+# (minAccuracyInActBand 0.90, maxCalibrationError 0.05). Review: owner, tier, bands, criteria wording, and add a
+# golden set under golden-sets/ before publishing through the normal approval path. fallbackProvider stays
+# `heuristic` so the tenant works without AI keys; switch to `llm.structured` once an LLM key is configured.
+# Address risk (PRD section 9, FR-CAP-05). Noul, tier T2: undeliverable or reshipper address; act only >= 0.9.
+# GR-16: the state carries delivery attributes only; ZIP is used for deliverability, not as a demographic proxy.
+decision: address_risk
+version: 1
+owner: returns-and-risk          # change to the team that owns this policy
+tier: T2
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: false
+state:
+  include:
+    - address.verification_status
+    - address.type
+    - address.unit_present
+    - address.po_box
+    - address.freight_forwarder_match
+    - address.prior_failed_deliveries
+    - order.total
+    - order.ship_method
+questions:
+  risky_address:
+    type: noul
+    statement: This address is likely undeliverable or belongs to a reshipper or freight forwarder.
+    feeds: address_hold
+    criteria:
+      "true": Verification failed, forwarder match, prior failed deliveries or a commercial mail drop
+      "false": A verified residential or business address with normal history
+bands:
+  act: { confidence_gte: 0.9 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }

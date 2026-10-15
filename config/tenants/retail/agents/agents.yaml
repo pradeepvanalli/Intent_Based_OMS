@@ -1,0 +1,23 @@
+# Maple & Main — agent registry (FR-AGT-03/04). Secrets are generated at seed time and printed once to the log.
+# The registry is loaded by the agent module for the tenant in OMS_DEMO_TENANT; for the other reference tenants load it
+# with scripts/new-tenant.sh --from config/tenants/retail (POST /api/v1/agents). No sample order in this tenant is an
+# agent order, so nothing here is required for the five scenarios.
+agents:
+  - id: maple-shopbot-ucp
+    owner: "Shopping assistant partner (UCP)"
+    protocol: ucp
+    trustTier: 2
+    allowedActions: [order_get, order_search, promise, order_create, order_modify, order_cancel, return_create, inventory_check]
+    maxOrderValueUsd: 800
+    maxRefundUsd: 150
+    ratePerMinute: 300
+    confirmActions: [order_cancel]
+  - id: maple-store-ops
+    owner: "Store operations copilot (internal MCP)"
+    protocol: mcp
+    trustTier: 3
+    allowedActions: [order_get, order_search, order_modify, task_list, task_complete, decision_why, inventory_check]
+    maxOrderValueUsd: 0
+    maxRefundUsd: 0
+    ratePerMinute: 600
+    confirmActions: [order_modify]

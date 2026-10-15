@@ -1,0 +1,57 @@
+/* Public order tracking — consumer style, brand neutral, no shell. Tokens from styles/design.css. */
+.trk { min-height: 100%; background: var(--bg); padding: clamp(16px, 4vw, 48px) 16px; display: flex; justify-content: center; align-items: flex-start; }
+.trk-wrap { width: 100%; max-width: 720px; display: flex; flex-direction: column; gap: 12px; }
+.trk-brand { display: flex; align-items: center; gap: 8px; padding-left: 4px; color: var(--text-muted); font-weight: 650; font-size: var(--fs-sm); letter-spacing: -0.01em; }
+.trk-brand .mark { width: 22px; height: 22px; border-radius: 6px; background: var(--gradient-hero); color: #fff; display: grid; place-items: center; font-size: 10px; font-weight: 800; flex: none; }
+.trk-card { width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow-2); overflow: hidden; }
+.trk-card::before { content: ''; display: block; height: 4px; background: var(--gradient-hero); }
+.trk-head { padding: 24px 28px 20px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+.trk-head .eyebrow { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .1em; color: var(--text-muted); font-weight: 600; }
+.trk-head h1 { font-size: clamp(22px, 3.6vw, 30px); letter-spacing: -0.02em; font-weight: 700; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.trk-head h1 .num { font-family: var(--font-mono); font-weight: 600; font-size: .78em; color: var(--text-muted); }
+.trk-head .status { font-size: var(--fs-xl); font-weight: 650; color: var(--accent); }
+.trk-head .status.cancelled { color: var(--danger); }
+.trk-head .status.delivered { color: var(--ok); }
+.trk-body { padding: 24px 28px; display: flex; flex-direction: column; gap: 24px; }
+@media (max-width: 480px) { .trk-head, .trk-body { padding-left: 18px; padding-right: 18px; } }
+
+/* Stepper */
+.trk-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; list-style: none; margin: 0; padding: 0; position: relative; }
+.trk-step { display: flex; flex-direction: column; align-items: center; gap: 8px; position: relative; text-align: center; }
+.trk-step .dot { width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--border-strong); background: var(--surface); display: grid; place-items: center; color: var(--text-faint); font-weight: 700; font-size: var(--fs-sm); position: relative; z-index: 1; }
+.trk-step .lbl { font-size: var(--fs-sm); color: var(--text-muted); }
+.trk-step::before { content: ''; position: absolute; top: 14px; left: -50%; width: 100%; height: 3px; background: var(--border); z-index: 0; }
+.trk-step:first-child::before { display: none; }
+.trk-step.done .dot { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.trk-step.done::before { background: var(--accent); }
+.trk-step.current .dot { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 5px var(--accent-soft); }
+.trk-step.current .lbl, .trk-step.done .lbl { color: var(--text); font-weight: 600; }
+.trk-steps.cancelled .trk-step.done .dot, .trk-steps.cancelled .trk-step.done::before { background: var(--neutral); border-color: var(--neutral); }
+.trk-cancel { border: 1px solid var(--danger); background: var(--danger-soft); color: var(--danger-fg); border-radius: 12px; padding: 14px 16px; font-weight: 600; }
+
+.trk-narrative { font-size: var(--fs-lg); line-height: 1.6; display: flex; flex-direction: column; gap: 10px; }
+.trk-narrative .gen { font-size: var(--fs-xs); color: var(--ai); display: inline-flex; align-items: center; gap: 5px; }
+.trk-next { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 12px 16px; border-radius: 0 10px 10px 0; font-size: var(--fs-md); }
+.trk-section h2 { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; margin-bottom: 10px; }
+.trk-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.trk-items li { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: var(--fs-md); }
+.trk-items li:last-child { border-bottom: 0; }
+.trk-items .qty { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.trk-items .st { font-size: var(--fs-xs); font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--surface-3); color: var(--text-muted); }
+.trk-items .st.ok { background: var(--ok-soft); color: var(--ok-fg); }
+.trk-ship { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; font-size: var(--fs-md); }
+.trk-ship .hd { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.trk-ship .hd b { font-size: var(--fs-lg); }
+.trk-ship .trk-no { font-family: var(--font-mono); font-size: var(--fs-sm); }
+.trk-ship .items { color: var(--text-muted); font-size: var(--fs-sm); }
+.trk-promise { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.trk-promise .tile { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
+.trk-promise .k { font-size: var(--fs-xs); color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; }
+.trk-promise .v { font-size: var(--fs-lg); font-weight: 650; }
+.trk-foot { padding: 14px 28px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: var(--fs-xs); color: var(--text-faint); }
+.trk-foot button { all: unset; cursor: pointer; color: var(--accent); }
+.trk-foot button:hover { text-decoration: underline; }
+.trk-error { text-align: center; padding: 48px 24px; display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.trk-error h1 { font-size: var(--fs-xl); }
+.trk-error-icon { width: 44px; height: 44px; border-radius: 50%; background: var(--surface-3); color: var(--text-faint); display: grid; place-items: center; margin-bottom: 4px; }
+.trk-error .eyebrow { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .1em; color: var(--text-muted); font-weight: 600; }

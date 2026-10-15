@@ -1,0 +1,36 @@
+# Voltline Electronics — SLA definitions per state and order type (FR-MON-02). Also mirrored into the state-model
+# `sla:` blocks. onBreach is playbook.<name> (playbooks.yaml) or decision.<name> (decisions/).
+slas:
+  # standard ship / ship from store / bundles
+  - { orderType: standard_ship,        entity: order_line, state: awaiting_sourcing, maxAge: PT30M, onBreach: playbook.resource }
+  - { orderType: standard_ship,        entity: order_line, state: released,         maxAge: PT6H,  onBreach: playbook.store_backlog }
+  - { orderType: standard_ship,        entity: order_line, state: picking,          maxAge: PT6H,  onBreach: playbook.store_backlog }
+  - { orderType: standard_ship,        entity: order_line, state: packed,           maxAge: PT12H, onBreach: playbook.repromise }
+  - { orderType: standard_ship,        entity: order_line, state: backordered,      maxAge: P3D,   onBreach: decision.backorder_next_action }
+  - { orderType: ship_from_store,      entity: order_line, state: released,         maxAge: PT4H,  onBreach: playbook.store_backlog }
+  - { orderType: ship_from_store,      entity: order_line, state: picking,          maxAge: PT4H,  onBreach: playbook.store_backlog }
+  - { orderType: bundle_ship_complete, entity: order_line, state: awaiting_sourcing, maxAge: PT30M, onBreach: playbook.resource }
+  - { orderType: bundle_ship_complete, entity: order_line, state: released,         maxAge: PT6H,  onBreach: playbook.store_backlog }
+  - { orderType: bundle_ship_complete, entity: order_line, state: backordered,      maxAge: P2D,   onBreach: decision.backorder_next_action }   # a bundle waits for its slowest part, briefly
+  # pre-orders and backorders
+  - { orderType: pre_order,            entity: order_line, state: backordered,      maxAge: P7D,   onBreach: decision.backorder_next_action }
+  - { orderType: pre_order,            entity: order_line, state: substitute_offered, maxAge: P3D, onBreach: playbook.substitute_reminder }
+  - { orderType: pre_order,            entity: order_line, state: released,         maxAge: PT6H,  onBreach: playbook.store_backlog }
+  - { orderType: backorder,            entity: order_line, state: backordered,      maxAge: P7D,   onBreach: decision.backorder_next_action }
+  - { orderType: backorder,            entity: order_line, state: substitute_offered, maxAge: P3D, onBreach: playbook.substitute_reminder }
+  # drop-ship: the vendor must confirm shipment within 48 h of release (tenant key drop_ship.vendor_ship_sla_hours)
+  - { orderType: drop_ship,            entity: order_line, state: awaiting_sourcing, maxAge: PT1H,  onBreach: playbook.manual_review }
+  - { orderType: drop_ship,            entity: order_line, state: released,         maxAge: PT48H, onBreach: playbook.vendor_repromise }
+  - { orderType: drop_ship,            entity: order_line, state: packed,           maxAge: P1D,   onBreach: playbook.vendor_repromise }
+  # returns and shipments, every order type
+  - { orderType: "*",                  entity: return,     state: awaiting_receipt, maxAge: P14D,  onBreach: playbook.return_not_received }
+  - { orderType: "*",                  entity: return,     state: received,         maxAge: P2D,   onBreach: playbook.manual_review }   # bench must inspect within two days
+  - { orderType: "*",                  entity: shipment,   state: exception,        maxAge: P2D,   onBreach: playbook.carrier_exception }
+expectedNextEventWithin:
+  released: PT6H
+  picking: PT6H
+  packed: PT12H
+  shipped: P7D
+  in_transit: P7D
+  backordered: P7D
+  substitute_offered: P3D

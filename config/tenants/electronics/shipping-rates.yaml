@@ -1,0 +1,23 @@
+# Voltline Electronics — carrier rate card (parcel + oversized freight). zone = distance band in km; cost by weight band
+# (kg); transitDays nominal. Weight bands up to 30 kg cover TVs on a freight service; the 999 band is the freight rate.
+# Signature surcharge is already folded into the parcel bands (every $500+ line needs one).
+services:
+  - code: ground
+    zones:
+      - { maxKm: 300,  transitDays: 1, rates: { 0.5: 7.10, 2: 9.40, 5: 12.60, 10: 17.20, 20: 26.00, 30: 39.00, 999: 68.00 } }
+      - { maxKm: 1000, transitDays: 2, rates: { 0.5: 8.30, 2: 11.20, 5: 15.40, 10: 21.80, 20: 33.00, 30: 49.00, 999: 84.00 } }
+      - { maxKm: 2500, transitDays: 3, rates: { 0.5: 9.60, 2: 13.10, 5: 18.40, 10: 27.30, 20: 41.00, 30: 62.00, 999: 109.00 } }
+      - { maxKm: 5000, transitDays: 5, rates: { 0.5: 10.90, 2: 15.40, 5: 22.20, 10: 33.90, 20: 51.00, 30: 78.00, 999: 139.00 } }
+      - { maxKm: 99999, transitDays: 8, rates: { 0.5: 19.00, 2: 26.00, 5: 37.00, 10: 58.00, 20: 89.00, 30: 130.00, 999: 240.00 } }
+  - code: two_day
+    zones:
+      - { maxKm: 1000, transitDays: 2, rates: { 0.5: 12.50, 2: 16.20, 5: 22.40, 10: 31.50, 20: 47.00, 30: 72.00, 999: 150.00 } }
+      - { maxKm: 99999, transitDays: 2, rates: { 0.5: 15.80, 2: 21.40, 5: 30.20, 10: 43.90, 20: 66.00, 30: 99.00, 999: 210.00 } }
+  - code: next_day                       # air: forbidden for loose lithium packs and oversized freight (compliance rules)
+    zones:
+      - { maxKm: 99999, transitDays: 1, rates: { 0.5: 24.00, 2: 32.00, 5: 43.00, 10: 62.00, 20: 94.00, 30: 140.00, 999: 320.00 } }
+  - code: same_day
+    zones:
+      - { maxKm: 40, transitDays: 0, rates: { 0.5: 11.90, 2: 11.90, 5: 14.90, 10: 19.90, 20: 29.90, 30: 44.00, 999: 90.00 } }
+splitPenaltyUsd: 14.00        # one extra parcel incl. the signature surcharge; tenant_config sourcing.split_penalty_usd overrides
+onTimeByTransitDays: { 0: 0.86, 1: 0.95, 2: 0.94, 3: 0.92, 5: 0.90, 8: 0.84 }

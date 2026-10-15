@@ -1,0 +1,38 @@
+# Customer request intent (FR-CS-03). Tier T1 choice feeding CS automation. Electronics adds warranty_claim and
+# trade_in_status to the usual WISMO / cancel / change vocabulary.
+decision: customer_request_intent
+version: 1
+owner: customer-service
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: other
+state:
+  include:
+    - request.channel
+    - request.text
+    - order.status
+    - order.days_since_placed
+    - order.order_type
+questions:
+  intent:
+    type: choice
+    instructions: What is the customer asking for?
+    feeds: cs_automation
+    criteria:
+      cancel_order: Cancel the entire order before it ships, including a pre-order they no longer want
+      cancel_line: Cancel one item but keep the rest of the order
+      change_address: Change the delivery address or shipping destination, or redirect a shipment in transit
+      change_item: Swap an item for a different storage size, colour or model
+      wismo: Where is my order, tracking status, pre-order wave or backorder ETA question
+      return: Return or refund an item already received, changed mind or wrong item
+      warranty_claim: Device is faulty, stopped working, has a defect or needs repair under warranty
+      trade_in_status: Question about a trade-in device, its credit amount or when the credit applies
+      other: A request that fits none of the categories, or not enough information
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+preChecks:
+  - "has(input.request) && has(input.request.text) && size(input.request.text) > 0"

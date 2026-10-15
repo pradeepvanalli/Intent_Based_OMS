@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>ai.intentoms</groupId>
+    <artifactId>oms-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+  <artifactId>oms-integrations</artifactId>
+  <name>oms-integrations</name>
+  <description>Connectors and APIs for the outside world: GraphQL, marketplaces, notifications, address, carrier, WMS over HTTP</description>
+  <dependencies>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-platform</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-order</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-sourcing</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-inventory</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-returns</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-orchestration</artifactId></dependency>
+    <!-- FR-CAP-01: GraphQL over Spring WebMVC (no WebFlux) -->
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-graphql</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-testing</artifactId><scope>test</scope></dependency>
+    <dependency><groupId>org.springframework.graphql</groupId><artifactId>spring-graphql-test</artifactId><scope>test</scope></dependency>
+    <dependency><groupId>org.wiremock</groupId><artifactId>wiremock-standalone</artifactId><scope>test</scope></dependency>
+  </dependencies>
+</project>

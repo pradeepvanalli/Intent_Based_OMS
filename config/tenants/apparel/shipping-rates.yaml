@@ -1,0 +1,26 @@
+# Lumen & Loom carrier rate card (parcel aggregator contract). zone = distance band in km; cost by weight band (kg);
+# transitDays nominal. Apparel parcels are light (0.2–1.5 kg) so the first two weight bands do most of the work.
+services:
+  - code: ground
+    zones:
+      - { maxKm: 300,  transitDays: 1, rates: { 0.5: 5.90, 2: 7.60, 5: 10.20, 10: 13.80, 20: 19.50, 999: 31.00 } }
+      - { maxKm: 1000, transitDays: 2, rates: { 0.5: 6.90, 2: 9.10, 5: 12.60, 10: 17.40, 20: 25.00, 999: 40.00 } }
+      - { maxKm: 2500, transitDays: 3, rates: { 0.5: 8.10, 2: 10.90, 5: 15.10, 10: 21.90, 20: 32.00, 999: 52.00 } }
+      - { maxKm: 5000, transitDays: 5, rates: { 0.5: 9.40, 2: 12.90, 5: 18.40, 10: 27.50, 20: 40.00, 999: 66.00 } }
+      - { maxKm: 99999, transitDays: 8, rates: { 0.5: 17.00, 2: 22.00, 5: 31.00, 10: 48.00, 20: 74.00, 999: 120.00 } }
+  - code: two_day
+    zones:
+      - { maxKm: 1000, transitDays: 2, rates: { 0.5: 10.50, 2: 13.80, 5: 18.90, 10: 26.50, 20: 39.00, 999: 65.00 } }
+      - { maxKm: 99999, transitDays: 2, rates: { 0.5: 13.50, 2: 18.20, 5: 25.80, 10: 37.00, 20: 56.00, 999: 90.00 } }
+  - code: next_day
+    zones:
+      - { maxKm: 99999, transitDays: 1, rates: { 0.5: 21.00, 2: 27.50, 5: 37.00, 10: 53.00, 20: 80.00, 999: 130.00 } }
+  - code: same_day
+    zones:
+      - { maxKm: 40, transitDays: 0, rates: { 0.5: 9.50, 2: 9.50, 5: 12.50, 10: 16.50, 20: 24.00, 999: 38.00 } }
+  - code: freight
+    zones:
+      - { maxKm: 1000, transitDays: 3, rates: { 0.5: 18.00, 2: 18.00, 5: 22.00, 10: 28.00, 20: 36.00, 999: 95.00 } }
+      - { maxKm: 99999, transitDays: 5, rates: { 0.5: 24.00, 2: 24.00, 5: 30.00, 10: 38.00, 20: 52.00, 999: 140.00 } }
+splitPenaltyUsd: 9.50         # one extra parcel on a basket of light apparel; overridden by sourcing.split_penalty_usd
+onTimeByTransitDays: { 0: 0.90, 1: 0.95, 2: 0.94, 3: 0.92, 5: 0.89, 8: 0.84 }

@@ -1,0 +1,42 @@
+# Split acceptability. Noul, tier T2: act only >= 0.9. A second parcel costs $9.50 and a shopper who ordered an outfit
+# for one occasion rarely wants it in two boxes; wholesale accounts never do.
+decision: split_acceptability
+version: 1
+owner: omnichannel-ops
+tier: T2
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: false
+state:
+  include:
+    - order.channel
+    - order.order_type
+    - order.notes
+    - order.intent
+    - customer.tier
+    - customer.history.split_acceptance_rate
+    - customer.history.split_complaints
+    - plan_options[].packages
+    - plan_options[].eta
+    - plan_options[].cost_delta
+rules:
+  - id: wholesale_never_splits
+    when: "input.order.order_type == 'wholesale' || input.order.channel == 'b2b'"
+    then: false
+    reason: wholesale_single_delivery
+    priority: 10
+questions:
+  split_ok:
+    type: noul
+    statement: This shopper would accept receiving the order in more than one parcel, given the stated intent and history.
+    feeds: split_vs_hold
+    criteria:
+      "true": The shopper accepts separate parcels, for example she asked for the urgent item first or usually accepts splits
+      "false": The shopper wants a single delivery, mentioned a gift or an occasion, or has complained about split deliveries
+bands:
+  act: { confidence_gte: 0.9 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+postChecks:
+  - "!has(chosen_plan.margin) || chosen_plan.margin >= tenant.margin_floor"

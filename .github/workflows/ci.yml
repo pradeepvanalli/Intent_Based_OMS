@@ -1,0 +1,142 @@
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1"   # weekly rescan so newly published CVEs surface without a code change
+permissions:
+  contents: read
+  security-events: write   # SARIF upload for trivy / gitleaks findings
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_DB: oms, POSTGRES_USER: oms, POSTGRES_PASSWORD: oms }
+        ports: ["5440:5432"]
+        options: --health-cmd "pg_isready -U oms" --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21', cache: maven }
+      - name: Build and test
+        working-directory: backend
+        run: mvn -B -ntp verify
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: surefire-reports, path: backend/**/target/surefire-reports/*.xml }
+
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm, cache-dependency-path: ui/package-lock.json }
+      - working-directory: ui
+        run: npm ci && npm run lint && npm test -- --run && npm run build
+      - name: npm audit (high+) — advisory for now
+        working-directory: ui
+        continue-on-error: true
+        run: npm audit --audit-level=high
+
+  secrets-scan:
+    name: gitleaks secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }   # scan full history
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true"
+
+  dependency-scan:
+    name: trivy fs (dependencies, IaC, secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy filesystem scan (SARIF)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: sarif
+          output: trivy-fs.sarif
+          exit-code: "0"
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with: { sarif_file: trivy-fs.sarif, category: trivy-fs }
+      - name: Trivy filesystem scan (fail on fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: table
+          exit-code: "1"
+
+  sbom:
+    name: CycloneDX SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21', cache: maven }
+      - name: Generate SBOM (backend, aggregate)
+        working-directory: backend
+        run: mvn -B -ntp -DskipTests -Psbom package
+      - name: Generate SBOM (ui)
+        working-directory: ui
+        run: npx --yes @cyclonedx/cyclonedx-npm --output-format JSON --output-file ../backend/target/sbom-ui.cdx.json --ignore-npm-errors || echo "ui sbom skipped"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            backend/target/sbom*.json
+            backend/target/sbom*.xml
+            backend/**/target/sbom*.json
+          if-no-files-found: error
+
+  image:
+    needs: [backend, ui]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/build-push-action@v6
+        with: { context: ., file: backend/oms-app/Dockerfile, push: false, load: true, tags: "intent-oms:${{ github.sha }}" }
+      - name: Trivy image scan (SARIF)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: intent-oms:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: sarif
+          output: trivy-image.sarif
+          exit-code: "0"
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with: { sarif_file: trivy-image.sarif, category: trivy-image }
+      - name: Trivy image scan (fail on fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: intent-oms:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: table
+          exit-code: "1"
+      - name: Image SBOM
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: intent-oms:${{ github.sha }}
+          format: cyclonedx
+          output: sbom-image.cdx.json
+          exit-code: "0"
+      - uses: actions/upload-artifact@v4
+        with: { name: sbom-image, path: sbom-image.cdx.json }

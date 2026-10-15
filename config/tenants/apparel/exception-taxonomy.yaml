@@ -1,0 +1,32 @@
+# Exception taxonomy (FR-MON-03). exception_classify maps raw signals onto `type`; this file adds severity, owning
+# queue, playbook and SLA. Queues referenced by playbooks, SLAs, decision escalations and the returns module
+# (risk_review, refund_approvals, returns_ops) must all exist here.
+exceptionTypes:
+  - { type: address,             severity: medium,   queue: cs_exceptions,          playbook: address_fix,         slaMinutes: 240,  description: Address undeliverable, failed verification or missing apartment number }
+  - { type: inventory_short,     severity: high,     queue: ops_exceptions,         playbook: short_pick_3pl,      slaMinutes: 120,  description: Short pick at the 3PL or DC, stockout or no feasible node }
+  - { type: drop_oversell,       severity: high,     queue: merch_planning,         playbook: drop_oversell,       slaMinutes: 240,  description: A drop or influencer spike sold past available stock }
+  - { type: carrier_delay,       severity: medium,   queue: ops_exceptions,         playbook: repromise,           slaMinutes: 480,  description: Carrier scan shows a delay but the parcel is moving }
+  - { type: carrier_lost,        severity: high,     queue: cs_exceptions,          playbook: carrier_lost,        slaMinutes: 240,  description: No scan for several days, returned to sender or confirmed lost }
+  - { type: payment,             severity: high,     queue: finance_exceptions,     playbook: payment_retry,       slaMinutes: 120,  description: Authorisation declined, trial authorisation expiring or capture failed }
+  - { type: store_reject,        severity: high,     queue: store_ops,              playbook: resource,            slaMinutes: 60,   description: Store rejected or timed out on a release }
+  - { type: system,              severity: critical, queue: platform_oncall,        playbook: notify_oncall,       slaMinutes: 30,   description: Integration or workflow failure }
+  - { type: stuck,               severity: medium,   queue: ops_exceptions,         playbook: diagnose_stuck,      slaMinutes: 240,  description: Missing an expected event within the window }
+  - { type: sla_breach,          severity: medium,   queue: ops_exceptions,         playbook: store_backlog,       slaMinutes: 120,  description: State SLA breached }
+  - { type: margin_floor,        severity: high,     queue: margin_floor_approvals, playbook: margin_review,       slaMinutes: 120,  description: Plan below the 18 % contribution floor }
+  - { type: agent_verification,  severity: high,     queue: risk_review,            playbook: agent_review,        slaMinutes: 60,   description: Agent order outside mandate or unverified agent }
+  - { type: return_not_received, severity: low,      queue: cs_exceptions,          playbook: return_not_received, slaMinutes: 1440, description: RMA approved but no carrier scan after 14 days }
+  - { type: trial_capture_due,   severity: medium,   queue: finance_exceptions,     playbook: trial_period_ended,  slaMinutes: 480,  description: Try-before-you-buy trial ended, authorisation to capture }
+  - { type: other,               severity: low,      queue: ops_exceptions,         playbook: manual_review,       slaMinutes: 480,  description: Unclassified }
+queues:
+  - { name: ops_exceptions,         slaMinutes: 240,  escalateTo: ops_lead,           skills: [ops] }
+  - { name: store_ops,              slaMinutes: 120,  escalateTo: retail_ops_lead,    skills: [store_ops] }
+  - { name: cs_exceptions,          slaMinutes: 240,  escalateTo: cs_lead,            skills: [cs] }
+  - { name: finance_exceptions,     slaMinutes: 240,  escalateTo: finance_controller, skills: [finance] }
+  - { name: margin_floor_approvals, slaMinutes: 120,  escalateTo: finance_controller, skills: [finance, merchandising] }
+  - { name: merch_planning,         slaMinutes: 480,  escalateTo: head_of_merchandising, skills: [merchandising, planning] }
+  - { name: risk_review,            slaMinutes: 60,   escalateTo: risk_lead,          skills: [risk, returns_risk] }
+  - { name: returns_ops,            slaMinutes: 240,  escalateTo: returns_centre_lead, skills: [returns_ops] }
+  - { name: refund_approvals,       slaMinutes: 240,  escalateTo: finance_controller, skills: [finance] }
+  - { name: platform_oncall,        slaMinutes: 30,   escalateTo: platform_lead,      skills: [platform] }
+  - { name: decision_escalations,   slaMinutes: 120,  escalateTo: ops_lead,           skills: [ops] }
+  - { name: unclassified,           slaMinutes: 480,  escalateTo: ops_lead,           skills: [] }

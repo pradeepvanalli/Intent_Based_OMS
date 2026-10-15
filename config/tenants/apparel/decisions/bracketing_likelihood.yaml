@@ -1,0 +1,95 @@
+# Bracketing likelihood (apparel). "Bracketing" is ordering the same style in two or three sizes (or colours) with the
+# intention of returning what does not fit; it is roughly a third of Lumen & Loom's return volume. Evaluated at capture
+# with the order's lines and note. Score with five rubric levels (runtime values 0–4: 0 = no bracketing signal,
+# 4 = the shopper said she will return one). The value feeds three policies without ever blocking an order:
+#   * >= 3 on a standard order: offer try_before_you_buy at checkout next time and pre-print a return label in the box;
+#   * >= 3 on a ship_from_store order: source both sizes from the same node so the kept/returned pair stays together;
+#   * the returns centre pre-allocates a `bracketing` reason so the return is a trusted fast lane (return_risk rule).
+# Tier T1 (operational, reversible); default 0 so a provider failure never changes how an order is handled.
+decision: bracketing_likelihood
+version: 1
+owner: returns-and-fit
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: 0
+mainQuestion: bracketing
+state:
+  include:
+    - order.order_type
+    - order.channel
+    - order.notes
+    - order.line_count
+    - order.lines[].style
+    - order.lines[].size
+    - order.lines[].colour
+    - order.lines[].qty
+    - order.same_style_adjacent_size_pairs
+    - order.same_style_same_size_colour_pairs
+    - customer.tier
+    - customer.history.orders_12m
+    - customer.history.returns_12m
+    - customer.history.bracketing_returns_12m
+rules:
+  # Policy that must never be a judgement call: a boutique size run, one line, or no repeated style is not bracketing.
+  - id: wholesale_size_run
+    when: "input.order.order_type == 'wholesale' || input.order.channel == 'b2b'"
+    then: 0
+    reason: wholesale_size_run
+    priority: 5
+  - id: single_line
+    when: "input.order.line_count <= 1"
+    then: 0
+    reason: single_line_order
+    priority: 10
+  - id: no_repeated_style
+    when: "input.order.same_style_adjacent_size_pairs == 0 && input.order.same_style_same_size_colour_pairs == 0"
+    then: 0
+    reason: no_repeated_style
+    priority: 15
+  # The shopper told us: "ordering S and M, will return the one that doesn't fit".
+  - id: explicit_return_note
+    when: "has(input.order.notes) && input.order.notes.matches('(?i)(return|send back|sending back|keep).*(one|other|whichever|the (one|size|pair))')"
+    then: 4
+    reason: explicit_return_intent_in_note
+    priority: 20
+  # Three or more sizes of one style is bracketing by construction.
+  - id: three_sizes_same_style
+    when: "input.order.same_style_adjacent_size_pairs >= 2"
+    then: 4
+    reason: three_sizes_of_one_style
+    priority: 25
+questions:
+  bracketing:
+    type: score
+    instructions: How likely is it that this shopper ordered several sizes or colours of the same style intending to return the ones that do not fit?
+    feeds: bracketing_policy
+    criteria:
+      - No bracketing signal, every style appears once or the repeated lines are plain multiples of one size and colour
+      - Weak signal, the same style in two colours of the same size, which shoppers usually keep, and no history of size returns
+      - Possible bracketing, the same style in two adjacent sizes without any note and a customer with no bracketing history
+      - Likely bracketing, adjacent sizes of one style and either a note that hints at fit uncertainty or a customer who returned one size of a pair before
+      - Explicit bracketing, the note says one size will be returned or three or more sizes of one style were ordered
+  explicit_return_intent:
+    type: noul
+    statement: The order note says the shopper will return one of the sizes or colours.
+    reasonCode: true
+  adjacent_sizes_same_style:
+    type: noul
+    statement: The order contains the same style in two adjacent sizes.
+    reasonCode: true
+  fit_uncertainty_in_note:
+    type: noul
+    statement: The order note expresses uncertainty about size or fit.
+    reasonCode: true
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+cache:
+  ttl: PT1H
+evaluation:
+  goldenSet: bracketing_likelihood_gold
+  minAccuracyInActBand: 0.90
+  maxCalibrationError: 0.05

@@ -1,0 +1,40 @@
+# Order header, try before you buy. Same shape as standard ship up to delivery; `delivered` is NOT terminal here: the
+# order is on trial until every line is kept (charged) or returned. Roll-up derives the header from line quantities.
+stateModel: order.try_before_you_buy
+version: 1
+entity: order
+quantityLevel: false
+states:
+  - { id: created, meta: Created }
+  - { id: validated }
+  - { id: sourcing }
+  - { id: released }
+  - { id: partially_shipped }
+  - { id: shipped }
+  - { id: partially_delivered }
+  - { id: delivered }                       # on trial: authorisation held, nothing charged yet
+  - { id: kept, meta: Terminal }            # trial over, card charged for what the customer kept
+  - { id: cancelled, meta: Terminal }
+  - { id: on_hold }
+transitions:
+  - { from: created, to: validated, trigger: event.order_validated }
+  - { from: validated, to: sourcing, trigger: event.sourcing_started }
+  - { from: sourcing, to: released, trigger: event.lines_released }
+  - { from: released, to: partially_shipped, trigger: event.line_shipped }
+  - { from: [released, partially_shipped], to: shipped, trigger: event.all_lines_shipped }
+  - { from: [shipped, partially_shipped], to: partially_delivered, trigger: event.line_delivered }
+  - { from: [shipped, partially_delivered], to: delivered, trigger: event.all_lines_delivered }
+  - { from: delivered, to: kept, trigger: event.all_lines_kept }
+  - { from: [created, validated, sourcing, released, on_hold], to: cancelled, trigger: api.cancel_order, permission: order.cancel }
+  - { from: [created, validated, sourcing, released, partially_shipped], to: on_hold, trigger: api.hold_order, permission: order.hold }
+  - { from: on_hold, to: sourcing, trigger: api.release_hold, permission: order.release }
+rollup:
+  - { parentState: cancelled,           priority: 10, when: "ctx.total > 0 && state.cancelled == ctx.total" }
+  - { parentState: kept,                priority: 15, when: "state.kept > 0 && state.kept + state.cancelled == ctx.total" }
+  - { parentState: delivered,           priority: 20, when: "state.delivered > 0 && state.delivered + state.kept + state.cancelled == ctx.total" }
+  - { parentState: partially_delivered, priority: 30, when: "state.delivered > 0 || state.kept > 0" }
+  - { parentState: shipped,             priority: 40, when: "state.shipped > 0 && state.shipped + state.cancelled == ctx.total" }
+  - { parentState: partially_shipped,   priority: 50, when: "state.shipped > 0" }
+  - { parentState: sourcing,            priority: 60, when: "ctx.states_with_qty.exists(s, s in ['awaiting_sourcing', 'backordered'])" }
+  - { parentState: released,            priority: 70, when: "state.released > 0 || ctx.states_with_qty.exists(s, s in ['picking', 'packed'])" }
+  - { parentState: created,             priority: 80, when: "state.created == ctx.total" }

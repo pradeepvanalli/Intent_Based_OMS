@@ -1,0 +1,60 @@
+# Maple & Main (retail reference tenant) — decision `store_reject_reroute`. Retail-specific: when a store rejects a pick
+# (short, damaged, nobody on the floor) the `store_reject` playbook runs this T1 choice before re-sourcing, so the
+# exception's "Why" shows what the business wanted: reroute to the nearest store with stock, ship from a DC, cancel the
+# line, or ask the customer (pickup orders that cannot move silently). Input is the playbook gate shape
+# ({exception, order}, see PlaybookService.runGateDecision). L0 rules decide the clear cases; the model the rest.
+decision: store_reject_reroute
+version: 1
+owner: store-operations
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: reroute_nearest_store
+state:
+  include:
+    - exception.type
+    - exception.code
+    - exception.node_id
+    - exception.occurrences
+    - exception.age_minutes
+    - order.order_type
+    - order.channel
+    - order.ship_method
+    - order.line_count
+    - order.customer_tier
+    - order.total
+    - order.intent
+rules:
+  - id: repeated_reject_on_pickup_asks_customer
+    when: "(input.order.order_type == 'bopis' || input.order.order_type == 'curbside') && input.exception.occurrences >= 2"
+    then: ask_customer
+    reason: repeated_store_reject_on_pickup_order
+    priority: 10
+  - id: marketplace_ships_from_dc
+    when: "input.order.channel == 'marketplace'"
+    then: ship_from_dc
+    reason: marketplace_promise_prefers_dc_reliability
+    priority: 20
+questions:
+  reroute:
+    type: choice
+    instructions: The store could not pick this order. Where should it go now?
+    feeds: store_reject_playbook
+    escapeOption: unclear
+    criteria:
+      reroute_nearest_store: A ship-from-store or pickup order where another store nearby can fulfil it quickly
+      ship_from_dc: Reliability matters more than speed (marketplace, repeated rejects, heavy or hazmat lines); ship from a distribution centre
+      cancel_line: Nothing in the network can fulfil the line and no substitute exists; cancel and refund the line
+      ask_customer: A pickup order whose chosen store cannot fulfil it; ask whether to switch store or ship to home
+      unclear: Not enough information to decide
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+cache:
+  ttl: PT10M
+evaluation:
+  goldenSet: store_reject_reroute_gold
+  minAccuracyInActBand: 0.90
+  maxCalibrationError: 0.05

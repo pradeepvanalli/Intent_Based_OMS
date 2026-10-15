@@ -1,0 +1,65 @@
+# Return disposition, apparel vocabulary (FR-RET-06). The four outcomes the merchandising and sustainability teams
+# actually talk about: restock (steam, re-bag, sellable), outlet (past season or light wear, sold through the outlet
+# channel), donate (wearable, not sellable), recycle (textile recycling, never landfill). Tier T1. Evaluated by the
+# returns centre app per inspected garment; the runtime-vocabulary twin is return_disposition
+# (restock -> restock, outlet -> liquidate, donate -> donate, recycle -> destroy).
+decision: return_disposition_apparel
+version: 1
+owner: merchandising
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: restock
+state:
+  include:
+    - return.reason
+    - return.item_condition
+    - return.inspection_notes
+    - return.days_since_delivery
+    - item.sku
+    - item.category
+    - item.season
+    - item.final_sale
+    - item.cost_usd
+    - item.resale_value_usd
+    - item.repairable
+    - item.hygiene_sensitive
+rules:
+  - id: new_current_season
+    when: "input.return.item_condition == 'new' && input.item.season != 'past' && input.return.reason in ['wrong_size', 'didnt_fit_as_expected', 'bracketing', 'changed_mind', 'wrong_item']"
+    then: restock
+    reason: new_condition_current_season
+    priority: 10
+  - id: new_past_season
+    when: "input.return.item_condition == 'new' && input.item.season == 'past'"
+    then: outlet
+    reason: past_season_goes_to_outlet
+    priority: 15
+  - id: unrepairable_damage
+    when: "input.return.item_condition == 'damaged' && input.item.repairable == false"
+    then: recycle
+    reason: unrepairable_textile_recycling
+    priority: 20
+questions:
+  disposition:
+    type: choice
+    instructions: Where should this inspected garment go?
+    feeds: recovery_and_sustainability
+    criteria:
+      restock: Unworn with tags, current or core season, steam and re-bag and sell again at full price
+      outlet: Sellable at a markdown only, past season, light wear that cannot be hidden, or a repaired garment
+      donate: Wearable but not sellable at any price, for example washed knitwear with pilling or a hygiene-sensitive item that cannot be resold
+      recycle: Unwearable or unsafe to resell, send to the textile recycling partner, never to landfill
+      unclear: Not enough information from the inspection to decide
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+postChecks:
+  - "!(input.return.item_condition == 'damaged' && decision.value == 'restock')"
+  - "!(has(input.item.hygiene_sensitive) && input.item.hygiene_sensitive == true && input.return.item_condition != 'new' && decision.value == 'restock')"
+evaluation:
+  goldenSet: return_disposition_apparel_gold
+  minAccuracyInActBand: 0.90
+  maxCalibrationError: 0.05

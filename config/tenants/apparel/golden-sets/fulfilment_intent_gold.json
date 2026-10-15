@@ -1,0 +1,268 @@
+{
+  "goldenSet": "fulfilment_intent_gold",
+  "cases": [
+    {
+      "caseId": "fulf_01",
+      "input": {
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "notes": "This is a gift for my mum, please wrap it and send everything together in one box.",
+          "intent_choices": [],
+          "line_count": 2
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "split_acceptance_rate": 0.1
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_complete"
+      },
+      "notes": "gift + together"
+    },
+    {
+      "caseId": "fulf_02",
+      "input": {
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "notes": "Send each piece as soon as it is ready, separate parcels are fine.",
+          "intent_choices": [],
+          "line_count": 2
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "split_acceptance_rate": 0.9
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_as_available"
+      }
+    },
+    {
+      "caseId": "fulf_03",
+      "input": {
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "notes": "I need the navy dress before Saturday's wedding, the tee can come whenever.",
+          "intent_choices": [],
+          "line_count": 2
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "split_acceptance_rate": 0.6
+          }
+        }
+      },
+      "expected": {
+        "value": "earliest_partial"
+      }
+    },
+    {
+      "caseId": "fulf_04",
+      "input": {
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "notes": "I'll collect everything at the SoHo store on Thursday.",
+          "intent_choices": [],
+          "line_count": 2
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "split_acceptance_rate": 0.3
+          }
+        }
+      },
+      "expected": {
+        "value": "pickup_consolidated"
+      },
+      "notes": "store collection"
+    },
+    {
+      "caseId": "fulf_05",
+      "input": {
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "notes": "",
+          "intent_choices": [
+            "ship_complete"
+          ],
+          "line_count": 2
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "split_acceptance_rate": 0.2
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_complete"
+      },
+      "notes": "explicit checkout choice"
+    },
+    {
+      "caseId": "fulf_06",
+      "input": {
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "notes": "",
+          "intent_choices": [
+            "ship_as_available"
+          ],
+          "line_count": 2
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "split_acceptance_rate": 0.8
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_as_available"
+      },
+      "notes": "explicit checkout choice"
+    },
+    {
+      "caseId": "fulf_07",
+      "input": {
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "notes": "Ordering the 28 and the 30, will return the one that doesn't fit.",
+          "intent_choices": [],
+          "line_count": 2
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "split_acceptance_rate": 0.5
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_complete"
+      },
+      "notes": "bracketing pair should travel together"
+    },
+    {
+      "caseId": "fulf_08",
+      "input": {
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "notes": "",
+          "intent_choices": [],
+          "line_count": 3
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "split_acceptance_rate": 0.5
+          }
+        }
+      },
+      "expected": {
+        "value": "unclear"
+      },
+      "notes": "no note, no choice -> channel default"
+    },
+    {
+      "caseId": "fulf_09",
+      "input": {
+        "order": {
+          "channel": "b2b",
+          "order_type": "wholesale",
+          "notes": "Boutique restock for the autumn window, one delivery with the packing list please.",
+          "intent_choices": [],
+          "line_count": 7
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "split_acceptance_rate": 0.0
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_complete"
+      }
+    },
+    {
+      "caseId": "fulf_10",
+      "input": {
+        "order": {
+          "channel": "web",
+          "order_type": "try_before_you_buy",
+          "notes": "Trying the trench and the cardigan for a work trip, will keep what works.",
+          "intent_choices": [],
+          "line_count": 3
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "split_acceptance_rate": 0.4
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_complete"
+      },
+      "notes": "trial should start once"
+    },
+    {
+      "caseId": "fulf_11",
+      "input": {
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "notes": "The loafers are urgent for Monday, nothing else matters.",
+          "intent_choices": [],
+          "line_count": 2
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "split_acceptance_rate": 0.7
+          }
+        }
+      },
+      "expected": {
+        "value": "earliest_partial"
+      }
+    },
+    {
+      "caseId": "fulf_12",
+      "input": {
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "notes": "No rush at all, whatever is cheapest for you.",
+          "intent_choices": [],
+          "line_count": 2
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "split_acceptance_rate": 0.7
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_as_available"
+      }
+    }
+  ]
+}

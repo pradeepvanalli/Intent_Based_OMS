@@ -1,0 +1,82 @@
+# Order line, try before you buy (FR-SM-02/08). Differences from order_line.standard_ship:
+#   * `shipped` does NOT capture payment: the checkout authorisation (mock PSP hold, 7 days) stays open;
+#   * `delivered` is an Active trial state with a 7-day SLA. On breach the trial_period_ended playbook messages the
+#     customer and opens a finance task to capture the authorisation for the kept units;
+#   * `kept` (Terminal) is entered through api.confirm_keep (CS / finance, order.modify) or timer.trial_expired, and
+#     it is the transition that captures payment. Units the customer returned during the trial are refunded through
+#     the normal RMA flow against the `delivered` quantity, so the guard refuses the timer when a return is open.
+# The trial timer has no orchestration handler yet: scheduling timer.trial_expired is listed in the README checklist.
+stateModel: order_line.try_before_you_buy
+version: 1
+entity: order_line
+quantityLevel: true
+states:
+  - { id: created, meta: Created }
+  - { id: awaiting_sourcing }
+  - { id: released, sla: { maxAge: PT4H, onBreach: playbook.store_backlog } }
+  - { id: picking, parent: released }
+  - { id: packed, parent: released }
+  - { id: shipped }
+  - { id: backordered, sla: { maxAge: P2D, onBreach: decision.backorder_next_action } }
+  - { id: delivered, sla: { maxAge: P7D, onBreach: playbook.trial_period_ended } }
+  - { id: kept, meta: Terminal }
+  - { id: cancelled, meta: Terminal }
+transitions:
+  - from: created
+    to: awaiting_sourcing
+    trigger: event.order_validated
+  - from: awaiting_sourcing
+    to: backordered
+    trigger: decision.sourcing_plan
+    guards: ["plan.result == 'no_feasible_node'"]
+  - from: awaiting_sourcing
+    to: released
+    trigger: decision.sourcing_plan
+    guards:
+      - "plan.margin >= tenant.margin_floor || approval.present"
+      - "!order.holds.exists(h, 'release' in h.blocks)"
+    actions: [reserve_inventory, send_release_to_wms]
+  - from: released
+    to: awaiting_sourcing
+    trigger: event.store_rejected
+    actions: [penalise_node, release_reservation]
+  - from: released
+    to: awaiting_sourcing
+    trigger: event.short_pick
+    actions: [penalise_node, release_reservation]
+  - from: released
+    to: picking
+    trigger: event.pick_started
+  - from: picking
+    to: awaiting_sourcing
+    trigger: event.short_pick
+    actions: [penalise_node, release_reservation]
+  - from: picking
+    to: packed
+    trigger: event.packed
+  - from: packed
+    to: shipped
+    trigger: event.shipped
+    actions: [notify_customer_shipped]            # no capture_payment: the authorisation hold stays open during the trial
+  - from: shipped
+    to: delivered
+    trigger: event.delivered
+    actions: [notify_customer_delivered, notify_customer_trial_started]
+  - from: delivered
+    to: kept
+    trigger: api.confirm_keep
+    permission: order.modify
+    actions: [capture_payment, notify_customer_charged]
+  - from: delivered
+    to: kept
+    trigger: timer.trial_expired
+    guards: ["!has(ctx.open_returns) || ctx.open_returns == 0"]
+    actions: [capture_payment, notify_customer_charged]
+  - from: backordered
+    to: awaiting_sourcing
+    trigger: event.inventory_available
+  - from: [created, awaiting_sourcing, released, backordered]
+    to: cancelled
+    trigger: api.cancel_line
+    permission: order.cancel
+    actions: [release_reservation, void_or_refund]

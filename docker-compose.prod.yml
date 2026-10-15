@@ -1,0 +1,43 @@
+# Production-shaped example. Standalone on purpose: `docker compose -f docker-compose.prod.yml up -d`.
+# Uses the `prod` Spring profile (backend/oms-app/src/main/resources/application-prod.yml): no dev users, no demo
+# seed, explicit CORS, actuator limited to health/prometheus. Secrets are REQUIRED from the environment - compose fails
+# fast on `${VAR:?...}` and ai.intentoms.app.ProductionReadinessCheck refuses to start if anything unsafe slips through.
+# PostgreSQL is expected to be a managed/external service reachable via OMS_DB_URL.
+services:
+  oms:
+    image: ${OMS_IMAGE:-ghcr.io/pradeepvanalli/invent_based_oms:latest}
+    build:
+      context: .
+      dockerfile: backend/oms-app/Dockerfile
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      OMS_DB_URL: ${OMS_DB_URL:?set OMS_DB_URL (jdbc:postgresql://host:5432/oms)}
+      OMS_DB_USER: ${OMS_DB_USER:?set OMS_DB_USER}
+      OMS_DB_PASSWORD: ${OMS_DB_PASSWORD:?set OMS_DB_PASSWORD}
+      OMS_JWT_SECRET: ${OMS_JWT_SECRET:?set OMS_JWT_SECRET to a random string of >= 32 chars (openssl rand -base64 48)}
+      OMS_MASTER_KEY: ${OMS_MASTER_KEY:?set OMS_MASTER_KEY (openssl rand -base64 32) - wraps tenant PII keys}
+      OMS_CORS_ALLOWED_ORIGINS: ${OMS_CORS_ALLOWED_ORIGINS:?set OMS_CORS_ALLOWED_ORIGINS, e.g. https://oms.example.com}
+      OMS_DEV_USERS: ""
+      OMS_DEMO_SEED: "false"
+      # Optional SSO (NFR-07): see backend/oms-platform/HARDENING.md
+      OMS_OIDC_ISSUER_URI: ${OMS_OIDC_ISSUER_URI:-}
+      OMS_OIDC_AUDIENCE: ${OMS_OIDC_AUDIENCE:-}
+      OMS_OIDC_DEFAULT_TENANT: ${OMS_OIDC_DEFAULT_TENANT:-}
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318/v1/traces}
+    ports: ["8080:8080"]
+    read_only: true
+    tmpfs: ["/tmp:size=256m,mode=1777"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health/readiness || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 20
+      start_period: 60s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: { memory: 3g }

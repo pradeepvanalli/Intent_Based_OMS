@@ -1,0 +1,293 @@
+{
+  "goldenSet": "exception_classify_gold",
+  "cases": [
+    {
+      "caseId": "ex_01",
+      "input": {
+        "exception": {
+          "source": "address_verifier",
+          "code": "AVS_FAIL",
+          "message": "Address could not be verified, undeliverable as addressed"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released",
+          "order_type": "standard_ship"
+        }
+      },
+      "expected": {
+        "value": "address"
+      }
+    },
+    {
+      "caseId": "ex_02",
+      "input": {
+        "exception": {
+          "source": "wms",
+          "code": "SHORT_PICK",
+          "message": "Short pick: serial not found in bin for SKU PHN-NOVA-X1-128 at DC-MEM, inventory shortage"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released",
+          "order_type": "standard_ship"
+        }
+      },
+      "expected": {
+        "value": "inventory_short"
+      }
+    },
+    {
+      "caseId": "ex_03",
+      "input": {
+        "exception": {
+          "source": "carrier",
+          "code": "DELAY",
+          "message": "Carrier delay, missed scan at hub, delivery will be late"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released",
+          "order_type": "standard_ship"
+        }
+      },
+      "expected": {
+        "value": "carrier_delay"
+      }
+    },
+    {
+      "caseId": "ex_04",
+      "input": {
+        "exception": {
+          "source": "psp",
+          "code": "AUTH_DECLINED",
+          "message": "Payment authorization declined by issuer"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released",
+          "order_type": "standard_ship"
+        }
+      },
+      "expected": {
+        "value": "payment"
+      }
+    },
+    {
+      "caseId": "ex_05",
+      "input": {
+        "exception": {
+          "source": "store",
+          "code": "REJECTED",
+          "message": "Store rejected the release, could not fulfil from this node"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released",
+          "order_type": "standard_ship"
+        }
+      },
+      "expected": {
+        "value": "store_reject"
+      }
+    },
+    {
+      "caseId": "ex_06",
+      "input": {
+        "exception": {
+          "source": "integration",
+          "code": "TIMEOUT",
+          "message": "System error: integration timeout calling the vendor EDI endpoint, bad data in response"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released",
+          "order_type": "standard_ship"
+        }
+      },
+      "expected": {
+        "value": "system"
+      }
+    },
+    {
+      "caseId": "ex_07",
+      "input": {
+        "exception": {
+          "source": "carrier",
+          "code": "DAMAGED",
+          "message": "Carrier exception: package damaged in transit, contents crushed, freight claim opened"
+        },
+        "order": {
+          "channel": "web",
+          "status": "shipped",
+          "order_type": "drop_ship"
+        }
+      },
+      "expected": {
+        "value": "carrier_damage"
+      }
+    },
+    {
+      "caseId": "ex_08",
+      "input": {
+        "exception": {
+          "source": "vendor",
+          "code": "SHIP_SLA_MISSED",
+          "message": "Lumen Display has not confirmed shipment 52 hours after release; vendor ship SLA is 48 hours"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released",
+          "order_type": "drop_ship"
+        }
+      },
+      "expected": {
+        "value": "vendor_sla_breach"
+      }
+    },
+    {
+      "caseId": "ex_09",
+      "input": {
+        "exception": {
+          "source": "carrier",
+          "code": "LOST",
+          "message": "Lost in transit, no scan for 6 days"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released",
+          "order_type": "standard_ship"
+        }
+      },
+      "expected": {
+        "value": "carrier_delay"
+      }
+    },
+    {
+      "caseId": "ex_10",
+      "input": {
+        "exception": {
+          "source": "psp",
+          "code": "CAPTURE_FAIL",
+          "message": "Capture failure, authorization expired before shipment"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released",
+          "order_type": "standard_ship"
+        }
+      },
+      "expected": {
+        "value": "payment"
+      }
+    },
+    {
+      "caseId": "ex_11",
+      "input": {
+        "exception": {
+          "source": "address_verifier",
+          "code": "INVALID",
+          "message": "Invalid address, apartment number unverifiable"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released",
+          "order_type": "standard_ship"
+        }
+      },
+      "expected": {
+        "value": "address"
+      }
+    },
+    {
+      "caseId": "ex_12",
+      "input": {
+        "exception": {
+          "source": "cs",
+          "code": "MISC",
+          "message": "Customer called about packaging preference for a gift"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released",
+          "order_type": "standard_ship"
+        }
+      },
+      "expected": {
+        "value": "other"
+      }
+    },
+    {
+      "caseId": "ex_13",
+      "input": {
+        "exception": {
+          "source": "unknown",
+          "code": "",
+          "message": ""
+        },
+        "order": {
+          "channel": "web",
+          "status": "released",
+          "order_type": "standard_ship"
+        }
+      },
+      "expected": {
+        "value": "unclear"
+      }
+    },
+    {
+      "caseId": "ex_14",
+      "input": {
+        "exception": {
+          "source": "vendor",
+          "code": "ETA_PUSHED",
+          "message": "Vendor pushed the ship date of the 65in OLED by five days, past the promised delivery"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released",
+          "order_type": "drop_ship"
+        }
+      },
+      "expected": {
+        "value": "vendor_sla_breach"
+      }
+    },
+    {
+      "caseId": "ex_15",
+      "input": {
+        "exception": {
+          "source": "customer",
+          "code": "PHOTO_DAMAGE",
+          "message": "Customer uploaded photos: TV box crushed on one side, panel cracked on arrival"
+        },
+        "order": {
+          "channel": "web",
+          "status": "delivered",
+          "order_type": "drop_ship"
+        }
+      },
+      "expected": {
+        "value": "carrier_damage"
+      }
+    },
+    {
+      "caseId": "ex_16",
+      "input": {
+        "exception": {
+          "source": "wms",
+          "code": "OVERSOLD",
+          "message": "Oversold item, inventory shortage detected during allocation of pre-order wave"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released",
+          "order_type": "standard_ship"
+        }
+      },
+      "expected": {
+        "value": "inventory_short"
+      }
+    }
+  ]
+}

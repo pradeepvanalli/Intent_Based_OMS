@@ -1,0 +1,66 @@
+# Intent OMS quick start: the PUBLISHED image, no build, no Java/Node/Maven on your machine. One command:
+#
+#   curl -fsSL https://raw.githubusercontent.com/pradeepvanalli/Invent_Based_OMS/main/docker-compose.quickstart.yml -o docker-compose.yml && docker compose up -d
+#
+# then open http://localhost:8080 (tenant demo, user admin, password admin; see docs/QUICKSTART.md for all logins).
+# From a checkout: `scripts/try.sh --pull` (or `.\scripts\try.ps1 -Pull`) wraps this file with health waiting and logins.
+#
+# Image: ghcr.io/pradeepvanalli/invent_based_oms — "intent-oms" is the GitHub owner the release workflow publishes under
+# (ghcr.io/<owner>/<repo>). Running a fork? Set OMS_IMAGE, e.g. OMS_IMAGE=ghcr.io/you/intent-oms:v0.2.0 docker compose up -d
+#
+# Local/demo settings only (dev users, demo seed, default JWT secret): never expose this configuration publicly.
+# For production use docker-compose.prod.yml or the Helm chart in deploy/helm/intent-oms.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: oms
+      POSTGRES_USER: oms
+      POSTGRES_PASSWORD: oms
+    command: ["postgres", "-c", "max_connections=300", "-c", "shared_buffers=512MB", "-c", "synchronous_commit=on", "-c", "wal_level=logical"]
+    ports: ["${OMS_PG_PORT:-5440}:5432"]      # published for psql / scripts; the app talks to it on the compose network
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oms -d oms"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    restart: unless-stopped
+
+  oms:
+    image: ${OMS_IMAGE:-ghcr.io/pradeepvanalli/invent_based_oms:latest}
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      OMS_DB_URL: jdbc:postgresql://postgres:5432/oms
+      OMS_DB_USER: oms
+      OMS_DB_PASSWORD: oms
+      OMS_REDIS_URL: redis://redis:6379
+      OMS_JWT_SECRET: ${OMS_JWT_SECRET:-dev-only-secret-change-me-32-characters!!}
+      # Demo data: the four sample tenants are seeded from the image's /config/tenants on first start.
+      OMS_DEMO_SEED: "true"
+      OMS_DEMO_TENANTS: ${OMS_DEMO_TENANTS:-demo,retail,electronics,apparel}
+      # AI providers (all optional; without a key the system runs on rules and defaults). Set them in the shell or in a
+      # .env file next to this compose file: OPENROUTER_API_KEY=sk-or-... docker compose up -d
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    ports: ["${OMS_PORT:-8080}:8080"]
+    read_only: true
+    tmpfs: ["/tmp:size=256m,mode=1777"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health/readiness || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 20
+      start_period: 90s
+    restart: unless-stopped
+
+volumes:
+  pgdata: {}   # `docker compose down -v` wipes it (scripts/try.sh --reset)

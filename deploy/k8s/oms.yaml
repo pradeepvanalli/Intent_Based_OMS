@@ -1,0 +1,107 @@
+# Reference Kubernetes deployment (multi-AZ, stateless app pods; PostgreSQL via a managed service or operator).
+# Plain-manifest alternative to the Helm chart in deploy/helm/intent-oms (same security posture, same env contract).
+# Runs with the `prod` Spring profile: ai.intentoms.app.ProductionReadinessCheck refuses to start unless the secrets
+# below are set and non-default. Pods are non-root, read-only root filesystem with a tmpfs /tmp, all capabilities dropped.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: intent-oms, labels: { app: intent-oms } }
+spec:
+  replicas: 3
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } }
+  selector: { matchLabels: { app: intent-oms } }
+  template:
+    metadata:
+      labels: { app: intent-oms }
+      annotations: { prometheus.io/scrape: "true", prometheus.io/path: /actuator/prometheus, prometheus.io/port: "8080" }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100        # `oms` user created in the Dockerfile (alpine adduser -S)
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - { maxSkew: 1, topologyKey: topology.kubernetes.io/zone, whenUnsatisfiable: ScheduleAnyway, labelSelector: { matchLabels: { app: intent-oms } } }
+      containers:
+        - name: oms
+          image: ghcr.io/pradeepvanalli/invent_based_oms:latest
+          ports: [{ containerPort: 8080 }]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            privileged: false
+            capabilities: { drop: ["ALL"] }
+            seccompProfile: { type: RuntimeDefault }
+          env:
+            - { name: SPRING_PROFILES_ACTIVE, value: prod }
+            - { name: OMS_DB_URL, valueFrom: { secretKeyRef: { name: oms-db, key: url } } }
+            - { name: OMS_DB_USER, valueFrom: { secretKeyRef: { name: oms-db, key: user } } }
+            - { name: OMS_DB_PASSWORD, valueFrom: { secretKeyRef: { name: oms-db, key: password } } }
+            # Secrets as files (preferred): the JWT secret is read from the mounted file; the master key from the env var.
+            - { name: OMS_JWT_SECRET_FILE, value: /secrets/app/jwtSecret }
+            - { name: OMS_MASTER_KEY, valueFrom: { secretKeyRef: { name: oms-app, key: masterKey } } }
+            - { name: OMS_CORS_ALLOWED_ORIGINS, valueFrom: { configMapKeyRef: { name: oms-config, key: corsAllowedOrigins } } }
+            # Optional SSO (see backend/oms-platform/HARDENING.md)
+            - { name: OMS_OIDC_ISSUER_URI, valueFrom: { configMapKeyRef: { name: oms-config, key: oidcIssuerUri, optional: true } } }
+            - { name: OMS_OIDC_AUDIENCE, valueFrom: { configMapKeyRef: { name: oms-config, key: oidcAudience, optional: true } } }
+            - { name: OMS_OIDC_DEFAULT_TENANT, valueFrom: { configMapKeyRef: { name: oms-config, key: oidcDefaultTenant, optional: true } } }
+            - { name: TYPESAFE_API_KEY, valueFrom: { secretKeyRef: { name: oms-ai, key: typesafe, optional: true } } }
+            - { name: ANTHROPIC_API_KEY, valueFrom: { secretKeyRef: { name: oms-ai, key: anthropic, optional: true } } }
+            - { name: OMS_DEV_USERS, value: "" }
+            - { name: OMS_DEMO_SEED, value: "false" }
+            # Sample tenants the seeder loads when OMS_DEMO_SEED=true (evaluation clusters only; the Helm chart's
+            # demo.enabled does the same). Ignored while the seed is off.
+            - { name: OMS_DEMO_TENANTS, value: "demo,retail,electronics,apparel" }
+            - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4318/v1/traces" }
+            - { name: JAVA_OPTS, value: "-XX:MaxRAMPercentage=75 -XX:+UseZGC -XX:+ZGenerational -Djava.io.tmpdir=/tmp" }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: app-secrets, mountPath: /secrets/app, readOnly: true }
+          resources: { requests: { cpu: "1", memory: 2Gi }, limits: { memory: 3Gi } }
+          readinessProbe: { httpGet: { path: /actuator/health/readiness, port: 8080 }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /actuator/health/liveness, port: 8080 }, periodSeconds: 10, failureThreshold: 6 }
+          lifecycle: { preStop: { exec: { command: ["sh", "-c", "sleep 5"] } } }
+      volumes:
+        - { name: tmp, emptyDir: { medium: Memory, sizeLimit: 256Mi } }
+        - { name: app-secrets, secret: { secretName: oms-app, items: [{ key: jwtSecret, path: jwtSecret }], defaultMode: 0440 } }
+      terminationGracePeriodSeconds: 45
+---
+# Expected secrets/config (create out of band, e.g. with external-secrets):
+#   Secret oms-db   : url, user, password
+#   Secret oms-app  : jwtSecret (>= 32 random chars), masterKey (openssl rand -base64 32)
+#   Secret oms-ai   : typesafe, anthropic (optional)
+#   ConfigMap oms-config: corsAllowedOrigins (comma-separated https origins), oidcIssuerUri/oidcAudience/oidcDefaultTenant (optional)
+apiVersion: v1
+kind: Service
+metadata: { name: intent-oms }
+spec: { selector: { app: intent-oms }, ports: [{ port: 80, targetPort: 8080 }] }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: intent-oms }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: intent-oms }
+  minReplicas: 3
+  maxReplicas: 30
+  metrics: [{ type: Resource, resource: { name: cpu, target: { type: Utilization, averageUtilization: 65 } } }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: intent-oms }
+spec: { minAvailable: 2, selector: { matchLabels: { app: intent-oms } } }
+---
+# Only the ingress may reach the pods; pods may reach DNS, PostgreSQL, the OTel collector and HTTPS (IdP JWKS, model providers).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: intent-oms }
+spec:
+  podSelector: { matchLabels: { app: intent-oms } }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } } }]
+      ports: [{ port: 8080, protocol: TCP }]
+  egress:
+    - ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
+    - ports: [{ port: 5432, protocol: TCP }, { port: 4318, protocol: TCP }, { port: 443, protocol: TCP }]

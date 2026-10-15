@@ -1,0 +1,38 @@
+# Starter tenant — decision `backorder_next_action`. Copied from the demo tenant with production evaluation gates
+# (minAccuracyInActBand 0.90, maxCalibrationError 0.05). Review: owner, tier, bands, criteria wording, and add a
+# golden set under golden-sets/ before publishing through the normal approval path. fallbackProvider stays
+# `heuristic` so the tenant works without AI keys; switch to `llm.structured` once an LLM key is configured.
+# Backorder next action (Appendix A SLA onBreach decision.backorder_next_action). Tier T1 choice.
+decision: backorder_next_action
+version: 1
+owner: fulfilment-ops
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: wait
+state:
+  include:
+    - line.sku
+    - line.days_backordered
+    - line.expected_restock_days
+    - line.substitute_available
+    - order.channel
+    - order.intent
+    - customer.tier
+    - network.atp_elsewhere
+questions:
+  next_action:
+    type: choice
+    instructions: What should happen to this backordered line?
+    feeds: backorder_playbook
+    criteria:
+      wait: Restock is imminent, keep waiting and notify the customer
+      resource: Stock exists at another node, re-source the line
+      cancel_line: No restock in sight and no alternative, cancel the line and refund
+      offer_substitute: A comparable substitute is available to offer
+      unclear: Not enough information to decide
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Voltline Electronics order extension schema (FR-CAP-02, entity `order`). Not loaded by the seeder: install it with PUT /api/v1/extension-schema (README, 'Make it yours'). Serial numbers and IMEIs are per order line (keyed by line id) because the platform validates extensions at order level; line.attributes stays free-form.",
+  "type": "object",
+  "properties": {
+    "serials": {
+      "description": "Serial numbers shipped, keyed by order line id; one entry per unit",
+      "type": "object",
+      "additionalProperties": { "type": "array", "items": { "type": "string", "pattern": "^[A-Z0-9-]{8,32}$" }, "minItems": 1 }
+    },
+    "imeis": {
+      "description": "IMEIs for phone lines, keyed by order line id; 15 digits each",
+      "type": "object",
+      "additionalProperties": { "type": "array", "items": { "type": "string", "pattern": "^[0-9]{15}$" }, "minItems": 1 }
+    },
+    "bundleId": { "description": "Bundle the lines belong to; bundle_ship_complete orders carry one", "type": "string", "pattern": "^BND-[A-Z0-9-]{3,40}$" },
+    "tradeIn": {
+      "type": "object",
+      "properties": {
+        "deviceModel": { "type": "string" },
+        "imei": { "type": "string", "pattern": "^[0-9]{15}$" },
+        "creditUsd": { "type": "number", "minimum": 0, "maximum": 1500 },
+        "status": { "type": "string", "enum": ["quoted", "received", "graded", "credited", "rejected"] }
+      },
+      "required": ["deviceModel", "creditUsd"],
+      "additionalProperties": false
+    },
+    "launch": {
+      "type": "object",
+      "properties": {
+        "campaign": { "type": "string" },
+        "waveRequested": { "type": "integer", "minimum": 1, "maximum": 9 }
+      },
+      "required": ["campaign"],
+      "additionalProperties": false
+    },
+    "warranty": {
+      "type": "object",
+      "properties": { "plan": { "type": "string" }, "coveredLineId": { "type": "string" } },
+      "required": ["plan", "coveredLineId"],
+      "additionalProperties": false
+    },
+    "marketplace": {
+      "type": "object",
+      "properties": { "name": { "type": "string" }, "externalOrderId": { "type": "string" }, "fulfilmentSla": { "type": "string" } },
+      "required": ["name"],
+      "additionalProperties": true
+    },
+    "signatureRequired": { "type": "boolean" },
+    "pickupNodeId": { "type": "string" }
+  },
+  "additionalProperties": true
+}

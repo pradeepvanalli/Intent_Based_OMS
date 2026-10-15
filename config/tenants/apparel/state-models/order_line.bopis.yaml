@@ -1,0 +1,55 @@
+# Order line, buy online / pick up in store. Reservation at the pickup store, staged with a 7-day pickup window
+# (tenant key orchestration.pickup_window) and a reminder SLA on day 5.
+stateModel: order_line.bopis
+version: 1
+entity: order_line
+quantityLevel: true
+states:
+  - { id: created, meta: Created }
+  - { id: awaiting_sourcing }
+  - { id: released, sla: { maxAge: PT2H, onBreach: playbook.store_backlog } }
+  - { id: picked }
+  - { id: ready_for_pickup, sla: { maxAge: P5D, onBreach: playbook.pickup_reminder } }
+  - { id: picked_up, meta: Terminal }
+  - { id: cancelled, meta: Terminal }
+  - { id: backordered, sla: { maxAge: P2D, onBreach: decision.backorder_next_action } }
+transitions:
+  - from: created
+    to: awaiting_sourcing
+    trigger: event.order_validated
+  - from: awaiting_sourcing
+    to: backordered
+    trigger: decision.sourcing_plan
+    guards: ["plan.result == 'no_feasible_node'"]
+  - from: awaiting_sourcing
+    to: released
+    trigger: decision.sourcing_plan
+    guards: ["plan.margin >= tenant.margin_floor || approval.present"]
+    actions: [reserve_inventory, send_pick_to_store]
+  - from: released
+    to: awaiting_sourcing
+    trigger: event.store_rejected
+    actions: [penalise_node, release_reservation]
+  - from: released
+    to: picked
+    trigger: event.picked
+  - from: picked
+    to: ready_for_pickup
+    trigger: event.staged_for_pickup
+    actions: [notify_customer_ready]
+  - from: ready_for_pickup
+    to: picked_up
+    trigger: event.picked_up
+    actions: [capture_payment]
+  - from: ready_for_pickup
+    to: cancelled
+    trigger: timer.pickup_window_expired
+    actions: [release_reservation, void_or_refund, notify_customer_cancelled]
+  - from: backordered
+    to: awaiting_sourcing
+    trigger: event.inventory_available
+  - from: [created, awaiting_sourcing, released, picked, ready_for_pickup, backordered]
+    to: cancelled
+    trigger: api.cancel_line
+    permission: order.cancel
+    actions: [release_reservation, void_or_refund]

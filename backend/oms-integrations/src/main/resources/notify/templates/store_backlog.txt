@@ -1,0 +1,7 @@
+subject: {{brand}}: a short delay on order {{order_number}}
+---
+Hi {{customer_name}},
+
+The store preparing your order {{order_number}} is busier than expected. Your order now ships by {{ship_by}}; estimated delivery {{promise_date}}.
+
+{{brand}}

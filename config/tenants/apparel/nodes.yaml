@@ -1,0 +1,115 @@
+# Lumen & Loom network (FR-SRC-01). One DC, one west-coast 3PL, five stores with ship-from-store and BOPIS, one
+# returns processing centre. Health signals feed sourcing_node_score; costProfile feeds the order P&L.
+nodes:
+  - id: DC-PA
+    name: Allentown PA distribution centre
+    type: dc
+    lat: 40.6023
+    lon: -75.4714
+    country: US
+    state: PA
+    zip: "18101"
+    capabilities: [ship, gift_wrap]
+    dailyCapacity: 9000
+    cutoff: "16:30"
+    timezone: America/New_York
+    health: { backlog: 650, pick_rate: 0.97, reject_rate: 0.004, staffing: 0.94 }
+    costProfile: { labour_per_unit: 1.15, packaging: 0.85, handling: 0.40 }
+  - id: 3PL-LV
+    name: Las Vegas NV 3PL (west-coast partner)
+    type: 3pl
+    lat: 36.1699
+    lon: -115.1398
+    country: US
+    state: NV
+    zip: "89101"
+    capabilities: [ship]
+    dailyCapacity: 4000
+    cutoff: "15:00"
+    timezone: America/Los_Angeles
+    health: { backlog: 480, pick_rate: 0.93, reject_rate: 0.018, staffing: 0.85 }   # short-picks happen here (scenario S01)
+    costProfile: { labour_per_unit: 1.70, packaging: 0.80, handling: 0.75 }
+  - id: ST-NYC-SOHO
+    name: New York SoHo store
+    type: store
+    lat: 40.7233
+    lon: -74.0030
+    country: US
+    state: NY
+    zip: "10012"
+    capabilities: [ship, bopis, sfs, same_day, gift_wrap]
+    dailyCapacity: 90
+    cutoff: "14:00"
+    timezone: America/New_York
+    health: { backlog: 6, pick_rate: 0.92, reject_rate: 0.05, staffing: 0.85 }
+    costProfile: { labour_per_unit: 2.80, packaging: 1.10, handling: 0.60 }
+  - id: ST-LA-MELROSE
+    name: Los Angeles Melrose store
+    type: store
+    lat: 34.0837
+    lon: -118.3614
+    country: US
+    state: CA
+    zip: "90046"
+    capabilities: [ship, bopis, sfs, same_day, gift_wrap]
+    dailyCapacity: 110
+    cutoff: "14:00"
+    timezone: America/Los_Angeles
+    health: { backlog: 4, pick_rate: 0.94, reject_rate: 0.03, staffing: 0.9 }
+    costProfile: { labour_per_unit: 2.90, packaging: 1.10, handling: 0.60 }
+  - id: ST-CHI-GOLD
+    name: Chicago Gold Coast store
+    type: store
+    lat: 41.8990
+    lon: -87.6240
+    country: US
+    state: IL
+    zip: "60611"
+    capabilities: [ship, bopis, sfs, same_day]
+    dailyCapacity: 80
+    cutoff: "13:30"
+    timezone: America/Chicago
+    health: { backlog: 11, pick_rate: 0.89, reject_rate: 0.06, staffing: 0.75 }
+    costProfile: { labour_per_unit: 2.60, packaging: 1.10, handling: 0.60 }
+  - id: ST-MIA-DESIGN
+    name: Miami Design District store
+    type: store
+    lat: 25.8140
+    lon: -80.1930
+    country: US
+    state: FL
+    zip: "33137"
+    capabilities: [ship, bopis, sfs]
+    dailyCapacity: 70
+    cutoff: "13:00"
+    timezone: America/New_York
+    health: { backlog: 9, pick_rate: 0.87, reject_rate: 0.08, staffing: 0.7 }
+    costProfile: { labour_per_unit: 2.70, packaging: 1.10, handling: 0.60 }
+  - id: ST-AUS-SOCO
+    name: Austin South Congress store
+    type: store
+    lat: 30.2500
+    lon: -97.7490
+    country: US
+    state: TX
+    zip: "78704"
+    capabilities: [ship, bopis, sfs]
+    dailyCapacity: 60
+    cutoff: "13:00"
+    timezone: America/Chicago
+    health: { backlog: 14, pick_rate: 0.84, reject_rate: 0.1, staffing: 0.6 }
+    costProfile: { labour_per_unit: 2.60, packaging: 1.10, handling: 0.60 }
+  - id: RC-OH
+    name: Columbus OH returns processing centre
+    type: dc
+    lat: 39.9612
+    lon: -82.9988
+    country: US
+    state: OH
+    zip: "43215"
+    capabilities: [returns, inspect, refurbish]   # no `ship` capability and no sellable positions: never a sourcing candidate
+    dailyCapacity: 3000
+    cutoff: "17:00"
+    timezone: America/New_York
+    health: { backlog: 1900, pick_rate: 0.0, reject_rate: 0.0, staffing: 0.9 }
+    costProfile: { labour_per_unit: 2.20, packaging: 0.30, handling: 0.90 }

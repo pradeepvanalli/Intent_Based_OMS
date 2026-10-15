@@ -1,0 +1,61 @@
+# Starter tenant — decision `sourcing_node_score`. Copied from the demo tenant with production evaluation gates
+# (minAccuracyInActBand 0.90, maxCalibrationError 0.05). Review: owner, tier, bands, criteria wording, and add a
+# golden set under golden-sets/ before publishing through the normal approval path. fallbackProvider stays
+# `heuristic` so the tenant works without AI keys; switch to `llm.structured` once an LLM key is configured.
+# Node on-time likelihood (PRD section 9). Score per candidate node, composite-weighted with cost efficiency (FR-DEC-04),
+# two-stage top-K when more than 255 candidates (FR-DEC-05). Tier T1. Input: candidates[] (one map per node).
+decision: sourcing_node_score
+version: 1
+owner: fulfilment-ops
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 3000
+default: rank_by_distance
+state:
+  include:
+    - order.destination_state
+    - order.ship_method
+    - order.line_count
+    - candidates[].id
+    - candidates[].type
+    - candidates[].backlog_units
+    - candidates[].reject_rate
+    - candidates[].staffing
+    - candidates[].minutes_to_cutoff
+    - candidates[].distance_km
+    - candidates[].cost_usd
+questions:
+  on_time:
+    type: score
+    instructions: Can this node ship on time given its backlog, reject rate, staffing and cutoff?
+    feeds: sourcing_composite
+    criteria:
+      - Very unlikely to ship on time, backlog far beyond capacity or past cutoff
+      - Unlikely to ship on time, heavy backlog or thin staffing
+      - Even chance, moderate backlog and normal staffing
+      - Likely to ship on time, light backlog and healthy staffing
+      - Almost certain to ship on time, idle capacity well before cutoff
+  cost_efficiency:
+    type: score
+    instructions: How cost efficient is shipping this order from this node?
+    feeds: sourcing_composite
+    criteria:
+      - Very expensive, long distance or premium handling
+      - Expensive, above network average cost
+      - Average cost for this destination
+      - Cheap, nearby node with standard handling
+      - Cheapest option available in the network
+composite:
+  weights:
+    on_time: 0.7
+    cost_efficiency: 0.3
+  outputKey: node_score
+topK:
+  scoreQuestion: on_time
+  k: 20
+  candidatesField: candidates
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }

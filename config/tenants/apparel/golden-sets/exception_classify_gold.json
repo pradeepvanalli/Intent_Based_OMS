@@ -1,0 +1,213 @@
+{
+  "goldenSet": "exception_classify_gold",
+  "cases": [
+    {
+      "caseId": "exce_01",
+      "input": {
+        "exception": {
+          "source": "address_verifier",
+          "code": "AVS_FAIL",
+          "message": "Address could not be verified, apartment number missing"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released"
+        }
+      },
+      "expected": {
+        "value": "address"
+      }
+    },
+    {
+      "caseId": "exce_02",
+      "input": {
+        "exception": {
+          "source": "wms",
+          "code": "SHORT_PICK",
+          "message": "3PL Las Vegas short-picked JKT-PUF-OLV-L, bin empty, cycle count 0"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released"
+        }
+      },
+      "expected": {
+        "value": "inventory_short"
+      }
+    },
+    {
+      "caseId": "exce_03",
+      "input": {
+        "exception": {
+          "source": "wms",
+          "code": "OVERSOLD",
+          "message": "Oversold during allocation: JKT-BMB-ECR-M demand 15 against 10 on hand"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released"
+        }
+      },
+      "expected": {
+        "value": "inventory_short"
+      }
+    },
+    {
+      "caseId": "exce_04",
+      "input": {
+        "exception": {
+          "source": "carrier",
+          "code": "DELAY",
+          "message": "Parcel delayed at the Memphis hub, weather, moving again tomorrow"
+        },
+        "order": {
+          "channel": "web",
+          "status": "shipped",
+          "days_since_shipped": 3
+        }
+      },
+      "expected": {
+        "value": "carrier_delay"
+      }
+    },
+    {
+      "caseId": "exce_05",
+      "input": {
+        "exception": {
+          "source": "carrier",
+          "code": "LOST",
+          "message": "No scan for 8 days since origin acceptance, carrier opened a trace"
+        },
+        "order": {
+          "channel": "web",
+          "status": "shipped",
+          "days_since_shipped": 9
+        }
+      },
+      "expected": {
+        "value": "carrier_lost"
+      }
+    },
+    {
+      "caseId": "exce_06",
+      "input": {
+        "exception": {
+          "source": "carrier",
+          "code": "RTS",
+          "message": "Returned to sender, label damaged"
+        },
+        "order": {
+          "channel": "web",
+          "status": "shipped",
+          "days_since_shipped": 12
+        }
+      },
+      "expected": {
+        "value": "carrier_lost"
+      }
+    },
+    {
+      "caseId": "exce_07",
+      "input": {
+        "exception": {
+          "source": "psp",
+          "code": "AUTH_DECLINED",
+          "message": "Payment authorisation declined by issuer"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released"
+        }
+      },
+      "expected": {
+        "value": "payment"
+      }
+    },
+    {
+      "caseId": "exce_08",
+      "input": {
+        "exception": {
+          "source": "psp",
+          "code": "AUTH_EXPIRING",
+          "message": "Trial authorisation expires in 24 hours, capture pending"
+        },
+        "order": {
+          "channel": "web",
+          "status": "delivered"
+        }
+      },
+      "expected": {
+        "value": "payment"
+      }
+    },
+    {
+      "caseId": "exce_09",
+      "input": {
+        "exception": {
+          "source": "store",
+          "code": "REJECTED",
+          "message": "SoHo store rejected the release, unit not found on the shop floor"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released"
+        }
+      },
+      "expected": {
+        "value": "store_reject"
+      }
+    },
+    {
+      "caseId": "exce_10",
+      "input": {
+        "exception": {
+          "source": "integration",
+          "code": "TIMEOUT",
+          "message": "System error: WMS release call timed out twice"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released"
+        }
+      },
+      "expected": {
+        "value": "system"
+      }
+    },
+    {
+      "caseId": "exce_11",
+      "input": {
+        "exception": {
+          "source": "cs",
+          "code": "NOTE",
+          "message": "Customer asks whether the scarf comes in a box"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released"
+        }
+      },
+      "expected": {
+        "value": "other"
+      }
+    },
+    {
+      "caseId": "exce_12",
+      "input": {
+        "exception": {
+          "source": "carrier",
+          "code": "DAMAGED",
+          "message": "Carrier reports the parcel arrived at the hub crushed, contents unknown"
+        },
+        "order": {
+          "channel": "web",
+          "status": "shipped",
+          "days_since_shipped": 2
+        }
+      },
+      "expected": {
+        "value": "unclear"
+      }
+    }
+  ]
+}

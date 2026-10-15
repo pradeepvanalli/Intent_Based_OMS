@@ -1,0 +1,485 @@
+# Voltline Electronics — data-driven sample orders (format: docs/SAMPLE_ORDERS_FORMAT.md). The seeder captures these
+# through the normal capture pipeline, drives the requested lifecycle through the mock WMS / carrier webhooks, then
+# creates the listed returns and exceptions. Keys are stable; channelOrderId is unique; every SKU is in catalog.yaml,
+# every order type in order-types.yaml. Serial numbers and IMEIs travel as order extensions keyed by line id
+# (extension-schema.json): the platform validates extensions at order level, so there is no line-level schema.
+#
+# Scenario map (README): E1 launch pre-orders L01-L12 · E2 forwarder laptop H01 · E3 backorders B01-B03 ·
+# E4 returns on W01 / W02 / W03 · E5 drop-ship vendor SLA breach on V01 (exception X01). Also: lithium pack to a PO
+# box (P01, compliance hold), bundle (K01), trade-in credit (T01), marketplace (M01), ship-from-store (S01, S02 with a
+# store reject), declined card (D01), carrier damage (X02 on C01), refurbished (R01), gift cards (G01), oversized TV
+# from a DC (O01), high-value phone with adult signature (A01).
+orders:
+  # ---- E1 · Nova X2 launch: 12 pre-orders within 14 minutes; 10 wave-1 units on hand at DC-MEM ------------------------
+  - key: L01
+    channel: web
+    channelOrderId: VL-WEB-50001
+    orderType: pre_order
+    shipMethod: ground
+    placedAt: 2026-10-10T16:00:04Z
+    customer: { ref: cust-vl-3001, name: Maya Lindqvist, email: maya.l@example.com, tier: standard, age: 29, attributes: { split_acceptance_rate: 0.4, returns_12m: 0, orders_12m: 2 } }
+    lines:
+      - { id: "1", sku: PHN-NOVA-X2-256, qty: 1, unitPrice: 1099.00 }
+    shipTo: { name: Maya Lindqvist, line1: 1180 S Lamar Blvd, line2: Apt 212, city: Austin, state: TX, zip: "78704", country: US, kind: residential }
+    intentChoices: [ship_complete]
+    extensions: { launch: { campaign: nova-x2-launch, waveRequested: 1 } }
+  - key: L02
+    channel: web
+    channelOrderId: VL-WEB-50002
+    orderType: pre_order
+    shipMethod: ground
+    placedAt: 2026-10-10T16:00:31Z
+    customer: { ref: cust-vl-3002, name: Devon Okafor, email: devon.o@example.com, tier: silver, age: 41, attributes: { split_acceptance_rate: 0.5, returns_12m: 1, orders_12m: 5 } }
+    lines:
+      - { id: "1", sku: PHN-NOVA-X2-256, qty: 1, unitPrice: 1099.00 }
+      - { id: "2", sku: CAS-X2-CLR, qty: 1, unitPrice: 29.00 }
+    shipTo: { name: Devon Okafor, line1: 2140 N Halsted St, city: Chicago, state: IL, zip: "60614", country: US, kind: residential }
+    notes:
+      - Please send the case with the phone, not before.
+    intentChoices: [ship_complete]
+    extensions: { launch: { campaign: nova-x2-launch, waveRequested: 1 } }
+  - key: L03
+    channel: web
+    channelOrderId: VL-WEB-50003
+    orderType: pre_order
+    shipMethod: ground
+    placedAt: 2026-10-10T16:01:12Z
+    customer: { ref: cust-vl-3003, name: Priya Natarajan, email: priya.n@example.com, tier: standard, age: 35, attributes: { split_acceptance_rate: 0.6, returns_12m: 0, orders_12m: 1 } }
+    lines:
+      - { id: "1", sku: PHN-NOVA-X2-256, qty: 1, unitPrice: 1099.00 }
+    shipTo: { name: Priya Natarajan, line1: 455 S 4th St, city: San Jose, state: CA, zip: "95112", country: US, kind: residential }
+    intentChoices: [ship_complete]
+    extensions: { launch: { campaign: nova-x2-launch, waveRequested: 1 } }
+  - key: L04
+    channel: marketplace
+    channelOrderId: MKT-AMZ-114-7720391
+    orderType: pre_order
+    shipMethod: ground
+    placedAt: 2026-10-10T16:01:48Z
+    customer: { ref: cust-vl-3004, name: Jonah Reyes, email: jonah.r@example.com, tier: standard, age: 26, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 0 } }
+    lines:
+      - { id: "1", sku: PHN-NOVA-X2-256, qty: 1, unitPrice: 1099.00 }
+    shipTo: { name: Jonah Reyes, line1: 77 Hudson St, line2: Unit 1404, city: Jersey City, state: NJ, zip: "07302", country: US, kind: residential }
+    extensions: { launch: { campaign: nova-x2-launch, waveRequested: 1 }, marketplace: { name: amazon, externalOrderId: "114-7720391-2203418" } }
+  - key: L05
+    channel: web
+    channelOrderId: VL-WEB-50005
+    orderType: pre_order
+    shipMethod: ground
+    placedAt: 2026-10-10T16:02:27Z
+    customer: { ref: cust-vl-3005, name: Hannah Brooks, email: hannah.b@example.com, tier: gold, age: 38, attributes: { split_acceptance_rate: 0.2, returns_12m: 1, orders_12m: 9 } }
+    lines:
+      - { id: "1", sku: PHN-NOVA-X2-256, qty: 1, unitPrice: 1099.00 }
+      - { id: "2", sku: WTY-PHONE-2Y, qty: 1, unitPrice: 149.00 }
+    shipTo: { name: Hannah Brooks, line1: 3200 Fremont Ave N, city: Seattle, state: WA, zip: "98103", country: US, kind: residential }
+    intentChoices: [ship_complete]
+    extensions: { launch: { campaign: nova-x2-launch, waveRequested: 1 }, warranty: { plan: WTY-PHONE-2Y, coveredLineId: "1" } }
+  - key: L06
+    channel: web
+    channelOrderId: VL-WEB-50006
+    orderType: pre_order
+    shipMethod: ground
+    placedAt: 2026-10-10T16:03:05Z
+    customer: { ref: cust-vl-3006, name: Luis Fernández, email: luis.f@example.com, tier: standard, age: 31, attributes: { split_acceptance_rate: 0.7, returns_12m: 0, orders_12m: 3 } }
+    lines:
+      - { id: "1", sku: PHN-NOVA-X2-256, qty: 1, unitPrice: 1099.00 }
+    shipTo: { name: Luis Fernández, line1: 1600 Glenarm Pl, line2: "#1802", city: Denver, state: CO, zip: "80202", country: US, kind: residential }
+    intentChoices: [ship_complete]
+    extensions: { launch: { campaign: nova-x2-launch, waveRequested: 1 } }
+  - key: L07
+    channel: web
+    channelOrderId: VL-WEB-50007
+    orderType: pre_order
+    shipMethod: ground
+    placedAt: 2026-10-10T16:04:40Z
+    customer: { ref: cust-vl-3007, name: Grace Whitaker, email: grace.w@example.com, tier: silver, age: 44, attributes: { split_acceptance_rate: 0.3, returns_12m: 2, orders_12m: 6 } }
+    lines:
+      - { id: "1", sku: PHN-NOVA-X2-256, qty: 1, unitPrice: 1099.00 }
+    shipTo: { name: Grace Whitaker, line1: 1 Boylston Pl, city: Boston, state: MA, zip: "02116", country: US, kind: residential }
+    intentChoices: [ship_complete]
+    extensions: { launch: { campaign: nova-x2-launch, waveRequested: 1 } }
+  - key: L08
+    channel: web
+    channelOrderId: VL-WEB-50008
+    orderType: pre_order
+    shipMethod: ground
+    placedAt: 2026-10-10T16:05:58Z
+    customer: { ref: cust-vl-3008, name: Samir Haddad, email: samir.h@example.com, tier: standard, age: 23, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 1 } }
+    lines:
+      - { id: "1", sku: PHN-NOVA-X2-256, qty: 1, unitPrice: 1099.00 }
+    shipTo: { name: Samir Haddad, line1: 2201 Westlake Ave, city: Seattle, state: WA, zip: "98121", country: US, kind: residential }
+    intentChoices: [ship_complete]
+    extensions: { launch: { campaign: nova-x2-launch, waveRequested: 1 } }
+  - key: L09
+    channel: web
+    channelOrderId: VL-WEB-50009
+    orderType: pre_order
+    shipMethod: ground
+    placedAt: 2026-10-10T16:07:19Z
+    customer: { ref: cust-vl-3009, name: Olivia Chen, email: olivia.c@example.com, tier: standard, age: 33, attributes: { split_acceptance_rate: 0.5, returns_12m: 1, orders_12m: 2 } }
+    lines:
+      - { id: "1", sku: PHN-NOVA-X2-256, qty: 1, unitPrice: 1099.00 }
+    shipTo: { name: Olivia Chen, line1: 1 Market St, line2: Floor 7, city: San Francisco, state: CA, zip: "94105", country: US, kind: commercial }
+    intentChoices: [ship_complete]
+    extensions: { launch: { campaign: nova-x2-launch, waveRequested: 1 } }
+  - key: L10
+    channel: web
+    channelOrderId: VL-WEB-50010
+    orderType: pre_order
+    shipMethod: ground
+    placedAt: 2026-10-10T16:08:52Z
+    customer: { ref: cust-vl-3010, name: Marcus Bell, email: marcus.b@example.com, tier: standard, age: 50, attributes: { split_acceptance_rate: 0.4, returns_12m: 0, orders_12m: 4 } }
+    lines:
+      - { id: "1", sku: PHN-NOVA-X2-256, qty: 1, unitPrice: 1099.00 }
+    shipTo: { name: Marcus Bell, line1: 1201 Demonbreun St, city: Nashville, state: TN, zip: "37203", country: US, kind: residential }
+    intentChoices: [ship_complete]
+    extensions: { launch: { campaign: nova-x2-launch, waveRequested: 1 } }
+  - key: L11
+    channel: web
+    channelOrderId: VL-WEB-50011
+    orderType: pre_order
+    shipMethod: ground
+    placedAt: 2026-10-10T16:10:36Z
+    customer: { ref: cust-vl-3011, name: Aisha Rahman, email: aisha.r@example.com, tier: standard, age: 27, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 1 } }
+    lines:
+      - { id: "1", sku: PHN-NOVA-X2-256, qty: 1, unitPrice: 1099.00 }
+    shipTo: { name: Aisha Rahman, line1: 4 Kelley Dr, city: Phoenix, state: AZ, zip: "85004", country: US, kind: residential }
+    intentChoices: [ship_complete]
+    extensions: { launch: { campaign: nova-x2-launch, waveRequested: 1 } }
+  # The eleventh unit is gone: L11 waits for wave 2. L12 is a gold member 14 minutes after launch; the
+  # preorder_allocation rule loyalty_protection allocates one of the two protected units.
+  - key: L12
+    channel: web
+    channelOrderId: VL-WEB-50012
+    orderType: pre_order
+    shipMethod: ground
+    placedAt: 2026-10-10T16:14:09Z
+    customer: { ref: cust-vl-3012, name: Theodore Nakamura, email: theo.n@example.com, tier: gold, age: 47, attributes: { split_acceptance_rate: 0.2, returns_12m: 0, orders_12m: 11 } }
+    lines:
+      - { id: "1", sku: PHN-NOVA-X2-256, qty: 1, unitPrice: 1099.00 }
+    shipTo: { name: Theodore Nakamura, line1: 950 Mass Ave, line2: Apt 9B, city: Cambridge, state: MA, zip: "02139", country: US, kind: residential }
+    notes:
+      - Gold member since 2021, pre-ordered the minute I saw the email. Please do not let me miss the first batch.
+    intentChoices: [ship_complete]
+    extensions: { launch: { campaign: nova-x2-launch, waveRequested: 1 } }
+
+  # ---- E2 · $2,399 export-controlled laptop to a freight forwarder --------------------------------------------------
+  - key: H01
+    channel: web
+    channelOrderId: VL-WEB-50020
+    orderType: standard_ship
+    shipMethod: two_day
+    placedAt: 2026-10-11T03:12:44Z
+    customer: { ref: cust-vl-3020, name: R. Albrecht, email: r.albrecht.import@example.com, tier: standard, age: 36, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 0 } }
+    lines:
+      - { id: "1", sku: LAP-FORGE-16, qty: 1, unitPrice: 2399.00 }
+    shipTo: { name: R. Albrecht c/o SkyBridge Freight Forwarding, line1: 8400 NW 36th St, line2: Suite 450 - Box 11923, city: Doral, state: FL, zip: "33166", country: US, kind: freight_forwarder }
+    notes:
+      - ship to my forwarder, will re-export
+    intentChoices: [ship_complete]
+    tender: { type: card, token: tok_visa_ok, amount: 2542.94 }
+
+  # ---- Lithium pack to a PO box: compliance hold (LITHIUM_PO_BOX), CS asks for a street address ------------------------
+  - key: P01
+    channel: web
+    channelOrderId: VL-WEB-50021
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-10-11T14:40:10Z
+    customer: { ref: cust-vl-3021, name: Walter Finch, email: walter.f@example.com, tier: standard, age: 61, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 2 } }
+    lines:
+      - { id: "1", sku: BAT-PWR-27K, qty: 2, unitPrice: 89.00 }
+      - { id: "2", sku: CBL-USBC-2M, qty: 1, unitPrice: 19.00 }
+    shipTo: { name: Walter Finch, line1: PO Box 4471, city: Boise, state: ID, zip: "83701", country: US, kind: po_box }
+    notes:
+      - Rural route, the PO box is the only address I use.
+
+  # ---- Bundle: phone + case + charger in one box --------------------------------------------------------------------
+  - key: K01
+    channel: web
+    channelOrderId: VL-WEB-50022
+    orderType: bundle_ship_complete
+    shipMethod: ground
+    placedAt: 2026-10-05T18:22:03Z
+    customer: { ref: cust-vl-3022, name: Elena Petrova, email: elena.p@example.com, tier: silver, age: 39, attributes: { split_acceptance_rate: 0.3, returns_12m: 1, orders_12m: 4 } }
+    lines:
+      - { id: "1", sku: PHN-NOVA-X1-256, qty: 1, unitPrice: 899.00, discount: 50.00 }
+      - { id: "2", sku: CAS-X1-LTH, qty: 1, unitPrice: 49.00, discount: 49.00 }
+      - { id: "3", sku: CHG-GAN-65, qty: 1, unitPrice: 49.00, discount: 20.00 }
+    shipTo: { name: Elena Petrova, line1: 300 E 57th St, line2: Apt 22C, city: New York, state: NY, zip: "10022", country: US, kind: residential }
+    intentChoices: [ship_complete]
+    extensions: { bundleId: BND-X1-STARTER, serials: { "1": ["VLX1-256-0048127-A7"] }, imeis: { "1": ["356938035643809"] } }
+    lifecycle: { ship: true, deliver: true, deliveredDaysAgo: 4 }
+
+  # ---- E5 · TV drop-ship from Lumen; vendor misses the 48 h ship SLA (exception X01) --------------------------------
+  - key: V01
+    channel: web
+    channelOrderId: VL-WEB-50023
+    orderType: drop_ship
+    shipMethod: ground
+    placedAt: 2026-10-09T20:05:51Z
+    customer: { ref: cust-vl-3023, name: Nathan Price, email: nathan.p@example.com, tier: silver, age: 45, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 3 } }
+    lines:
+      - { id: "1", sku: TV-OLED-65, qty: 1, unitPrice: 1799.00 }
+      - { id: "2", sku: WTY-TV-4Y, qty: 1, unitPrice: 199.00 }
+    shipTo: { name: Nathan Price, line1: 4100 Spruce St, city: Philadelphia, state: PA, zip: "19104", country: US, kind: residential }
+    intentChoices: [ship_complete]
+    extensions: { warranty: { plan: WTY-TV-4Y, coveredLineId: "1" } }
+
+  # ---- E4c · TV drop-ship delivered, damaged in transit (return W03) -------------------------------------------------
+  - key: W03
+    channel: web
+    channelOrderId: VL-WEB-50024
+    orderType: drop_ship
+    shipMethod: ground
+    placedAt: 2026-10-01T15:30:00Z
+    customer: { ref: cust-vl-3024, name: Carla Mendes, email: carla.m@example.com, tier: standard, age: 52, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 2 } }
+    lines:
+      - { id: "1", sku: TV-QLED-55, qty: 1, unitPrice: 899.00 }
+      - { id: "2", sku: CBL-HDMI-21, qty: 1, unitPrice: 24.00 }
+    shipTo: { name: Carla Mendes, line1: 2300 W 7th St, city: Los Angeles, state: CA, zip: "90057", country: US, kind: residential }
+    intentChoices: [ship_complete]
+    extensions: { serials: { "1": ["LMQ55-2026-0917-33041"] } }
+    lifecycle: { ship: true, deliver: true, deliveredDaysAgo: 2 }
+
+  # ---- E3 · Backorders on the sold-out Aero 14 (60 units on PO, ETA about nine days) ---------------------------------
+  - key: B01
+    channel: web
+    channelOrderId: VL-WEB-50025
+    orderType: backorder
+    shipMethod: ground
+    placedAt: 2026-10-08T12:11:30Z
+    customer: { ref: cust-vl-3025, name: Imogen Clarke, email: imogen.c@example.com, tier: gold, age: 43, attributes: { split_acceptance_rate: 0.1, returns_12m: 0, orders_12m: 7 } }
+    lines:
+      - { id: "1", sku: LAP-AERO-14, qty: 1, unitPrice: 1299.00 }
+    shipTo: { name: Imogen Clarke, line1: 1550 Market St, line2: Apt 601, city: Denver, state: CO, zip: "80202", country: US, kind: residential }
+    notes:
+      - happy to wait, don't substitute
+    intentChoices: [ship_complete]
+  - key: B02
+    channel: web
+    channelOrderId: VL-WEB-50026
+    orderType: backorder
+    shipMethod: two_day
+    placedAt: 2026-10-08T12:48:02Z
+    customer: { ref: cust-vl-3026, name: Tomás Herrera, email: tomas.h@example.com, tier: silver, age: 30, attributes: { split_acceptance_rate: 0.7, returns_12m: 1, orders_12m: 3 } }
+    lines:
+      - { id: "1", sku: LAP-AERO-14, qty: 1, unitPrice: 1299.00 }
+      - { id: "2", sku: WTY-LAP-3Y, qty: 1, unitPrice: 249.00 }
+    shipTo: { name: Tomás Herrera, line1: 500 W 2nd St, city: Austin, state: TX, zip: "78701", country: US, kind: residential }
+    notes:
+      - need it by Friday or cancel
+    extensions: { warranty: { plan: WTY-LAP-3Y, coveredLineId: "1" } }
+  - key: B03
+    channel: web
+    channelOrderId: VL-WEB-50027
+    orderType: backorder
+    shipMethod: ground
+    placedAt: 2026-10-08T13:20:45Z
+    customer: { ref: cust-vl-3027, name: Ruth Adeyemi, email: ruth.a@example.com, tier: standard, age: 36, attributes: { split_acceptance_rate: 0.8, returns_12m: 0, orders_12m: 2 } }
+    lines:
+      - { id: "1", sku: LAP-AERO-14, qty: 1, unitPrice: 1299.00 }
+      - { id: "2", sku: CAS-AERO-SLV, qty: 1, unitPrice: 39.00 }
+      - { id: "3", sku: CBL-TB4-1M, qty: 1, unitPrice: 59.00 }
+    shipTo: { name: Ruth Adeyemi, line1: 1000 Peachtree St NE, line2: Unit 1510, city: Atlanta, state: GA, zip: "30309", country: US, kind: residential }
+    notes:
+      - send whatever is in stock now, the laptop can follow
+    intentChoices: [ship_as_available]
+
+  # ---- E4a · Defective headphones (return W01) -----------------------------------------------------------------------
+  - key: W01
+    channel: web
+    channelOrderId: VL-WEB-50028
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-09-24T19:02:10Z
+    customer: { ref: cust-vl-3028, name: Felix Moreau, email: felix.m@example.com, tier: standard, age: 28, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 1 } }
+    lines:
+      - { id: "1", sku: HDP-ANC-PRO, qty: 1, unitPrice: 349.00 }
+    shipTo: { name: Felix Moreau, line1: 2800 N Lake Shore Dr, line2: Apt 3312, city: Chicago, state: IL, zip: "60657", country: US, kind: residential }
+    extensions: { serials: { "1": ["NAP-2026-0831-118204"] } }
+    lifecycle: { ship: true, deliver: true, deliveredDaysAgo: 12 }
+
+  # ---- E4b · Buyer's remorse phone, box unopened (return W02) --------------------------------------------------------
+  - key: W02
+    channel: web
+    channelOrderId: VL-WEB-50029
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-10-06T21:15:00Z
+    customer: { ref: cust-vl-3029, name: Sofia Marchetti, email: sofia.m@example.com, tier: silver, age: 34, attributes: { split_acceptance_rate: 0.4, returns_12m: 0, orders_12m: 4 } }
+    lines:
+      - { id: "1", sku: PHN-NOVA-X1-128, qty: 1, unitPrice: 799.00 }
+    shipTo: { name: Sofia Marchetti, line1: 600 N Michigan Ave, line2: Apt 1902, city: Chicago, state: IL, zip: "60611", country: US, kind: residential }
+    intentChoices: [ship_complete]
+    extensions: { serials: { "1": ["VLX1-128-0071533-C2"] }, imeis: { "1": ["356938035643817"] } }
+    lifecycle: { ship: true, deliver: true, deliveredDaysAgo: 3 }
+
+  # ---- Carrier damage in transit on a laptop (exception X02) ----------------------------------------------------------
+  - key: C01
+    channel: web
+    channelOrderId: VL-WEB-50030
+    orderType: standard_ship
+    shipMethod: two_day
+    placedAt: 2026-10-09T09:45:12Z
+    customer: { ref: cust-vl-3030, name: Daniel Osei, email: daniel.o@example.com, tier: gold, age: 40, attributes: { split_acceptance_rate: 0.3, returns_12m: 1, orders_12m: 8 } }
+    lines:
+      - { id: "1", sku: LAP-FORGE-16, qty: 1, unitPrice: 2399.00 }
+      - { id: "2", sku: CBL-TB4-1M, qty: 1, unitPrice: 59.00 }
+    shipTo: { name: Daniel Osei, line1: 1200 Fifth Ave, line2: Apt 7A, city: Seattle, state: WA, zip: "98101", country: US, kind: residential }
+    intentChoices: [ship_complete]
+    extensions: { serials: { "1": ["VLF16-2026-0920-004412"] } }
+    lifecycle: { ship: true }
+
+  # ---- Declined card -------------------------------------------------------------------------------------------------
+  - key: D01
+    channel: web
+    channelOrderId: VL-WEB-50031
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-10-11T22:08:37Z
+    customer: { ref: cust-vl-3031, name: Kevin Oduya, email: kevin.o@example.com, tier: standard, age: 24, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 0 } }
+    lines:
+      - { id: "1", sku: PHN-PULSE-A5, qty: 1, unitPrice: 449.00 }
+      - { id: "2", sku: CHG-GAN-65, qty: 1, unitPrice: 49.00 }
+    shipTo: { name: Kevin Oduya, line1: 1700 Bryant St, city: San Francisco, state: CA, zip: "94110", country: US, kind: residential }
+    tender: { type: card, token: tok_visa_decline, amount: 534.10 }
+
+  # ---- Marketplace channel order (ship_complete by channel default) -------------------------------------------------
+  - key: M01
+    channel: marketplace
+    channelOrderId: MKT-AMZ-113-2200481
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-10-10T07:51:20Z
+    customer: { ref: cust-vl-3032, name: Amazon customer 2200481, tier: standard, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 0 } }
+    lines:
+      - { id: "1", sku: HDP-BUDS-2, qty: 1, unitPrice: 179.00 }
+      - { id: "2", sku: CBL-USBC-2M, qty: 2, unitPrice: 19.00 }
+    shipTo: { name: J. Park, line1: 3550 Wilshire Blvd, line2: Apt 1210, city: Los Angeles, state: CA, zip: "90010", country: US, kind: residential }
+    extensions: { marketplace: { name: amazon, externalOrderId: "113-2200481-7781042", fulfilmentSla: "2 business days" } }
+    lifecycle: { ship: true }
+
+  # ---- Ship from store ----------------------------------------------------------------------------------------------
+  - key: S01
+    channel: web
+    channelOrderId: VL-WEB-50033
+    orderType: ship_from_store
+    shipMethod: ground
+    placedAt: 2026-10-07T16:40:00Z
+    customer: { ref: cust-vl-3033, name: Beatriz Alves, email: beatriz.a@example.com, tier: standard, age: 29, attributes: { split_acceptance_rate: 0.6, returns_12m: 0, orders_12m: 2 } }
+    lines:
+      - { id: "1", sku: CHG-GAN-65, qty: 1, unitPrice: 49.00 }
+      - { id: "2", sku: CBL-USBC-2M, qty: 1, unitPrice: 19.00 }
+    shipTo: { name: Beatriz Alves, line1: 2400 S Congress Ave, line2: Apt 118, city: Austin, state: TX, zip: "78704", country: US, kind: residential }
+    lifecycle: { ship: true, deliver: true, deliveredDaysAgo: 5 }
+  - key: S02
+    channel: web
+    channelOrderId: VL-WEB-50034
+    orderType: ship_from_store
+    shipMethod: ground
+    placedAt: 2026-10-12T15:05:00Z
+    customer: { ref: cust-vl-3034, name: Henry Castellanos, email: henry.c@example.com, tier: silver, age: 37, attributes: { split_acceptance_rate: 0.5, returns_12m: 1, orders_12m: 5 } }
+    lines:
+      - { id: "1", sku: SPK-BT-GO, qty: 1, unitPrice: 129.00 }
+    shipTo: { name: Henry Castellanos, line1: 90 Ferry St, city: Newark, state: NJ, zip: "07105", country: US, kind: residential }
+    lifecycle: { storeReject: true }          # Newark store rejects after the floor walk; the line re-sources
+
+  # ---- Trade-in credit on a phone upgrade ----------------------------------------------------------------------------
+  - key: T01
+    channel: web
+    channelOrderId: VL-WEB-50035
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-10-03T13:12:00Z
+    customer: { ref: cust-vl-3035, name: Noor Siddiqui, email: noor.s@example.com, tier: gold, age: 42, attributes: { split_acceptance_rate: 0.3, returns_12m: 0, orders_12m: 6 } }
+    lines:
+      - { id: "1", sku: PHN-NOVA-X1-256, qty: 1, unitPrice: 899.00, discount: 220.00 }   # trade-in credit applied as a line discount
+      - { id: "2", sku: WTY-PHONE-2Y, qty: 1, unitPrice: 149.00 }
+    shipTo: { name: Noor Siddiqui, line1: 1400 Hi Line Dr, line2: Apt 1105, city: Dallas, state: TX, zip: "75207", country: US, kind: residential }
+    intentChoices: [ship_complete]
+    tender: { type: card, token: tok_visa_ok, amount: 879.75 }
+    extensions: { tradeIn: { deviceModel: Nova X0 128GB, imei: "356938035640011", creditUsd: 220.00, status: received }, serials: { "1": ["VLX1-256-0052208-B1"] }, imeis: { "1": ["356938035643825"] }, warranty: { plan: WTY-PHONE-2Y, coveredLineId: "1" } }
+    lifecycle: { ship: true, deliver: true, deliveredDaysAgo: 8 }
+
+  # ---- Certified refurbished laptop from the Louisville centre -------------------------------------------------------
+  - key: R01
+    channel: web
+    channelOrderId: VL-WEB-50036
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-10-04T10:30:00Z
+    customer: { ref: cust-vl-3036, name: Isaac Berg, email: isaac.b@example.com, tier: standard, age: 55, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 1 } }
+    lines:
+      - { id: "1", sku: RFB-LAP-AERO-14, qty: 1, unitPrice: 899.00 }
+    shipTo: { name: Isaac Berg, line1: 1 Riverfront Plaza, line2: Suite 300, city: Louisville, state: KY, zip: "40202", country: US, kind: commercial }
+    extensions: { serials: { "1": ["RFB-AERO14-2026-00331"] } }
+    lifecycle: { ship: true, deliver: true, deliveredDaysAgo: 6 }
+
+  # ---- Digital gift cards: no fulfilment ---------------------------------------------------------------------------
+  - key: G01
+    channel: web
+    channelOrderId: VL-WEB-50037
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-10-12T02:14:00Z
+    customer: { ref: cust-vl-3037, name: Lena Hoffmann, email: lena.h@example.com, tier: standard, age: 33, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 3 } }
+    lines:
+      - { id: "1", sku: GC-DIGITAL-100, qty: 2, unitPrice: 100.00 }
+    shipTo: { name: Lena Hoffmann, line1: 700 NW 10th Ave, city: Portland, state: OR, zip: "97209", country: US, kind: residential }
+
+  # ---- Oversized TV from DC stock (ground freight, adult signature) ------------------------------------------------
+  - key: O01
+    channel: web
+    channelOrderId: VL-WEB-50038
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-10-09T17:25:00Z
+    customer: { ref: cust-vl-3038, name: Victor Alston, email: victor.a@example.com, tier: silver, age: 48, attributes: { split_acceptance_rate: 0.2, returns_12m: 0, orders_12m: 4 } }
+    lines:
+      - { id: "1", sku: TV-LED-43, qty: 1, unitPrice: 379.00 }
+      - { id: "2", sku: CBL-HDMI-21, qty: 2, unitPrice: 24.00 }
+    shipTo: { name: Victor Alston, line1: 615 Broadway, city: Nashville, state: TN, zip: "37203", country: US, kind: residential }
+    intentChoices: [ship_complete]
+    lifecycle: { ship: true, deliver: true, deliveredDaysAgo: 1 }
+
+  # ---- High-value phone, verified address: adult signature warning only -------------------------------------------
+  - key: A01
+    channel: web
+    channelOrderId: VL-WEB-50039
+    orderType: standard_ship
+    shipMethod: next_day
+    placedAt: 2026-10-12T11:00:00Z
+    customer: { ref: cust-vl-3039, name: Chloe Dubois, email: chloe.d@example.com, tier: gold, age: 31, attributes: { split_acceptance_rate: 0.3, returns_12m: 1, orders_12m: 10 } }
+    lines:
+      - { id: "1", sku: PHN-NOVA-X1-256, qty: 1, unitPrice: 899.00 }
+      - { id: "2", sku: CAS-X1-LTH, qty: 1, unitPrice: 49.00 }
+    shipTo: { name: Chloe Dubois, line1: 200 Clarendon St, line2: Apt 4100, city: Boston, state: MA, zip: "02116", country: US, kind: residential }
+    intentChoices: [ship_complete]
+
+  # ---- Monitor drop-ship, in flight (vendor on time) ----------------------------------------------------------------
+  - key: V02
+    channel: web
+    channelOrderId: VL-WEB-50040
+    orderType: drop_ship
+    shipMethod: ground
+    placedAt: 2026-10-11T19:40:00Z
+    customer: { ref: cust-vl-3040, name: Omar Khalil, email: omar.k@example.com, tier: standard, age: 26, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 1 } }
+    lines:
+      - { id: "1", sku: MON-UW-34, qty: 1, unitPrice: 699.00 }
+    shipTo: { name: Omar Khalil, line1: 3600 Las Vegas Blvd S, line2: Unit 2310, city: Las Vegas, state: NV, zip: "89109", country: US, kind: residential }
+    lifecycle: { ship: true }
+
+returns:
+  # E4a: defective headphones, warranty triage → defective → return_to_vendor (RTV claim)
+  - { order: W01, lineId: "1", qty: 1, reason: defective, text: "left ear cuts out", receiptPresent: true }
+  # E4b: buyer's remorse, sealed box → restock, restocking fee waived because the box is unopened
+  - { order: W02, lineId: "1", qty: 1, reason: changed_mind, text: "changed my mind, box unopened", receiptPresent: true }
+  # E4c: TV damaged in transit → transit_damage → carrier claim + destroy / RTV
+  - { order: W03, lineId: "1", qty: 1, reason: damaged_in_transit, text: "screen cracked, box was crushed on arrival", receiptPresent: true }
+
+exceptions:
+  # E5: Lumen has not confirmed shipment 52 h after release; vendor_repromise re-promises and opens a vendor_ops task
+  - { order: V01, source: wms, type: vendor_sla_breach, text: "Lumen Display EDI 856 not received 52 hours after release; vendor ship SLA is 48 hours, revised ship date +5 days" }
+  # Carrier reports the laptop parcel crushed in transit
+  - { order: C01, source: carrier, type: carrier_damage, text: "Carrier exception: package damaged in transit at the Seattle hub, contents crushed, freight claim opened" }

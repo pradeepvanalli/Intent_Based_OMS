@@ -1,0 +1,305 @@
+{
+  "goldenSet": "store_reject_reroute_gold",
+  "cases": [
+    {
+      "caseId": "srr_01",
+      "input": {
+        "exception": {
+          "type": "store_reject",
+          "code": "STORE_SHORT",
+          "node_id": "ST-CHI",
+          "occurrences": 1,
+          "age_minutes": 3
+        },
+        "order": {
+          "order_type": "ship_from_store",
+          "channel": "web",
+          "ship_method": "ground",
+          "line_count": 1,
+          "customer_tier": "gold",
+          "total": 119.0,
+          "intent": "ship_complete"
+        }
+      },
+      "expected": {
+        "value": "reroute_nearest_store"
+      },
+      "notes": "Single reject on a ship-from-store order; Dallas and Atlanta carry the dutch oven"
+    },
+    {
+      "caseId": "srr_02",
+      "input": {
+        "exception": {
+          "type": "store_reject",
+          "code": "STORE_SHORT",
+          "node_id": "ST-CHI",
+          "occurrences": 2,
+          "age_minutes": 45
+        },
+        "order": {
+          "order_type": "bopis",
+          "channel": "web",
+          "ship_method": "pickup",
+          "line_count": 1,
+          "customer_tier": "silver",
+          "total": 149.0,
+          "intent": "pickup_consolidated"
+        }
+      },
+      "expected": {
+        "value": "ask_customer"
+      },
+      "notes": "Second reject on a pickup order: the customer chose this store, ask before moving it"
+    },
+    {
+      "caseId": "srr_03",
+      "input": {
+        "exception": {
+          "type": "store_reject",
+          "code": "NO_STAFF",
+          "node_id": "ST-DAL",
+          "occurrences": 1,
+          "age_minutes": 10
+        },
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "marketplace",
+          "ship_method": "ground",
+          "line_count": 2,
+          "customer_tier": "standard",
+          "total": 88.0,
+          "intent": "ship_complete"
+        }
+      },
+      "expected": {
+        "value": "ship_from_dc"
+      },
+      "notes": "Marketplace promise; DC reliability beats speed"
+    },
+    {
+      "caseId": "srr_04",
+      "input": {
+        "exception": {
+          "type": "store_reject",
+          "code": "DAMAGED",
+          "node_id": "ST-SEA",
+          "occurrences": 1,
+          "age_minutes": 5
+        },
+        "order": {
+          "order_type": "ship_from_store",
+          "channel": "web",
+          "ship_method": "ground",
+          "line_count": 1,
+          "customer_tier": "standard",
+          "total": 24.0,
+          "intent": "ship_as_available"
+        }
+      },
+      "expected": {
+        "value": "reroute_nearest_store"
+      },
+      "notes": "Damaged unit at one store; another store nearby has it"
+    },
+    {
+      "caseId": "srr_05",
+      "input": {
+        "exception": {
+          "type": "store_reject",
+          "code": "STORE_SHORT",
+          "node_id": "ST-DEN",
+          "occurrences": 3,
+          "age_minutes": 240
+        },
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "ship_method": "two_day",
+          "line_count": 1,
+          "customer_tier": "gold",
+          "total": 349.0,
+          "intent": "ship_complete"
+        }
+      },
+      "expected": {
+        "value": "ship_from_dc"
+      },
+      "notes": "Third reject on a heavy stand mixer; stop bouncing between stores"
+    },
+    {
+      "caseId": "srr_06",
+      "input": {
+        "exception": {
+          "type": "store_reject",
+          "code": "STORE_SHORT",
+          "node_id": "ST-PHX",
+          "occurrences": 1,
+          "age_minutes": 15
+        },
+        "order": {
+          "order_type": "curbside",
+          "channel": "web",
+          "ship_method": "pickup",
+          "line_count": 2,
+          "customer_tier": "standard",
+          "total": 52.0,
+          "intent": "pickup_consolidated"
+        }
+      },
+      "expected": {
+        "value": "ask_customer"
+      },
+      "notes": "Curbside: the car is at this store, the order cannot move without asking"
+    },
+    {
+      "caseId": "srr_07",
+      "input": {
+        "exception": {
+          "type": "store_reject",
+          "code": "DISCONTINUED",
+          "node_id": "ST-ATL",
+          "occurrences": 1,
+          "age_minutes": 30
+        },
+        "order": {
+          "order_type": "ship_from_store",
+          "channel": "web",
+          "ship_method": "ground",
+          "line_count": 1,
+          "customer_tier": "standard",
+          "total": 12.0,
+          "intent": "ship_as_available"
+        }
+      },
+      "expected": {
+        "value": "cancel_line"
+      },
+      "notes": "Discontinued clearance item, store-only assortment, nothing else in the network"
+    },
+    {
+      "caseId": "srr_08",
+      "input": {
+        "exception": {
+          "type": "store_reject",
+          "code": "STORE_SHORT",
+          "node_id": "ST-CHI",
+          "occurrences": 1,
+          "age_minutes": 8
+        },
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "ship_method": "ground",
+          "line_count": 3,
+          "customer_tier": "silver",
+          "total": 162.0,
+          "intent": "ship_as_available"
+        }
+      },
+      "expected": {
+        "value": "reroute_nearest_store"
+      },
+      "notes": "Ordinary web order, first reject, stock elsewhere"
+    },
+    {
+      "caseId": "srr_09",
+      "input": {
+        "exception": {
+          "type": "store_reject",
+          "code": "HAZMAT_NOT_CERTIFIED",
+          "node_id": "ST-SEA",
+          "occurrences": 1,
+          "age_minutes": 2
+        },
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "ship_method": "ground",
+          "line_count": 2,
+          "customer_tier": "standard",
+          "total": 37.0,
+          "intent": "ship_complete"
+        }
+      },
+      "expected": {
+        "value": "ship_from_dc"
+      },
+      "notes": "Aerosols can only leave a hazmat-certified DC"
+    },
+    {
+      "caseId": "srr_10",
+      "input": {
+        "exception": {
+          "type": "store_reject",
+          "code": "STORE_SHORT",
+          "node_id": "ST-DAL",
+          "occurrences": 2,
+          "age_minutes": 120
+        },
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "marketplace",
+          "ship_method": "ground",
+          "line_count": 1,
+          "customer_tier": "standard",
+          "total": 44.0,
+          "intent": "ship_complete"
+        }
+      },
+      "expected": {
+        "value": "ship_from_dc"
+      },
+      "notes": "Marketplace, second reject"
+    },
+    {
+      "caseId": "srr_11",
+      "input": {
+        "exception": {
+          "type": "store_reject",
+          "code": "STORE_SHORT",
+          "node_id": "ST-DEN",
+          "occurrences": 1,
+          "age_minutes": 6
+        },
+        "order": {
+          "order_type": "same_day_local",
+          "channel": "web",
+          "ship_method": "same_day",
+          "line_count": 2,
+          "customer_tier": "gold",
+          "total": 43.0,
+          "intent": "ship_as_available"
+        }
+      },
+      "expected": {
+        "value": "reroute_nearest_store"
+      },
+      "notes": "Same-day order: only another store within 40 km can still make it today"
+    },
+    {
+      "caseId": "srr_12",
+      "input": {
+        "exception": {
+          "type": "store_reject",
+          "code": "STORE_SHORT",
+          "node_id": "ST-ATL",
+          "occurrences": 4,
+          "age_minutes": 600
+        },
+        "order": {
+          "order_type": "ship_from_store",
+          "channel": "web",
+          "ship_method": "ground",
+          "line_count": 1,
+          "customer_tier": "standard",
+          "total": 59.0,
+          "intent": "ship_as_available"
+        }
+      },
+      "expected": {
+        "value": "cancel_line"
+      },
+      "notes": "Fourth reject in ten hours on a store-only item; every store has been tried"
+    }
+  ]
+}

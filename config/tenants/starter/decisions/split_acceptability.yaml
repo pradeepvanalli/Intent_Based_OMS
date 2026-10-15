@@ -1,0 +1,38 @@
+# Starter tenant — decision `split_acceptability`. Copied from the demo tenant with production evaluation gates
+# (minAccuracyInActBand 0.90, maxCalibrationError 0.05). Review: owner, tier, bands, criteria wording, and add a
+# golden set under golden-sets/ before publishing through the normal approval path. fallbackProvider stays
+# `heuristic` so the tenant works without AI keys; switch to `llm.structured` once an LLM key is configured.
+# Split acceptability (PRD section 9). Noul, tier T2: act only >= 0.9 (confidence |2p-1|), else a person decides.
+decision: split_acceptability
+version: 1
+owner: omnichannel-strategy
+tier: T2
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: false
+state:
+  include:
+    - order.channel
+    - order.notes
+    - order.intent
+    - customer.tier
+    - customer.history.split_acceptance_rate
+    - customer.history.split_complaints
+    - plan_options[].packages
+    - plan_options[].eta
+    - plan_options[].cost_delta
+questions:
+  split_ok:
+    type: noul
+    statement: This customer would accept receiving the order in more than one package, given the stated intent and history.
+    feeds: split_vs_hold
+    criteria:
+      "true": The customer accepts separate shipments
+      "false": The customer wants a single delivery or has complained about splits
+bands:
+  act: { confidence_gte: 0.9 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+postChecks:
+  - "!has(chosen_plan.margin) || chosen_plan.margin >= tenant.margin_floor"

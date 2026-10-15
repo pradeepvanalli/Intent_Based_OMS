@@ -1,0 +1,36 @@
+# Order header, buy online / pick up in store; derived from order_line.bopis quantities (FR-SM-05).
+stateModel: order.bopis
+version: 1
+entity: order
+quantityLevel: false
+states:
+  - { id: created, meta: Created }
+  - { id: validated }
+  - { id: sourcing }
+  - { id: released }
+  - { id: partially_ready }
+  - { id: ready_for_pickup }
+  - { id: partially_picked_up }
+  - { id: picked_up, meta: Terminal }
+  - { id: cancelled, meta: Terminal }
+  - { id: on_hold }
+transitions:
+  - { from: created, to: validated, trigger: event.order_validated }
+  - { from: validated, to: sourcing, trigger: event.sourcing_started }
+  - { from: sourcing, to: released, trigger: event.lines_released }
+  - { from: released, to: partially_ready, trigger: event.line_ready }
+  - { from: [released, partially_ready], to: ready_for_pickup, trigger: event.all_lines_ready }
+  - { from: [ready_for_pickup, partially_ready], to: partially_picked_up, trigger: event.line_picked_up }
+  - { from: [ready_for_pickup, partially_picked_up], to: picked_up, trigger: event.all_lines_picked_up }
+  - { from: [created, validated, sourcing, released, partially_ready, ready_for_pickup, on_hold], to: cancelled, trigger: api.cancel_order, permission: order.cancel }
+  - { from: [created, validated, sourcing, released, partially_ready], to: on_hold, trigger: api.hold_order, permission: order.hold }
+  - { from: on_hold, to: sourcing, trigger: api.release_hold, permission: order.release }
+rollup:
+  - { parentState: cancelled,          priority: 10, when: "ctx.total > 0 && state.cancelled == ctx.total" }
+  - { parentState: picked_up,          priority: 20, when: "state.picked_up > 0 && state.picked_up + state.cancelled == ctx.total" }
+  - { parentState: partially_picked_up, priority: 30, when: "state.picked_up > 0" }
+  - { parentState: ready_for_pickup,   priority: 40, when: "state.ready_for_pickup > 0 && state.ready_for_pickup + state.cancelled == ctx.total" }
+  - { parentState: partially_ready,    priority: 50, when: "state.ready_for_pickup > 0" }
+  - { parentState: sourcing,           priority: 60, when: "ctx.states_with_qty.exists(s, s in ['awaiting_sourcing', 'backordered'])" }
+  - { parentState: released,           priority: 70, when: "state.released > 0 || ctx.states_with_qty.exists(s, s in ['picked'])" }
+  - { parentState: created,            priority: 80, when: "state.created == ctx.total" }

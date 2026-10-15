@@ -1,0 +1,9 @@
+subject: {{brand}}: order {{order_number}} confirmed
+---
+Hi {{customer_name}},
+
+Thanks for your order {{order_number}} placed on {{placed_at}}. We will let you know as soon as it ships.
+Items: {{item_summary}}
+Estimated delivery: {{promise_date}}
+
+{{brand}}

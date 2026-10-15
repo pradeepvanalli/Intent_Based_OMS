@@ -1,0 +1,32 @@
+# Return reason normalisation (PRD section 9). Tier T0 choice over the tenant taxonomy; feeds disposition and product feedback.
+decision: return_reason
+version: 1
+owner: returns-and-risk
+tier: T0
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: unclear
+state:
+  include:
+    - return.customer_reason_text
+    - return.reason_code
+    - return.item_condition
+    - item.category
+questions:
+  reason:
+    type: choice
+    instructions: Which taxonomy reason best describes why the customer is returning the item?
+    feeds: disposition_and_product_feedback
+    criteria:
+      wrong_size: Wrong size or fit, too small or too large
+      wrong_item: Received the wrong item or wrong colour
+      defective: Defective, broken, damaged on arrival or not working
+      not_as_described: Item differs from the description or photos
+      changed_mind: Changed mind, no longer needed or found cheaper
+      arrived_late: Arrived too late to be useful
+      not_received: Customer claims the item never arrived
+      unclear: Not enough information to tell
+bands:
+  act: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }

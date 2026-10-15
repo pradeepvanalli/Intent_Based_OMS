@@ -1,0 +1,522 @@
+# Lumen & Loom — sample orders the seeder captures through the normal capture pipeline (docs/SAMPLE_ORDERS_FORMAT.md).
+# Keys are stable; re-running the seeder never duplicates. Every SKU is in catalog.yaml, every node in nodes.yaml,
+# every order type in order-types.yaml, every return reason in returns.reason_taxonomy, every exception type in
+# exception-taxonomy.yaml. Inventory baseline: inventory.yaml (DRS-MIDI-BLK-M only at LA, JKT-BMB-ECR-M 10 at the DC).
+#
+# Story map (README scenarios): A01/A02 bracketing with and without the note · A03 gift wrap · A04 final-sale markdown
+# then a return attempt · A05/A06 try before you buy · D01–D15 influencer drop spike (15 orders, 10 units) · W01
+# wholesale on net terms · O-E01/E01 and O-E02/E02 exchange flows · Q01 quality complaint · K01 keep-it socks ·
+# B01/B02 BOPIS · F01/F02 ship from store · P01 pre-order drop · S01 3PL short pick · S02 carrier lost · X01 declined
+# card · M01/M02 marketplace and POS · G01 agent order · N01–N04 ordinary volume.
+orders:
+  # ---- A: the apparel stories -----------------------------------------------------------------------------------
+  - key: A01
+    channel: web
+    channelOrderId: LL-WEB-1001
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-09-26T15:12:00Z
+    customer: { ref: cust-ll-1001, name: Ana Oliveira, email: ana.oliveira@example.com, tier: gold, attributes: { split_acceptance_rate: 0.2, returns_12m: 2, orders_12m: 7, bracketing_returns_12m: 1 } }
+    lines:
+      - { id: "1", sku: JNS-STR-IND-28, qty: 1, unitPrice: 118.00 }
+      - { id: "2", sku: JNS-STR-IND-30, qty: 1, unitPrice: 118.00 }
+    shipTo: { name: Ana Oliveira, line1: 145 7th Ave, line2: Apt 4B, city: Brooklyn, state: NY, zip: "11215", kind: residential }
+    notes:
+      - Ordering the 28 and the 30, will return the one that doesn't fit.
+    intentChoices: [ship_complete]
+    lifecycle: { ship: true, deliver: true, deliveredDaysAgo: 6 }
+  - key: A02
+    channel: web
+    channelOrderId: LL-WEB-1002
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-09-27T09:40:00Z
+    customer: { ref: cust-ll-1002, name: Priya Shah, email: priya.shah@example.com, tier: standard, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 1, bracketing_returns_12m: 0 } }
+    lines:
+      - { id: "1", sku: DRS-WRAP-NVY-S, qty: 1, unitPrice: 128.00 }
+      - { id: "2", sku: DRS-WRAP-NVY-M, qty: 1, unitPrice: 128.00 }
+    shipTo: { line1: 1800 Market St, city: Philadelphia, state: PA, zip: "19103", kind: residential }
+    lifecycle: { ship: true, deliver: true, deliveredDaysAgo: 4 }
+  - key: A03
+    channel: web
+    channelOrderId: LL-WEB-1003
+    orderType: standard_ship
+    shipMethod: two_day
+    placedAt: 2026-09-28T19:05:00Z
+    customer: { ref: cust-ll-1003, name: Maya Chen, email: maya.chen@example.com, tier: silver, attributes: { split_acceptance_rate: 0.1, returns_12m: 1, orders_12m: 4 } }
+    lines:
+      - { id: "1", sku: TEE-ORG-WHT-M, qty: 1, unitPrice: 38.00 }
+      - { id: "2", sku: ACC-SCRF-SLK, qty: 1, unitPrice: 88.00 }
+      - { id: "3", sku: SVC-GIFT-WRAP, qty: 1, unitPrice: 6.00 }
+    shipTo: { name: Helen Chen, line1: 1700 Lincoln St, line2: Unit 2210, city: Denver, state: CO, zip: "80203", kind: residential }
+    notes:
+      - This is a birthday gift for my mum, please gift wrap it, no prices on the slip, and send everything together. Card should read "Happy birthday Mum, love Maya".
+    intentChoices: [ship_complete]
+    extensions: { giftWrap: true, giftMessage: "Happy birthday Mum, love Maya", hidePrices: true }
+    lifecycle: { ship: true }
+  - key: A04
+    channel: web
+    channelOrderId: LL-WEB-1004
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-09-20T12:30:00Z
+    customer: { ref: cust-ll-1004, name: Sofia Rossi, email: sofia.rossi@example.com, tier: standard, attributes: { split_acceptance_rate: 0.6, returns_12m: 1, orders_12m: 2 } }
+    lines:
+      - { id: "1", sku: DRS-MAXI-FLR-M, qty: 1, unitPrice: 59.00 }      # final sale markdown (was 148)
+      - { id: "2", sku: ACC-BEAN-WOOL, qty: 1, unitPrice: 42.00 }
+    shipTo: { line1: 500 Boylston St, city: Boston, state: MA, zip: "02116", kind: residential }
+    lifecycle: { ship: true, deliver: true, deliveredDaysAgo: 9 }
+  - key: A05
+    channel: web
+    channelOrderId: LL-WEB-1005
+    orderType: try_before_you_buy
+    shipMethod: ground
+    placedAt: 2026-09-29T08:15:00Z
+    customer: { ref: cust-ll-1005, name: Hannah Weber, email: hannah.weber@example.com, tier: silver, attributes: { split_acceptance_rate: 0.3, returns_12m: 3, orders_12m: 5, bracketing_returns_12m: 1 } }
+    lines:
+      - { id: "1", sku: JKT-TRCH-CAM-M, qty: 1, unitPrice: 298.00 }
+      - { id: "2", sku: KNT-CRD-OAT-M, qty: 1, unitPrice: 168.00 }
+      - { id: "3", sku: SHO-LOAF-TAN-38, qty: 1, unitPrice: 198.00 }
+    shipTo: { line1: 2000 Pennsylvania Ave NW, city: Washington, state: DC, zip: "20006", kind: residential }
+    notes:
+      - Trying the trench and the cardigan for a work trip, will keep what works.
+    intentChoices: [ship_complete]
+    tender: { type: card, token: tok_visa_ok, amount: 730.40 }       # authorisation hold only; captured for the kept items after the 7-day trial
+    extensions: { trialDays: 7 }
+    lifecycle: { ship: true, deliver: true, deliveredDaysAgo: 2 }
+  - key: A06
+    channel: web
+    channelOrderId: LL-WEB-1006
+    orderType: try_before_you_buy
+    shipMethod: ground
+    placedAt: 2026-10-01T21:48:00Z
+    customer: { ref: cust-ll-1006, name: Leila Haddad, email: leila.haddad@example.com, tier: standard, attributes: { split_acceptance_rate: 0.2, returns_12m: 0, orders_12m: 0 } }
+    lines:
+      - { id: "1", sku: DRS-MIDI-RST-S, qty: 1, unitPrice: 148.00 }
+      - { id: "2", sku: DRS-MIDI-RST-M, qty: 1, unitPrice: 148.00 }
+    shipTo: { line1: 3400 Hillview Ave, city: Palo Alto, state: CA, zip: "94304", kind: residential }
+    notes:
+      - First order, between sizes so trying both.
+    intentChoices: [ship_complete]
+    tender: { type: card, token: tok_visa_ok, amount: 325.60 }
+    extensions: { trialDays: 7 }
+    lifecycle: { ship: true }
+  # ---- D: the influencer drop spike (JKT-BMB-ECR-M, 10 units at DC-PA, 15 orders in twelve minutes) ---------------
+  - key: D01
+    channel: web
+    channelOrderId: LL-WEB-2001
+    shipMethod: two_day
+    placedAt: 2026-10-03T18:02:00Z
+    customer: { ref: cust-drop-01, name: Imani Brooks, email: imani.brooks@example.com, tier: gold, attributes: { orders_12m: 6, returns_12m: 1 } }
+    lines: [{ id: "1", sku: JKT-BMB-ECR-M, qty: 1, unitPrice: 325.00 }]
+    shipTo: { line1: 210 W 5th St, city: Los Angeles, state: CA, zip: "90013", kind: residential }
+  - key: D02
+    channel: web
+    channelOrderId: LL-WEB-2002
+    shipMethod: ground
+    placedAt: 2026-10-03T18:02:40Z
+    customer: { ref: cust-drop-02, name: Noor Rahman, email: noor.rahman@example.com, tier: standard, attributes: { orders_12m: 1, returns_12m: 0 } }
+    lines: [{ id: "1", sku: JKT-BMB-ECR-M, qty: 1, unitPrice: 325.00 }]
+    shipTo: { line1: 55 Water St, city: New York, state: NY, zip: "10041", kind: commercial }
+  - key: D03
+    channel: web
+    channelOrderId: LL-WEB-2003
+    shipMethod: ground
+    placedAt: 2026-10-03T18:03:15Z
+    customer: { ref: cust-drop-03, name: Chloe Martin, email: chloe.martin@example.com, tier: standard, attributes: { orders_12m: 2, returns_12m: 1 } }
+    lines: [{ id: "1", sku: JKT-BMB-ECR-M, qty: 1, unitPrice: 325.00 }]
+    shipTo: { line1: 600 Congress Ave, city: Austin, state: TX, zip: "78701", kind: residential }
+  - key: D04
+    channel: marketplace
+    channelOrderId: LL-MKT-2004
+    shipMethod: ground
+    placedAt: 2026-10-03T18:03:50Z
+    customer: { ref: cust-drop-04, name: Zara Ahmed, email: zara.ahmed@example.com, tier: standard, attributes: { orders_12m: 0, returns_12m: 0 } }
+    lines: [{ id: "1", sku: JKT-BMB-ECR-M, qty: 1, unitPrice: 325.00 }]
+    shipTo: { line1: 1 Monument Cir, city: Indianapolis, state: IN, zip: "46204", kind: residential }
+    notes:
+      - If it's sold out please just cancel, I don't want to wait.
+  - key: D05
+    channel: web
+    channelOrderId: LL-WEB-2005
+    shipMethod: next_day
+    placedAt: 2026-10-03T18:04:30Z
+    customer: { ref: cust-drop-05, name: Jade Nguyen, email: jade.nguyen@example.com, tier: gold, attributes: { orders_12m: 11, returns_12m: 3 } }
+    lines: [{ id: "1", sku: JKT-BMB-ECR-M, qty: 1, unitPrice: 325.00 }]
+    shipTo: { line1: 101 California St, city: San Francisco, state: CA, zip: "94111", kind: commercial }
+  - key: D06
+    channel: web
+    channelOrderId: LL-WEB-2006
+    shipMethod: ground
+    placedAt: 2026-10-03T18:05:05Z
+    customer: { ref: cust-drop-06, name: Amara Okafor, email: amara.okafor@example.com, tier: silver, attributes: { orders_12m: 3, returns_12m: 1 } }
+    lines: [{ id: "1", sku: JKT-BMB-ECR-M, qty: 1, unitPrice: 325.00 }]
+    shipTo: { line1: 191 Peachtree St NE, city: Atlanta, state: GA, zip: "30303", kind: residential }
+  - key: D07
+    channel: web
+    channelOrderId: LL-WEB-2007
+    shipMethod: ground
+    placedAt: 2026-10-03T18:05:45Z
+    customer: { ref: cust-drop-07, name: Elena Petrova, email: elena.petrova@example.com, tier: standard, attributes: { orders_12m: 1, returns_12m: 0 } }
+    lines: [{ id: "1", sku: JKT-BMB-ECR-M, qty: 1, unitPrice: 325.00 }]
+    shipTo: { line1: 1201 3rd Ave, city: Seattle, state: WA, zip: "98101", kind: residential }
+  - key: D08
+    channel: web
+    channelOrderId: LL-WEB-2008
+    shipMethod: two_day
+    placedAt: 2026-10-03T18:06:20Z
+    customer: { ref: cust-drop-08, name: Bea Santos, email: bea.santos@example.com, tier: silver, attributes: { orders_12m: 4, returns_12m: 2 } }
+    lines: [{ id: "1", sku: JKT-BMB-ECR-M, qty: 1, unitPrice: 325.00 }]
+    shipTo: { line1: 1000 Brickell Ave, city: Miami, state: FL, zip: "33131", kind: residential }
+  - key: D09
+    channel: web
+    channelOrderId: LL-WEB-2009
+    shipMethod: ground
+    placedAt: 2026-10-03T18:07:00Z
+    customer: { ref: cust-drop-09, name: Grace Kim, email: grace.kim@example.com, tier: gold, attributes: { orders_12m: 8, returns_12m: 2 } }
+    lines: [{ id: "1", sku: JKT-BMB-ECR-M, qty: 1, unitPrice: 325.00 }]
+    shipTo: { line1: 233 S Wacker Dr, city: Chicago, state: IL, zip: "60606", kind: commercial }
+    notes:
+      - Happy to wait for a restock if needed, just keep my place.
+  - key: D10
+    channel: web
+    channelOrderId: LL-WEB-2010
+    shipMethod: ground
+    placedAt: 2026-10-03T18:07:50Z
+    customer: { ref: cust-drop-10, name: Olivia Dubois, email: olivia.dubois@example.com, tier: standard, attributes: { orders_12m: 0, returns_12m: 0 } }
+    lines: [{ id: "1", sku: JKT-BMB-ECR-M, qty: 1, unitPrice: 325.00 }]
+    shipTo: { line1: 400 S Hope St, city: Los Angeles, state: CA, zip: "90071", kind: commercial }
+  - key: D11
+    channel: marketplace
+    channelOrderId: LL-MKT-2011
+    shipMethod: ground
+    placedAt: 2026-10-03T18:08:35Z
+    customer: { ref: cust-drop-11, name: Tara Singh, email: tara.singh@example.com, tier: standard, attributes: { orders_12m: 1, returns_12m: 1 } }
+    lines: [{ id: "1", sku: JKT-BMB-ECR-M, qty: 1, unitPrice: 325.00 }]
+    shipTo: { line1: 150 N Riverside Plz, city: Chicago, state: IL, zip: "60606", kind: commercial }
+  - key: D12
+    channel: web
+    channelOrderId: LL-WEB-2012
+    shipMethod: two_day
+    placedAt: 2026-10-03T18:09:30Z
+    customer: { ref: cust-drop-12, name: Mei Tanaka, email: mei.tanaka@example.com, tier: silver, attributes: { orders_12m: 5, returns_12m: 2 } }
+    lines: [{ id: "1", sku: JKT-BMB-ECR-M, qty: 1, unitPrice: 325.00 }]
+    shipTo: { line1: 1 Market St, city: San Francisco, state: CA, zip: "94105", kind: residential }
+  - key: D13
+    channel: web
+    channelOrderId: LL-WEB-2013
+    shipMethod: next_day
+    placedAt: 2026-10-03T18:10:40Z
+    customer: { ref: cust-drop-13, name: Ruby Walsh, email: ruby.walsh@example.com, tier: standard, attributes: { orders_12m: 2, returns_12m: 0 } }
+    lines: [{ id: "1", sku: JKT-BMB-ECR-M, qty: 1, unitPrice: 325.00 }]
+    shipTo: { line1: 700 Clark Ave, city: St. Louis, state: MO, zip: "63102", kind: residential }
+    notes:
+      - Need it for a trip on the 20th, please.
+  - key: D14
+    channel: web
+    channelOrderId: LL-WEB-2014
+    shipMethod: ground
+    placedAt: 2026-10-03T18:12:10Z
+    customer: { ref: cust-drop-14, name: Nadia Kowalski, email: nadia.kowalski@example.com, tier: standard, attributes: { orders_12m: 3, returns_12m: 1 } }
+    lines: [{ id: "1", sku: JKT-BMB-ECR-M, qty: 1, unitPrice: 325.00 }]
+    shipTo: { line1: 1 Campus Martius, city: Detroit, state: MI, zip: "48226", kind: commercial }
+  - key: D15
+    channel: web
+    channelOrderId: LL-WEB-2015
+    shipMethod: ground
+    placedAt: 2026-10-03T18:13:55Z
+    customer: { ref: cust-drop-15, name: Isabel Moreno, email: isabel.moreno@example.com, tier: gold, attributes: { orders_12m: 7, returns_12m: 1 } }
+    lines: [{ id: "1", sku: JKT-BMB-ECR-M, qty: 1, unitPrice: 325.00 }]
+    shipTo: { line1: 1600 Larimer St, city: Denver, state: CO, zip: "80202", kind: residential }
+  # ---- W: wholesale on net terms -------------------------------------------------------------------------------
+  - key: W01
+    channel: b2b
+    channelOrderId: LL-B2B-5001
+    orderType: wholesale
+    shipMethod: ground
+    placedAt: 2026-09-30T13:00:00Z
+    customer: { ref: acct-thread-and-co, name: Thread & Co. Boutique, email: buying@threadandco.example.com, phone: "+1 617 555 0148", tier: wholesale, attributes: { split_acceptance_rate: 0.0, returns_12m: 0, orders_12m: 6, paymentTerms: NET30 } }
+    lines:
+      - { id: "1", sku: TEE-ORG-WHT-S, qty: 6, unitPrice: 19.00 }      # wholesale price: 50 % of retail
+      - { id: "2", sku: TEE-ORG-WHT-M, qty: 6, unitPrice: 19.00 }
+      - { id: "3", sku: TEE-ORG-WHT-L, qty: 6, unitPrice: 19.00 }
+      - { id: "4", sku: TEE-ORG-WHT-XL, qty: 4, unitPrice: 19.00 }
+      - { id: "5", sku: JNS-STR-IND-28, qty: 4, unitPrice: 59.00 }
+      - { id: "6", sku: JNS-STR-IND-30, qty: 4, unitPrice: 59.00 }
+      - { id: "7", sku: DRS-WRAP-NVY-M, qty: 3, unitPrice: 64.00 }
+    shipTo: { name: Thread & Co. receiving, line1: 112 Newbury St, city: Boston, state: MA, zip: "02116", kind: commercial }
+    notes:
+      - Autumn window restock. One delivery with the packing list please, PO 4471.
+    intentChoices: [ship_complete]
+    tender: { type: net_terms, amount: 1082.00 }
+    extensions: { poNumber: "PO-4471", paymentTerms: NET30 }
+  # ---- E: exchange flows (original order, then the exchange order that replaces the size or colour) --------------
+  - key: O-E01
+    channel: web
+    channelOrderId: LL-WEB-1030
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-09-27T17:20:00Z
+    customer: { ref: cust-ll-1030, name: Camila Reyes, email: camila.reyes@example.com, tier: gold, attributes: { split_acceptance_rate: 0.3, returns_12m: 2, orders_12m: 9 } }
+    lines:
+      - { id: "1", sku: DRS-MIDI-BLK-S, qty: 1, unitPrice: 148.00 }
+    shipTo: { line1: 1299 Ocean Ave, city: Santa Monica, state: CA, zip: "90401", kind: residential }
+    lifecycle: { ship: true, deliver: true, deliveredDaysAgo: 3 }
+  - key: E01
+    channel: web
+    channelOrderId: LL-EXC-1031
+    orderType: exchange
+    shipMethod: same_day
+    placedAt: 2026-10-05T10:05:00Z
+    customer: { ref: cust-ll-1030, name: Camila Reyes, email: camila.reyes@example.com, tier: gold, attributes: { split_acceptance_rate: 0.3, returns_12m: 2, orders_12m: 9 } }
+    lines:
+      - { id: "1", sku: DRS-MIDI-BLK-M, qty: 1, unitPrice: 148.00 }   # the M exists only at ST-LA-MELROSE, 15 km away
+    shipTo: { line1: 1299 Ocean Ave, city: Santa Monica, state: CA, zip: "90401", kind: residential }
+    notes:
+      - Size exchange for LL-WEB-1030, the S is snug across the shoulders.
+    intentChoices: [ship_complete]
+    tender: { type: card, token: tok_visa_ok, amount: 162.80 }       # authorised; voided when the S is received at the returns centre
+    extensions: { exchangeForChannelOrderId: LL-WEB-1030, exchangeOriginalSku: DRS-MIDI-BLK-S, exchangeType: size_swap, settlement: void_on_return_receipt }
+    lifecycle: { ship: true }
+  - key: O-E02
+    channel: web
+    channelOrderId: LL-WEB-1032
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-09-25T11:00:00Z
+    customer: { ref: cust-ll-1032, name: Fatima Al-Sayed, email: fatima.alsayed@example.com, tier: silver, attributes: { split_acceptance_rate: 0.4, returns_12m: 1, orders_12m: 3 } }
+    lines:
+      - { id: "1", sku: DRS-MIDI-BLK-S, qty: 1, unitPrice: 148.00 }
+    shipTo: { line1: 1 Centre St, line2: Apt 12F, city: New York, state: NY, zip: "10007", kind: residential }
+    lifecycle: { ship: true, deliver: true, deliveredDaysAgo: 8 }
+  - key: E02
+    channel: web
+    channelOrderId: LL-EXC-1033
+    orderType: exchange
+    shipMethod: ground
+    placedAt: 2026-10-04T16:40:00Z
+    customer: { ref: cust-ll-1032, name: Fatima Al-Sayed, email: fatima.alsayed@example.com, tier: silver, attributes: { split_acceptance_rate: 0.4, returns_12m: 1, orders_12m: 3 } }
+    lines:
+      - { id: "1", sku: DRS-MIDI-RST-S, qty: 1, unitPrice: 148.00 }   # colour swap black -> rust
+    shipTo: { line1: 1 Centre St, line2: Apt 12F, city: New York, state: NY, zip: "10007", kind: residential }
+    notes:
+      - Colour exchange for LL-WEB-1032, the black is lovely but the rust suits me better.
+    intentChoices: [ship_complete]
+    tender: { type: card, token: tok_visa_ok, amount: 162.80 }
+    extensions: { exchangeForChannelOrderId: LL-WEB-1032, exchangeOriginalSku: DRS-MIDI-BLK-S, exchangeType: colour_swap, settlement: void_on_return_receipt }
+    lifecycle: { ship: true }
+  # ---- Q / K: the quality complaint and the keep-it candidate ----------------------------------------------------
+  - key: Q01
+    channel: web
+    channelOrderId: LL-WEB-1040
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-09-10T14:00:00Z
+    customer: { ref: cust-ll-1040, name: Ingrid Larsen, email: ingrid.larsen@example.com, tier: silver, attributes: { split_acceptance_rate: 0.5, returns_12m: 2, orders_12m: 5 } }
+    lines:
+      - { id: "1", sku: KNT-CRD-OAT-M, qty: 1, unitPrice: 168.00 }
+    shipTo: { line1: 400 Pine St, city: Seattle, state: WA, zip: "98101", kind: residential }
+    lifecycle: { ship: true, deliver: true, deliveredDaysAgo: 18 }
+  - key: K01
+    channel: web
+    channelOrderId: LL-WEB-1041
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-09-29T20:10:00Z
+    customer: { ref: cust-ll-1041, name: Daniela Costa, email: daniela.costa@example.com, tier: standard, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 2 } }
+    lines:
+      - { id: "1", sku: ACC-SOCK-ORG, qty: 1, unitPrice: 21.00 }      # keep-it candidate: label+handling ($10.45) exceed the resale recovery (21*0.45=$9.45), yet the
+                                                                      # price still clears the 18% outbound margin floor (apparel's 12% returns reserve bites harder
+                                                                      # than the 5% default, so the breakeven here is ~$19.25 at $10.15 ground to 3PL-LV)
+    shipTo: { line1: 2 N Central Ave, city: Phoenix, state: AZ, zip: "85004", kind: residential }
+    lifecycle: { ship: true, deliver: true, deliveredDaysAgo: 3 }
+  # ---- B / F: stores -------------------------------------------------------------------------------------------
+  - key: B01
+    channel: web
+    channelOrderId: LL-WEB-1050
+    orderType: bopis
+    shipMethod: pickup
+    placedAt: 2026-10-02T12:00:00Z
+    customer: { ref: cust-ll-1050, name: Yuki Sato, email: yuki.sato@example.com, tier: silver, attributes: { split_acceptance_rate: 0.5, returns_12m: 1, orders_12m: 4 } }
+    lines:
+      - { id: "1", sku: TEE-ORG-BLK-M, qty: 1, unitPrice: 38.00 }
+      - { id: "2", sku: ACC-BELT-BLK, qty: 1, unitPrice: 68.00 }
+    pickupNodeId: ST-NYC-SOHO
+    lifecycle: { bopisPickup: true }
+  - key: B02
+    channel: web
+    channelOrderId: LL-WEB-1051
+    orderType: bopis
+    shipMethod: pickup
+    placedAt: 2026-10-04T18:30:00Z
+    customer: { ref: cust-ll-1051, name: Aisha Bello, email: aisha.bello@example.com, tier: gold, attributes: { split_acceptance_rate: 0.5, returns_12m: 2, orders_12m: 8 } }
+    lines:
+      - { id: "1", sku: DRS-WRAP-NVY-L, qty: 1, unitPrice: 128.00 }
+    pickupNodeId: ST-CHI-GOLD
+  - key: F01
+    channel: web
+    channelOrderId: LL-WEB-1052
+    orderType: ship_from_store
+    shipMethod: same_day
+    placedAt: 2026-10-05T09:20:00Z
+    customer: { ref: cust-ll-1052, name: Lucia Fernandez, email: lucia.fernandez@example.com, tier: gold, attributes: { split_acceptance_rate: 0.5, returns_12m: 1, orders_12m: 6 } }
+    lines:
+      - { id: "1", sku: TEE-ORG-WHT-L, qty: 1, unitPrice: 38.00 }
+      - { id: "2", sku: ACC-TOTE-CNV, qty: 1, unitPrice: 58.00 }
+    shipTo: { line1: 1100 S Lamar Blvd, city: Austin, state: TX, zip: "78704", kind: residential }
+    lifecycle: { ship: true }
+  - key: F02
+    channel: web
+    channelOrderId: LL-WEB-1053
+    orderType: ship_from_store
+    shipMethod: ground
+    placedAt: 2026-10-05T15:45:00Z
+    customer: { ref: cust-ll-1053, name: Valentina Cruz, email: valentina.cruz@example.com, tier: standard, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 1 } }
+    lines:
+      - { id: "1", sku: SHO-SNK-WHT-39, qty: 1, unitPrice: 158.00 }
+    shipTo: { line1: 3900 Biscayne Blvd, city: Miami, state: FL, zip: "33137", kind: residential }
+  # ---- P: pre-order against inbound stock ------------------------------------------------------------------------
+  - key: P01
+    channel: web
+    channelOrderId: LL-WEB-1060
+    orderType: pre_order
+    shipMethod: ground
+    placedAt: 2026-10-01T10:00:00Z
+    customer: { ref: cust-ll-1060, name: Emma Johansson, email: emma.johansson@example.com, tier: gold, attributes: { split_acceptance_rate: 0.2, returns_12m: 1, orders_12m: 10 } }
+    lines:
+      - { id: "1", sku: DRS-SLIP-SAGE-M, qty: 1, unitPrice: 188.00 }  # Drop 05: 0 on hand, 120 on a PO at DC-PA
+    shipTo: { line1: 80 S 8th St, city: Minneapolis, state: MN, zip: "55402", kind: residential }
+    intentChoices: [ship_complete]
+  # ---- S: exceptions -----------------------------------------------------------------------------------------------
+  - key: S01
+    channel: web
+    channelOrderId: LL-WEB-1070
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-10-04T08:00:00Z
+    customer: { ref: cust-ll-1070, name: Rosa Alvarez, email: rosa.alvarez@example.com, tier: standard, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 2 } }
+    lines:
+      - { id: "1", sku: JKT-PUF-OLV-L, qty: 1, unitPrice: 248.00 }    # stocked only at 3PL-LV, which short-picks it
+    shipTo: { line1: 1120 SW 5th Ave, city: Portland, state: OR, zip: "97204", kind: residential }
+  - key: S02
+    channel: web
+    channelOrderId: LL-WEB-1071
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-09-24T16:30:00Z
+    customer: { ref: cust-ll-1071, name: Charlotte Evans, email: charlotte.evans@example.com, tier: silver, attributes: { split_acceptance_rate: 0.5, returns_12m: 1, orders_12m: 3 } }
+    lines:
+      - { id: "1", sku: JKT-TRCH-CAM-L, qty: 1, unitPrice: 298.00 }
+    shipTo: { line1: 301 S College St, city: Charlotte, state: NC, zip: "28202", kind: residential }
+    lifecycle: { ship: true }
+  # ---- X: declined card ----------------------------------------------------------------------------------------------
+  - key: X01
+    channel: web
+    channelOrderId: LL-WEB-1080
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-10-05T19:55:00Z
+    customer: { ref: cust-ll-1080, name: Zoe King, email: zoe.king@example.com, tier: standard, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 0 } }
+    lines:
+      - { id: "1", sku: SHO-LOAF-TAN-39, qty: 1, unitPrice: 198.00 }
+    shipTo: { line1: 200 S Biscayne Blvd, city: Miami, state: FL, zip: "33131", kind: residential }
+    tender: { type: card, token: tok_visa_decline, amount: 217.80 }
+  # ---- M / G: marketplace, POS and an agent-placed order ----------------------------------------------------------
+  - key: M01
+    channel: marketplace
+    channelOrderId: LL-MKT-6001
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-09-28T11:11:00Z
+    customer: { ref: cust-mkt-6001, name: Harper Lee, email: harper.lee@example.com, tier: standard, attributes: { split_acceptance_rate: 0.5, returns_12m: 1, orders_12m: 2 } }
+    lines:
+      - { id: "1", sku: TEE-ORG-BLK-L, qty: 2, unitPrice: 38.00 }
+      - { id: "2", sku: ACC-BEAN-WOOL, qty: 1, unitPrice: 42.00 }
+    shipTo: { line1: 500 Woodward Ave, city: Detroit, state: MI, zip: "48226", kind: residential }
+    lifecycle: { ship: true, deliver: true, deliveredDaysAgo: 5 }
+  - key: M02
+    channel: pos
+    channelOrderId: LL-POS-3001
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-10-05T14:25:00Z
+    customer: { ref: cust-pos-3001, name: Walk-in (Gold Coast), tier: standard, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 0 } }
+    lines:
+      - { id: "1", sku: ACC-SCRF-SLK, qty: 1, unitPrice: 88.00 }     # sold in store, shipped home from the DC (not in stock on the floor)
+    shipTo: { name: Walk-in customer, line1: 875 N Michigan Ave, line2: Apt 3010, city: Chicago, state: IL, zip: "60611", kind: residential }
+  - key: G01
+    channel: agent
+    channelOrderId: LL-AGT-4001
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-10-05T17:05:00Z
+    customer: { ref: cust-ll-4001, name: Nina Patel, email: nina.patel@example.com, tier: silver, attributes: { split_acceptance_rate: 0.3, returns_12m: 1, orders_12m: 4 } }
+    lines:
+      - { id: "1", sku: DRS-WRAP-NVY-M, qty: 1, unitPrice: 128.00 }
+      - { id: "2", sku: ACC-BELT-BLK, qty: 1, unitPrice: 68.00 }
+    shipTo: { line1: 1 Letterman Dr, city: San Francisco, state: CA, zip: "94129", kind: residential }
+    notes:
+      - Stylist assistant order under mandate mandate-ll-2041, budget $250, navy dress with a belt for a Friday event.
+    provenance: { agentId: stylist-acp, mandateId: mandate-ll-2041, instructionText: "Buy Nina a navy wrap dress and a black belt for a Friday event, budget $250, ship to her home address." }
+  # ---- N: ordinary volume -------------------------------------------------------------------------------------------
+  - key: N01
+    channel: web
+    channelOrderId: LL-WEB-1090
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-08-25T10:00:00Z
+    customer: { ref: cust-ll-1090, name: Sarah Mitchell, email: sarah.mitchell@example.com, tier: silver, attributes: { split_acceptance_rate: 0.6, returns_12m: 1, orders_12m: 3 } }
+    lines:
+      - { id: "1", sku: JKT-PUF-OLV-M, qty: 1, unitPrice: 248.00 }
+      - { id: "2", sku: TEE-ORG-WHT-S, qty: 1, unitPrice: 38.00 }
+    shipTo: { line1: 150 3rd Ave S, city: Nashville, state: TN, zip: "37201", kind: residential }
+    lifecycle: { ship: true, deliver: true, deliveredDaysAgo: 40 }   # outside the 30-day window: a return attempt would be denied
+  - key: N02
+    channel: web
+    channelOrderId: LL-WEB-1091
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-10-03T09:30:00Z
+    customer: { ref: cust-ll-1091, name: Keiko Mori, email: keiko.mori@example.com, tier: standard, attributes: { split_acceptance_rate: 0.8, returns_12m: 0, orders_12m: 1 } }
+    lines:
+      - { id: "1", sku: SHO-LOAF-TAN-40, qty: 1, unitPrice: 198.00 }
+      - { id: "2", sku: ACC-SOCK-ORG, qty: 3, unitPrice: 21.00 }
+    shipTo: { line1: 2 N Central Ave, line2: Suite 1800, city: Phoenix, state: AZ, zip: "85004", kind: commercial }
+    intentChoices: [ship_as_available]
+    lifecycle: { ship: true }
+  - key: N03
+    channel: web
+    channelOrderId: LL-WEB-1092
+    orderType: standard_ship
+    shipMethod: two_day
+    placedAt: 2026-10-05T07:45:00Z
+    customer: { ref: cust-ll-1092, name: Rebecca Cohen, email: rebecca.cohen@example.com, tier: gold, attributes: { split_acceptance_rate: 0.3, returns_12m: 2, orders_12m: 12 } }
+    lines:
+      - { id: "1", sku: KNT-CRD-OAT-S, qty: 1, unitPrice: 168.00 }
+    shipTo: { line1: 1201 3rd Ave, line2: Floor 22, city: Seattle, state: WA, zip: "98101", kind: commercial }
+  - key: N04
+    channel: web
+    channelOrderId: LL-WEB-1093
+    orderType: standard_ship
+    shipMethod: ground
+    placedAt: 2026-09-22T13:15:00Z
+    customer: { ref: cust-ll-1093, name: Alice Dupont, email: alice.dupont@example.com, tier: standard, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 2 } }
+    lines:
+      - { id: "1", sku: JNS-STR-IND-26, qty: 1, unitPrice: 118.00 }
+      - { id: "2", sku: TEE-ORG-BLK-S, qty: 1, unitPrice: 38.00 }
+    shipTo: { line1: 80 S 8th St, line2: Apt 905, city: Minneapolis, state: MN, zip: "55402", kind: residential }
+    lifecycle: { ship: true, deliver: true, deliveredDaysAgo: 12 }
+
+returns:
+  # wrong_size on the bracketing order, receipt present -> size_return_fast_lane rule, instant refund
+  - { order: A01, lineId: "2", qty: 1, reason: wrong_size, text: The 30 was too big, keeping the 28 as planned., receiptPresent: true }
+  # final-sale dispute -> L0 final_sale denial recommendation (T3 task in risk_review), CS draft grounded in the policy
+  - { order: A04, lineId: "1", qty: 1, reason: changed_mind, text: I did not see it was final sale, the colour does not suit me and I want to return it., receiptPresent: true }
+  # quality complaint -> return_risk judgement call, disposition after inspection (repair bench or recycle)
+  - { order: Q01, lineId: "1", qty: 1, reason: quality, text: The side seam came apart after one wash, I followed the care label., receiptPresent: true }
+  # keep-it candidate: $21 socks, label + handling ($10.45) exceed the resale recovery ($9.45)
+  - { order: K01, lineId: "1", qty: 1, reason: changed_mind, text: Ordered the wrong colour of socks., receiptPresent: true }
+
+exceptions:
+  - { order: S01, source: wms,     type: inventory_short, text: 3PL-LV short-picked JKT-PUF-OLV-L, bin empty, cycle count shows 0 against 12 on hand }
+  - { order: S02, source: carrier, type: carrier_lost,    text: No carrier scan for 8 days since origin acceptance, carrier opened a trace on the trench coat parcel }

@@ -1,0 +1,58 @@
+# Fulfilment intent (FR-CAP-06, FR-SRC-03). Tier T1: acts >= 0.8, confirms 0.5-0.8. Electronics buyers split less
+# readily than apparel buyers (a charger arriving before the laptop is useless), so the channel default for marketplace
+# and bundles is ship_complete and the model reads the note for an explicit wish.
+# Sandbox gates (0.6 / 0.5) so the heuristic fallback passes without API keys; production values 0.90 / 0.05.
+decision: fulfilment_intent
+version: 1
+owner: omnichannel-strategy
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: channel_default_policy
+state:
+  include:
+    - order.channel
+    - order.notes
+    - order.intent_choices
+    - order.order_type
+    - customer.tier
+    - customer.history.split_acceptance_rate
+rules:
+  - id: bundle_always_complete
+    when: "has(input.order.order_type) && input.order.order_type == 'bundle_ship_complete'"
+    then: ship_complete
+    reason: bundle_ships_in_one_box
+    priority: 10
+questions:
+  intent:
+    type: choice
+    instructions: Which fulfilment outcome does the buyer most want for this electronics order?
+    feeds: fulfilment_policy
+    criteria:
+      ship_complete: Everything together in one delivery even if it arrives later, including accessories bought for a device in the same order
+      ship_as_available: Each item as soon as it is ready in separate shipments, the buyer does not mind several boxes
+      earliest_partial: One specific item is needed urgently before the rest, for example a charger or cable before travel
+      pickup_consolidated: Prefers to collect the whole order in a store
+      unclear: Not enough information to tell what the buyer wants
+  split_ok:
+    type: noul
+    statement: This buyer would accept the order in more than one package.
+    reasonCode: true
+  is_gift:
+    type: noul
+    statement: The order notes indicate the order is a gift.
+    reasonCode: true
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+postChecks:
+  - "!has(chosen_plan.margin) || chosen_plan.margin >= tenant.margin_floor"
+  - "!(has(order.has_hazmat) && order.has_hazmat == true && has(chosen_plan.packages) && chosen_plan.packages > 1)"
+cache:
+  ttl: PT10M
+evaluation:
+  goldenSet: fulfilment_intent_gold
+  minAccuracyInActBand: 0.6
+  maxCalibrationError: 0.5

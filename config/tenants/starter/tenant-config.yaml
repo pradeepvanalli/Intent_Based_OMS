@@ -1,0 +1,99 @@
+# Starter tenant — runtime settings written to tenant_config (TenantConfigStore). Business users change these at
+# runtime through PUT /api/v1/admin/config/{key}; the seeder and scripts/new-tenant.sh write a key only when it is
+# absent, so later edits are never overwritten. Every key the code reads is listed; commented keys show the default.
+# Full reference: docs/CONFIGURATION.md §3.
+
+# ---- Tenant presentation (not runtime settings) ----------------------------------------------------------------------
+# Shown on the login page and in the seed log when this folder is seeded with OMS_DEMO_TENANTS; the seeder skips these
+# three keys when writing tenant_config. Replace with your company name and what you sell.
+name: Starter tenant
+vertical: Replace with your vertical
+description: A neutral configuration set to copy and adapt; see README.md in this folder.
+
+# ---- Sourcing and promise -------------------------------------------------------------------------------------------
+sourcing.margin_floor: 0.12                 # contribution-margin ratio below which a plan needs finance approval (GR-01)
+sourcing.max_split_packages: 3              # most packages a split plan may use
+sourcing.split_penalty_usd: 12.0            # cost added per extra package (overrides shipping-rates.yaml splitPenaltyUsd)
+sourcing.candidate_limit: 100               # candidate nodes considered per order
+sourcing.channel_default_policy:            # fulfilment policy when intent is unclear, per channel
+  web: ship_as_available
+  marketplace: ship_complete
+  pos: ship_complete
+  agent: ship_complete
+  b2b: ship_complete
+# sourcing.weights: { cost: 0.4, time: 0.25, soft: 0.25, split: 0.1 }   # composite plan-score weights
+# sourcing.business_days_only: false        # ETAs skip weekends
+# sourcing.pickup_radius_km: 50             # offer a BOPIS store within this radius as an alternative
+# sourcing.backorder_lead_days: 14          # promise offset when nothing is in stock
+# sourcing.reject_penalty: 0.3              # penalty added to node+SKU on a store reject or timeout
+# sourcing.order_type_constraints: {}       # written automatically from order-types.yaml `sourcing:` blocks
+
+# ---- Inventory ------------------------------------------------------------------------------------------------------
+inventory.channel_buffer: 0.02              # share of network ATP withheld from channel feeds to prevent oversell
+inventory.include_inbound: false            # count po/asn/in_transit supply in ATP
+# inventory.drift_tolerance: 0              # units of difference before reconciliation reports drift
+
+# ---- Capture and customer service ----------------------------------------------------------------------------------
+capture.validation_steps: [schema, item_price_sanity, compliance, address, payment_status, agent_provenance]
+# capture.allow_unknown_sku: false          # accept lines whose SKU is not in catalog.yaml
+# capture.price_tolerance: 0.25             # allowed deviation from catalogue price before a warning
+# cs.carrier_intercept_enabled: false       # allow address changes after shipment as a carrier intercept
+# cs.carrier_intercept_fee_usd: 15.0
+appeasement.role_limits: { cs_rep: 20, ops_analyst: 50, finance_controller: 500 }   # USD ceilings per role (appeasement decision)
+
+# ---- Finance, tax, compliance --------------------------------------------------------------------------------------
+finance.payment_fee_rate: 0.029             # variable payment fee for the order P&L
+# finance.payment_fee_fixed: 0.30
+finance.returns_reserve_rate: 0.05          # returns reserve as a fraction of net revenue
+tax.default_rate: 0.0                       # flat-rate tax engine: rate when the state has no entry
+tax.rates: { CA: 0.0725, NY: 0.04, NJ: 0.06625, TX: 0.0625, IL: 0.0625, WA: 0.065, FL: 0.06 }   # replace with your nexus
+# tax.shipping_taxable: false
+# compliance.restricted_zips: []            # ZIPs or prefixes you will not ship to (rule restricted_zip)
+# compliance.restricted_states: { alcohol: [UT, MS] }   # per-category state bans merged into rules/compliance.yaml
+# compliance.rules: []                      # extra rules in the same shape as rules/compliance.yaml
+
+# ---- Guardrails and AI ---------------------------------------------------------------------------------------------
+guardrail.refund_velocity_usd_per_hour: 5000        # tenant-wide refund cap per rolling hour (GR-05)
+guardrail.appeasement_velocity_usd_per_hour: 1000   # tenant-wide appeasement cap
+# guardrail.refund_velocity_usd_per_hour_per_actor: 1000
+# guardrail.refund_velocity_usd_per_hour_per_agent: 200
+# guardrail.appeasement_velocity_usd_per_hour_per_actor: 200
+# guardrail.appeasement_velocity_usd_per_hour_per_agent: 50
+ai.budget_usd_per_day: 50                   # daily AI spend cap; L1/L2 degrade to L0 when exceeded (GR-17)
+# ai.kill_switch: false                     # true disables all L1/L2 for the tenant (GR-06)
+# decision.kill_switch.<name>: false        # per decision
+# provider.kill_switch.<name>: false        # per provider: jev | llm.anthropic | llm.openai | heuristic
+# agent.injection_threshold: 0.7            # Noul probability at or above which text counts as injected (GR-08)
+agent.default_max_order_value: 500          # defaults for agent registrations without limits
+agent.default_max_refund: 100
+
+# ---- Returns --------------------------------------------------------------------------------------------------------
+returns.window_days: 30                     # when the order type sets no returnWindowDays; returns.window_days.<type> overrides
+returns.restocking_fee_pct: 0.0             # fraction of returned merchandise; applies to returns.restocking_fee_conditions
+# returns.restocking_fee_conditions: [damaged]
+# returns.refundable_conditions: [new, like_new, damaged]
+# returns.refund_shipping: false
+# returns.refund_requires_approval_above_usd: 500   # refunds above this always go to the refund_approvals queue
+# returns.return_shipping_cost_usd: 8.5     # keep-it economics
+# returns.return_handling_cost_usd: 2.0
+# returns.recovery_rate: 0.4
+returns.keep_it_enabled: true               # offer "keep it" when return cost exceeds recovery and risk is low
+returns.flagged_customers: []               # customer refs the risk team flagged (surface as flagged_customer)
+# returns.serial_returner_threshold: 6
+# returns.not_received_claims_threshold: 2
+# returns.allow_in_transit: false
+
+# ---- Orchestration, monitoring, platform ---------------------------------------------------------------------------
+orchestration.fulfilment_timeout: P5D       # time in await_fulfilment before a fulfilment_timeout exception
+orchestration.delivery_timeout: P14D        # time waiting for a delivery scan
+orchestration.pickup_window: P5D            # BOPIS pickup window
+alerts.dedupe_minutes: 15                   # alert de-duplication window
+# alerts.slack_webhook: https://hooks.slack.com/services/...     # set through the API, never commit real URLs
+# alerts.pagerduty_routing_key: ...
+# alerts.email: ops@example.com
+# retention.years: 7                        # ledger and audit retention
+# security.roles: { warehouse_lead: [order.read, task.read, task.work, exception.work] }   # extend the role map
+
+# ---- Integration secrets: set through PUT /api/v1/admin/config/{key} on the running system, never in this file -----
+# webhooks.inbound_secret: <HMAC secret; when set, /webhooks/wms|carrier|inventory require X-Webhook-Signature>
+# shopify.webhook_secret: <Shopify signing secret; when set, /webhooks/shopify requires X-Shopify-Hmac-Sha256>

@@ -1,0 +1,7 @@
+subject: {{brand}}: refund of {{refund_amount}} for order {{order_number}}
+---
+Hi {{customer_name}},
+
+We have issued a refund of {{refund_amount}} to your original payment method for order {{order_number}}{{rma_suffix}}. It can take 5–10 business days to appear on your statement.
+
+{{brand}}

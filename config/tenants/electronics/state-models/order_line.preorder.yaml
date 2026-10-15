@@ -1,0 +1,96 @@
+# Order line for pre_order and backorder types. Same standard-ship vocabulary (so the order.standard_ship workflow and
+# the WMS / carrier webhooks drive it) plus:
+#   * a 7-day `backordered` SLA whose breach evaluates `backorder_next_action` instead of a playbook;
+#   * transitions on that decision's typed answer: `substitute` → substitute_offered, `cancel` → cancelled;
+#     `wait` and `split` keep the line in backordered (split means the workflow releases the other lines of the order
+#     now — a header-level policy flip to ship_as_available — while this line keeps waiting for its ETA);
+#   * `substitute_offered` with api.accept_substitute / api.decline_substitute (permission order.modify) and a 3-day
+#     reminder SLA.
+# Launch-day allocation: wave-1 units are on hand at the DCs; the sourcing plan releases the first orders by placedAt
+# and the rest land in `backordered` (plan.result no_feasible_node). `preorder_allocation` decides, per waiting order,
+# whether it is allocated now (loyalty protection), waitlisted for wave 2 or cancelled; its answer arrives as
+# event.inventory_available (allocate) or api.cancel_line (cancel) through the launch desk — see README scenario E1.
+# No `awaiting_release_date` state: this platform version has no release-date timer, so pre-orders are captured when
+# the launch opens and wait as backorders.
+stateModel: order_line.preorder
+version: 1
+entity: order_line
+quantityLevel: true
+states:
+  - { id: created, meta: Created }
+  - { id: awaiting_sourcing }
+  - { id: released, sla: { maxAge: PT6H, onBreach: playbook.store_backlog } }
+  - { id: picking, parent: released }
+  - { id: packed, parent: released }
+  - { id: shipped }
+  - { id: backordered, sla: { maxAge: P7D, onBreach: decision.backorder_next_action } }
+  - { id: substitute_offered, sla: { maxAge: P3D, onBreach: playbook.substitute_reminder } }
+  - { id: delivered, meta: Terminal }
+  - { id: cancelled, meta: Terminal, blocksIfHeld: [legal] }
+transitions:
+  - from: created
+    to: awaiting_sourcing
+    trigger: event.order_validated
+  - from: awaiting_sourcing
+    to: backordered
+    trigger: decision.sourcing_plan
+    guards: ["plan.result == 'no_feasible_node'"]
+  - from: awaiting_sourcing
+    to: released
+    trigger: decision.sourcing_plan
+    guards:
+      - "plan.margin >= tenant.margin_floor || approval.present"
+      - "!order.holds.exists(h, 'release' in h.blocks)"
+    actions: [reserve_inventory, send_release_to_wms]
+  - from: released
+    to: awaiting_sourcing
+    trigger: event.store_rejected
+    actions: [penalise_node, release_reservation]
+  - from: released
+    to: awaiting_sourcing
+    trigger: event.short_pick
+    actions: [penalise_node, release_reservation]
+  - from: released
+    to: picking
+    trigger: event.pick_started
+  - from: picking
+    to: awaiting_sourcing
+    trigger: event.short_pick
+    actions: [penalise_node, release_reservation]
+  - from: picking
+    to: packed
+    trigger: event.packed
+  - from: packed
+    to: shipped
+    trigger: event.shipped
+    actions: [capture_payment, notify_customer_shipped]
+  - from: shipped
+    to: delivered
+    trigger: event.delivered
+    actions: [notify_customer_delivered]
+  - from: backordered
+    to: awaiting_sourcing
+    trigger: event.inventory_available                    # wave stock landed or the launch desk allocated a protected unit
+  - from: backordered
+    to: substitute_offered
+    trigger: decision.backorder_next_action
+    guards: ["decision.value == 'substitute'"]
+    actions: [notify_customer_substitute]
+  - from: backordered
+    to: cancelled
+    trigger: decision.backorder_next_action
+    guards: ["decision.value == 'cancel'"]
+    actions: [release_reservation, void_or_refund, notify_customer_cancelled]
+  - from: substitute_offered
+    to: awaiting_sourcing
+    trigger: api.accept_substitute                        # the line's sku was changed through a ChangeItem modification
+    permission: order.modify
+  - from: substitute_offered
+    to: backordered
+    trigger: api.decline_substitute
+    permission: order.modify
+  - from: [created, awaiting_sourcing, released, backordered, substitute_offered]
+    to: cancelled
+    trigger: api.cancel_line
+    permission: order.cancel
+    actions: [release_reservation, void_or_refund]

@@ -1,0 +1,8 @@
+subject: {{brand}}: order {{order_number}} was delivered
+---
+Hi {{customer_name}},
+
+Your order {{order_number}} was delivered on {{delivered_at}}.
+If anything is not right, reply to this message or start a return from your account.
+
+{{brand}}

@@ -1,0 +1,173 @@
+# Deterministic starter blueprint used by the bootstrap copilot when no LLM key is configured (and as the skeleton the
+# LLM variant must cover). Placeholders in {braces} are filled from the structured BusinessDescription fields.
+orderTypes:
+  web:
+    name: standard_ship
+    description: Ship-to-home from any node
+    headerStateModel: order.standard_ship
+    lineStateModel: order_line.standard_ship
+    workflowType: order.standard_ship
+    decisions: [fulfilment_intent, sourcing_node_score, split_acceptability, sla_breach_risk, exception_classify, address_risk]
+    channelDefaults: { web: ship_as_available, marketplace: ship_complete, pos: ship_complete, agent: ship_complete, b2b: ship_complete }
+  marketplace:
+    name: marketplace_ship
+    description: Marketplace orders shipped complete
+    headerStateModel: order.standard_ship
+    lineStateModel: order_line.standard_ship
+    workflowType: order.standard_ship
+    decisions: [sourcing_node_score, sla_breach_risk, exception_classify, address_risk]
+    channelDefaults: { marketplace: ship_complete }
+  store:
+    name: bopis
+    description: Buy online, pick up in store
+    headerStateModel: order.bopis
+    lineStateModel: order_line.bopis
+    workflowType: order.bopis
+    decisions: [sla_breach_risk, exception_classify]
+    channelDefaults: { web: pickup_consolidated, agent: pickup_consolidated }
+  ship_from_store:
+    name: ship_from_store
+    description: Ship from the nearest store
+    headerStateModel: order.standard_ship
+    lineStateModel: order_line.standard_ship
+    workflowType: order.standard_ship
+    decisions: [fulfilment_intent, sourcing_node_score, sla_breach_risk, exception_classify]
+    channelDefaults: { web: ship_as_available }
+    sourcing: { nodeTypes: [store] }
+  same_day:
+    name: same_day_local
+    description: Same-day local delivery
+    headerStateModel: order.standard_ship
+    lineStateModel: order_line.standard_ship
+    workflowType: order.standard_ship
+    decisions: [sourcing_node_score, sla_breach_risk, exception_classify]
+    channelDefaults: { web: earliest_partial }
+    sourcing: { capabilities: [same_day], maxDistanceKm: 40 }
+  b2b:
+    name: b2b_order
+    description: Business orders shipped complete with longer return window
+    headerStateModel: order.standard_ship
+    lineStateModel: order_line.standard_ship
+    workflowType: order.standard_ship
+    decisions: [sourcing_node_score, sla_breach_risk, exception_classify]
+    channelDefaults: { b2b: ship_complete }
+  agent:
+    name: agent_order
+    description: Agent-initiated orders with mandate checks
+    headerStateModel: order.standard_ship
+    lineStateModel: order_line.standard_ship
+    workflowType: order.standard_ship
+    decisions: [fulfilment_intent, sourcing_node_score, sla_breach_risk, exception_classify, address_risk, agent_mandate_match]
+    channelDefaults: { agent: ship_complete }
+  drop_ship:
+    name: drop_ship
+    description: Vendor-fulfilled orders
+    headerStateModel: order.standard_ship
+    lineStateModel: order_line.standard_ship
+    workflowType: order.standard_ship
+    decisions: [sla_breach_risk, exception_classify]
+    channelDefaults: { web: ship_as_available }
+    sourcing: { nodeTypes: [vendor] }
+tenantConfig:
+  sourcing.margin_floor: "{marginFloor}"
+  sourcing.max_split_packages: 3
+  sourcing.split_penalty_usd: 12.0
+  returns.window_days: "{returnWindowDays}"
+  returns.restocking_fee_pct: "{restockingFeePct}"
+  returns.keep_it_enabled: "{keepItEnabled}"
+  ai.budget_usd_per_day: 50
+  alerts.dedupe_minutes: 15
+slas:
+  - { orderType: "*", entity: order_line, state: awaiting_sourcing, maxAge: PT30M, onBreach: playbook.resource }
+  - { orderType: "*", entity: order_line, state: released, maxAge: PT4H, onBreach: playbook.store_backlog }
+  - { orderType: "*", entity: order_line, state: packed, maxAge: PT12H, onBreach: playbook.repromise }
+  - { orderType: "*", entity: order_line, state: backordered, maxAge: P3D, onBreach: decision.backorder_next_action }
+  - { orderType: "*", entity: return, state: awaiting_receipt, maxAge: P14D, onBreach: playbook.return_not_received }
+sameDaySlas:
+  - { orderType: same_day_local, entity: order_line, state: released, maxAge: PT1H, onBreach: playbook.store_backlog }
+playbooks:
+  - name: resource
+    description: Re-source the affected lines to the next best node and penalise the rejecting node
+    steps:
+      - { action: resource, minConfidence: 0.0 }
+      - { action: notify, channel: slack, template: resourced }
+  - name: repromise
+    description: Recompute promise and tell the customer when on-time probability drops
+    steps:
+      - { action: repromise, minConfidence: 0.5 }
+      - { action: contact_customer, template: delay_notice, requiresDecision: sla_breach_risk, minConfidence: 0.8 }
+  - name: store_backlog
+    steps:
+      - { action: notify, channel: slack, template: store_backlog }
+      - { action: resource, minConfidence: 0.8, when: "exception.age_minutes > 240" }
+  - name: margin_review
+    steps:
+      - { action: create_task, queue: margin_floor_approvals }
+  - name: return_not_received
+    steps:
+      - { action: contact_customer, template: return_reminder }
+      - { action: create_task, queue: cs_exceptions, when: "exception.age_minutes > 10080" }
+  - name: manual_review
+    steps:
+      - { action: create_task, queue: ops_exceptions }
+complianceRules:
+  hazmat:
+    - id: hazmat_no_air
+      name: Hazmat may not ship by air
+      scope: line
+      when: line.hazmat == true && order.ship_method_is_air
+      action: block
+      reason_code: HAZMAT_AIR
+      severity: error
+      message: "{sku} is hazardous material and cannot ship via {shipMethod}; choose a ground service"
+      priority: 10
+    - id: hazmat_ground_signature
+      name: Hazmat shipped by ground requires signature
+      scope: line
+      when: line.hazmat == true && !order.ship_method_is_air
+      action: require_signature
+      reason_code: HAZMAT_SIGNATURE
+      severity: warning
+      message: "Hazmat {sku} requires a signature on delivery"
+      priority: 70
+  ageRestricted:
+    - id: age_restricted_requires_verification
+      name: Age-restricted goods require a verified customer
+      scope: line
+      when: line.age_restricted == true && !order.customer.age_verified
+      action: hold
+      reason_code: AGE_VERIFICATION_REQUIRED
+      severity: error
+      message: "{sku} is age-restricted; the customer must complete age verification before release"
+      priority: 30
+  international:
+    - id: export_controlled_us_only
+      name: Export-controlled items ship within the US only
+      scope: line
+      when: line.export_controlled == true && order.destination.country != "US"
+      action: block
+      reason_code: EXPORT_CONTROLLED
+      severity: error
+      message: "{sku} is export-controlled and cannot be shipped to {country}"
+      priority: 50
+starterDecisions:
+  - { name: fulfilment_intent, tier: T1, act: 0.8, confirm: 0.5 }
+  - { name: sourcing_node_score, tier: T1, act: 0.8, confirm: 0.5 }
+  - { name: exception_classify, tier: T0, act: 0.5, confirm: 0.5 }
+  - { name: sla_breach_risk, tier: T1, act: 0.8, confirm: 0.5 }
+  - { name: address_risk, tier: T1, act: 0.8, confirm: 0.5 }
+  - { name: return_risk, tier: T2, act: 0.9, confirm: 0.5 }
+  - { name: return_disposition, tier: T1, act: 0.8, confirm: 0.5 }
+  - { name: customer_request_intent, tier: T1, act: 0.8, confirm: 0.5 }
+  - { name: injection_screen, tier: T0, act: 0.5, confirm: 0.5 }
+  - { name: agent_mandate_match, tier: T3, act: 0.95, confirm: 0.5 }
+exceptionQueues:
+  - { name: ops_exceptions, slaMinutes: 240, escalateTo: ops_lead, skills: [ops] }
+  - { name: cs_exceptions, slaMinutes: 240, escalateTo: cs_lead, skills: [cs] }
+  - { name: finance_exceptions, slaMinutes: 240, escalateTo: finance_controller, skills: [finance] }
+  - { name: margin_floor_approvals, slaMinutes: 120, escalateTo: finance_controller, skills: [finance, strategy] }
+  - { name: risk_review, slaMinutes: 60, escalateTo: risk_lead, skills: [risk] }
+stateModelVariants:
+  ship: [order.standard_ship, order_line.standard_ship, shipment.standard]
+  store: [order.bopis, order_line.bopis]
+  returns: [return.standard]

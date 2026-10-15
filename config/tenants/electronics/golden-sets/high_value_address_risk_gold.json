@@ -1,0 +1,508 @@
+{
+  "goldenSet": "high_value_address_risk_gold",
+  "cases": [
+    {
+      "caseId": "hi_01",
+      "input": {
+        "address": {
+          "verification_status": "verified",
+          "type": "residential",
+          "freight_forwarder_match": false,
+          "po_box": false,
+          "prior_failed_deliveries": 0,
+          "matches_billing": true
+        },
+        "order": {
+          "total": 299.0,
+          "ship_method": "ground",
+          "notes": "",
+          "export_controlled": false,
+          "item_categories": [
+            "audio"
+          ]
+        },
+        "customer": {
+          "history": {
+            "orders_12m": 2,
+            "chargebacks_12m": 0
+          },
+          "account_age_days": 400
+        },
+        "payment": {
+          "avs_match": true
+        }
+      },
+      "expected": {
+        "value": 0
+      },
+      "notes": "Rule below_high_value_threshold"
+    },
+    {
+      "caseId": "hi_02",
+      "input": {
+        "address": {
+          "verification_status": "verified",
+          "type": "residential",
+          "freight_forwarder_match": false,
+          "po_box": false,
+          "prior_failed_deliveries": 0,
+          "matches_billing": true
+        },
+        "order": {
+          "total": 1299.0,
+          "ship_method": "ground",
+          "notes": "",
+          "export_controlled": false,
+          "item_categories": [
+            "laptop"
+          ]
+        },
+        "customer": {
+          "history": {
+            "orders_12m": 6,
+            "chargebacks_12m": 0
+          },
+          "account_age_days": 900
+        },
+        "payment": {
+          "avs_match": true
+        }
+      },
+      "expected": {
+        "value": 0
+      },
+      "notes": "Established customer, everything matches"
+    },
+    {
+      "caseId": "hi_03",
+      "input": {
+        "address": {
+          "verification_status": "verified",
+          "type": "residential",
+          "freight_forwarder_match": false,
+          "po_box": false,
+          "prior_failed_deliveries": 0,
+          "matches_billing": true
+        },
+        "order": {
+          "total": 899.0,
+          "ship_method": "ground",
+          "notes": "",
+          "export_controlled": false,
+          "item_categories": [
+            "phone"
+          ]
+        },
+        "customer": {
+          "history": {
+            "orders_12m": 0,
+            "chargebacks_12m": 0
+          },
+          "account_age_days": 3
+        },
+        "payment": {
+          "avs_match": true
+        }
+      },
+      "expected": {
+        "value": 1
+      },
+      "notes": "New account is the only soft signal"
+    },
+    {
+      "caseId": "hi_04",
+      "input": {
+        "address": {
+          "verification_status": "unverified",
+          "type": "commercial",
+          "freight_forwarder_match": true,
+          "po_box": false,
+          "prior_failed_deliveries": 0,
+          "matches_billing": false
+        },
+        "order": {
+          "total": 2399.0,
+          "ship_method": "ground",
+          "notes": "ship to my forwarder, will re-export",
+          "export_controlled": true,
+          "item_categories": [
+            "laptop"
+          ]
+        },
+        "customer": {
+          "history": {
+            "orders_12m": 0,
+            "chargebacks_12m": 0
+          },
+          "account_age_days": 1
+        },
+        "payment": {
+          "avs_match": true
+        }
+      },
+      "expected": {
+        "value": 4
+      },
+      "notes": "Rule forwarder_with_export_controlled_item"
+    },
+    {
+      "caseId": "hi_05",
+      "input": {
+        "address": {
+          "verification_status": "verified",
+          "type": "commercial",
+          "freight_forwarder_match": true,
+          "po_box": false,
+          "prior_failed_deliveries": 0,
+          "matches_billing": false
+        },
+        "order": {
+          "total": 1799.0,
+          "ship_method": "ground",
+          "notes": "",
+          "export_controlled": false,
+          "item_categories": [
+            "tv"
+          ]
+        },
+        "customer": {
+          "history": {
+            "orders_12m": 1,
+            "chargebacks_12m": 0
+          },
+          "account_age_days": 60
+        },
+        "payment": {
+          "avs_match": true
+        }
+      },
+      "expected": {
+        "value": 3
+      },
+      "notes": "Forwarder match without re-export language or export control"
+    },
+    {
+      "caseId": "hi_06",
+      "input": {
+        "address": {
+          "verification_status": "verified",
+          "type": "residential",
+          "freight_forwarder_match": false,
+          "po_box": false,
+          "prior_failed_deliveries": 0,
+          "matches_billing": false
+        },
+        "order": {
+          "total": 1099.0,
+          "ship_method": "ground",
+          "notes": "please forward to my cousin abroad once it arrives",
+          "export_controlled": false,
+          "item_categories": [
+            "phone"
+          ]
+        },
+        "customer": {
+          "history": {
+            "orders_12m": 0,
+            "chargebacks_12m": 0
+          },
+          "account_age_days": 5
+        },
+        "payment": {
+          "avs_match": true
+        }
+      },
+      "expected": {
+        "value": 2
+      },
+      "notes": "Forwarding language, new account"
+    },
+    {
+      "caseId": "hi_07",
+      "input": {
+        "address": {
+          "verification_status": "undeliverable",
+          "type": "residential",
+          "freight_forwarder_match": false,
+          "po_box": false,
+          "prior_failed_deliveries": 1,
+          "matches_billing": true
+        },
+        "order": {
+          "total": 1299.0,
+          "ship_method": "ground",
+          "notes": "",
+          "export_controlled": false,
+          "item_categories": [
+            "laptop"
+          ]
+        },
+        "customer": {
+          "history": {
+            "orders_12m": 4,
+            "chargebacks_12m": 0
+          },
+          "account_age_days": 700
+        },
+        "payment": {
+          "avs_match": true
+        }
+      },
+      "expected": {
+        "value": 4
+      },
+      "notes": "Rule undeliverable"
+    },
+    {
+      "caseId": "hi_08",
+      "input": {
+        "address": {
+          "verification_status": "verified",
+          "type": "commercial",
+          "freight_forwarder_match": false,
+          "po_box": false,
+          "prior_failed_deliveries": 0,
+          "matches_billing": true
+        },
+        "order": {
+          "total": 1299.0,
+          "ship_method": "ground",
+          "notes": "",
+          "export_controlled": false,
+          "item_categories": [
+            "laptop"
+          ]
+        },
+        "customer": {
+          "history": {
+            "orders_12m": 5,
+            "chargebacks_12m": 0
+          },
+          "account_age_days": 800
+        },
+        "payment": {
+          "avs_match": true
+        }
+      },
+      "expected": {
+        "value": 1
+      },
+      "notes": "Commercial mail drop address type, long history"
+    },
+    {
+      "caseId": "hi_09",
+      "input": {
+        "address": {
+          "verification_status": "verified",
+          "type": "residential",
+          "freight_forwarder_match": false,
+          "po_box": false,
+          "prior_failed_deliveries": 2,
+          "matches_billing": true
+        },
+        "order": {
+          "total": 899.0,
+          "ship_method": "ground",
+          "notes": "",
+          "export_controlled": false,
+          "item_categories": [
+            "phone"
+          ]
+        },
+        "customer": {
+          "history": {
+            "orders_12m": 3,
+            "chargebacks_12m": 0
+          },
+          "account_age_days": 500
+        },
+        "payment": {
+          "avs_match": true
+        }
+      },
+      "expected": {
+        "value": 3
+      },
+      "notes": "Two prior failed deliveries"
+    },
+    {
+      "caseId": "hi_10",
+      "input": {
+        "address": {
+          "verification_status": "verified",
+          "type": "residential",
+          "freight_forwarder_match": false,
+          "po_box": false,
+          "prior_failed_deliveries": 0,
+          "matches_billing": false
+        },
+        "order": {
+          "total": 2399.0,
+          "ship_method": "ground",
+          "notes": "",
+          "export_controlled": false,
+          "item_categories": [
+            "laptop"
+          ]
+        },
+        "customer": {
+          "history": {
+            "orders_12m": 0,
+            "chargebacks_12m": 0
+          },
+          "account_age_days": 1
+        },
+        "payment": {
+          "avs_match": false
+        }
+      },
+      "expected": {
+        "value": 3
+      },
+      "notes": "AVS mismatch on a one-day-old account"
+    },
+    {
+      "caseId": "hi_11",
+      "input": {
+        "address": {
+          "verification_status": "verified",
+          "type": "commercial",
+          "freight_forwarder_match": true,
+          "po_box": false,
+          "prior_failed_deliveries": 0,
+          "matches_billing": false
+        },
+        "order": {
+          "total": 1799.0,
+          "ship_method": "ground",
+          "notes": "",
+          "export_controlled": false,
+          "item_categories": [
+            "tv"
+          ]
+        },
+        "customer": {
+          "history": {
+            "orders_12m": 2,
+            "chargebacks_12m": 1
+          },
+          "account_age_days": 200
+        },
+        "payment": {
+          "avs_match": true
+        }
+      },
+      "expected": {
+        "value": 4
+      },
+      "notes": "Forwarder plus chargeback history"
+    },
+    {
+      "caseId": "hi_12",
+      "input": {
+        "address": {
+          "verification_status": "verified",
+          "type": "residential",
+          "freight_forwarder_match": false,
+          "po_box": false,
+          "prior_failed_deliveries": 0,
+          "matches_billing": true
+        },
+        "order": {
+          "total": 1099.0,
+          "ship_method": "ground",
+          "notes": "leave with the doorman please",
+          "export_controlled": false,
+          "item_categories": [
+            "phone"
+          ]
+        },
+        "customer": {
+          "history": {
+            "orders_12m": 12,
+            "chargebacks_12m": 0
+          },
+          "account_age_days": 1500
+        },
+        "payment": {
+          "avs_match": true
+        }
+      },
+      "expected": {
+        "value": 0
+      }
+    },
+    {
+      "caseId": "hi_13",
+      "input": {
+        "address": {
+          "verification_status": "unverified",
+          "type": "residential",
+          "freight_forwarder_match": false,
+          "po_box": false,
+          "prior_failed_deliveries": 0,
+          "matches_billing": true
+        },
+        "order": {
+          "total": 1299.0,
+          "ship_method": "ground",
+          "notes": "",
+          "export_controlled": false,
+          "item_categories": [
+            "laptop"
+          ]
+        },
+        "customer": {
+          "history": {
+            "orders_12m": 0,
+            "chargebacks_12m": 0
+          },
+          "account_age_days": 2
+        },
+        "payment": {
+          "avs_match": true
+        }
+      },
+      "expected": {
+        "value": 2
+      },
+      "notes": "Unverified address, first order over one thousand dollars"
+    },
+    {
+      "caseId": "hi_14",
+      "input": {
+        "address": {
+          "verification_status": "verified",
+          "type": "po_box",
+          "freight_forwarder_match": false,
+          "po_box": true,
+          "prior_failed_deliveries": 0,
+          "matches_billing": true
+        },
+        "order": {
+          "total": 549.0,
+          "ship_method": "ground",
+          "notes": "",
+          "export_controlled": false,
+          "item_categories": [
+            "monitor"
+          ]
+        },
+        "customer": {
+          "history": {
+            "orders_12m": 3,
+            "chargebacks_12m": 0
+          },
+          "account_age_days": 300
+        },
+        "payment": {
+          "avs_match": true
+        }
+      },
+      "expected": {
+        "value": 1
+      },
+      "notes": "PO box: carriers cannot deliver, soft signal only"
+    }
+  ]
+}

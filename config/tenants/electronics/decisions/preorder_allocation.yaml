@@ -1,0 +1,78 @@
+# Pre-order launch allocation. Tier T2 (it decides who gets a $1,099 phone on launch day and who waits two weeks, a
+# customer-affecting judgement call): act only >= 0.9, two approvers to change. Fair allocation is by order time —
+# rule `in_wave` allocates every order whose launch rank fits the wave — and loyalty protection is a rule too: a gold
+# member's late order is allocated while protected units remain. The model only handles the genuinely ambiguous tail:
+# orders at the wave boundary, multi-unit orders, suspicious bursts from one customer, payment that is still pending.
+# Options: allocate_now / waitlist / allocate_next_wave / cancel (+ unclear). Invoked per waiting order by the launch
+# desk (README scenario E1 and scripts/reference/electronics.sh); the answer is applied as event.inventory_available
+# (allocate_now), a waitlist notification, or api.cancel_line.
+# Sandbox gates 0.6 / 0.5 (production 0.90 / 0.05).
+decision: preorder_allocation
+version: 1
+owner: merchandising-launch
+tier: T2
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: waitlist
+state:
+  include:
+    - order.launch_rank
+    - order.qty
+    - order.minutes_after_launch
+    - order.channel
+    - order.payment_status
+    - order.notes
+    - customer.tier
+    - customer.history.orders_12m
+    - customer.history.preorders_cancelled_12m
+    - customer.orders_in_launch
+    - allocation.wave_units
+    - allocation.wave_units_remaining
+    - allocation.protected_units_remaining
+    - allocation.protected_tiers
+    - allocation.next_wave_eta_days
+rules:
+  - id: payment_declined
+    when: "input.order.payment_status == 'declined'"
+    then: cancel
+    reason: payment_declined_at_launch
+    priority: 5
+  - id: in_wave
+    when: "input.order.payment_status == 'authorized' && input.order.launch_rank <= input.allocation.wave_units && input.order.qty <= input.allocation.wave_units_remaining && input.customer.orders_in_launch <= 1"
+    then: allocate_now
+    reason: fair_allocation_by_order_time
+    priority: 10
+  - id: loyalty_protection
+    when: "input.order.payment_status == 'authorized' && input.customer.tier in input.allocation.protected_tiers && input.allocation.protected_units_remaining >= input.order.qty && input.order.qty <= 2 && input.customer.orders_in_launch <= 1"
+    then: allocate_now
+    reason: loyalty_tier_allocation_protection
+    priority: 20
+  - id: reseller_burst
+    when: "input.customer.orders_in_launch > 2 || input.order.qty > 3"
+    then: escalate
+    reason: possible_reseller_burst
+    priority: 30
+questions:
+  allocation:
+    type: choice
+    instructions: This pre-order did not fit the wave by order time or loyalty rule. What should the launch desk do with it?
+    feeds: launch_allocation
+    criteria:
+      allocate_now: Units are still free in this wave after the rules ran and nothing about the order looks like a reseller, allocate it from wave stock
+      waitlist: Wave stock is gone, keep the order with a confirmed place in line and promise the next wave date
+      allocate_next_wave: The customer is protected or at the boundary but no wave stock remains, guarantee a unit from the next wave at the original price
+      cancel: Payment is not good, the order is a duplicate or part of a reseller burst, cancel it and release the place in line
+      unclear: Not enough information, for example payment still pending or the wave count is not final
+bands:
+  act: { confidence_gte: 0.9 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+postChecks:
+  - "!(decision.value == 'allocate_now' && input.allocation.wave_units_remaining <= 0 && input.allocation.protected_units_remaining <= 0)"
+cache:
+  ttl: PT1M
+evaluation:
+  goldenSet: preorder_allocation_gold
+  minAccuracyInActBand: 0.6
+  maxCalibrationError: 0.5

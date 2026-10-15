@@ -1,0 +1,2080 @@
+Intent OMS — Product Requirements
+
+
+
+
+Intent OMS — Product Requirements
+Document
+  ​Oct 4, 2026      · ​@Pradeep
+
+
+1. Summary
+Intent OMS is a configurable, event-sourced order management system where every
+order decision runs through a layered decision stack — deterministic rules, Jev typed
+decisions, LLM reasoning, then human approval — and every decision is versioned,
+explainable and replayable.
+
+
+  Item                              Detail
+
+  Version                           0.1 draft for architecture and design-partner
+                                    review
+
+  Audience                          Product, enterprise architecture, engineering,
+                                    design partners, investors
+
+  In scope                          B2C, B2B and agent-initiated orders for US
+                                    retailers and brands: capture, promise, sourcing,
+                                    orchestration, monitoring, exceptions, customer
+                                    service changes, returns, refunds
+
+  Out of scope                      Warehouse execution (WMS), transport planning
+                                    (TMS), storefront and checkout UI, demand
+                                    planning, payment processing and tax calculation
+                                    engines (integrated, not built)
+
+  Requirement IDs                   FR = functional, GR = guardrail, NFR = non-
+                                    functional
+
+  Priority                          P0 = MVP, P1 = general availability, P2 = later
+
+
+Product thesis. All five reference vendors shipped AI agents between late 2025 and
+August 2026, but each agent assists a human or explains a rules engine. The decision itself
+is still buried in configuration that only implementers can change.
+
+Intent OMS makes the decision a first-class, business-owned object. Business users edit
+criteria, prompts and thresholds; Jev returns typed, calibrated answers in 70–500 ms; the
+LLM handles only open-ended reasoning; hard guardrails protect margin, compliance and
+money movement.
+
+
+
+
+                                                                                        Page 1 of 41
+Intent OMS — Product Requirements
+
+
+
+
+It is agent-native from day one. Orders increasingly arrive from, and are serviced by, AI
+agents, so the same governed interface serves the UI, integrations and agents through
+MCP, UCP and onX.
+
+
+2. Problems US retailers face today
+US order management leaks money in six places, and today's OMS products mostly
+answer them with static configuration tuned once at implementation. Every requirement
+in section 7 traces to one of these problems (P1–P6).
+
+
+  #          Problem                Evidence (US, 2025–     What incumbents do       What Intent OMS
+                                    26)                                              must do
+
+  P1         Returns cost           NRF projected           Rule-based               Decide refund
+             and abuse              $849.9B in 2025         eligibility, refund on   timing, keep-it and
+                                    returns, a 19.3%        scan, fraud scoring      disposition per
+                                    online return rate      in a separate tool       return using cross-
+                                    and 9% fraudulent                                channel history,
+                                    returns (NRF).                                   with reason codes
+                                    Appriss puts abuse                               CS can explain
+                                    at $86B vs fraud at
+                                    $14B, with buy-
+                                    online-return-in-
+                                    store the fastest-
+                                    growing vector
+                                    (Appriss)
+
+  P2         Rising cost to         Logistics and           Cost weights in          Margin-aware
+             serve                  fulfilment costs rose   sourcing rules,          sourcing with a
+                                    over 20% in three       rarely retuned           profitability floor
+                                    years (Manhattan                                 and a split policy
+                                    benchmark); one                                  driven by customer
+                                    split shipment adds                              intent
+                                    roughly $10–$18 in
+                                    carrier cost
+                                    (HereWeShip)
+
+  P3         Broken                 Consumers expect        Static transit tables    Promise with a
+             delivery               free delivery in 2.6    and cutoff configs       probability, re-
+             promises               days and late                                    promise
+                                    deliveries can put up                            proactively, learn
+                                    to 20% of business                               node and carrier
+                                    at risk (AlixPartners                            reliability
+                                    2026, via PackYak)
+
+
+
+                                                                                                    Page 2 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  #          Problem                Evidence (US, 2025–     What incumbents do    What Intent OMS
+                                    26)                                           must do
+
+  P4         Tariff and             De minimis was          Landed cost sits      Landed-cost-aware
+             network                suspended for all       outside the OMS;      sourcing and node
+             volatility             countries from          node eligibility      eligibility rules a
+                                    August 2025 and         changes need a        business user can
+                                    made permanent          project               change in hours
+                                    regulation by CBP on
+                                    24 June 2026 (Carra
+                                    Globe); brands such
+                                    as Aritzia moved US
+                                    fulfilment onshore
+                                    (Supply Chain Dive)
+
+  P5         Agent-                 Google's UCP            Agent orders          Agent identity,
+             initiated              (January 2026) gives    treated as one more   mandate evidence
+             orders and             agents order status,    channel               on every order,
+             disputes               tracking and returns                          scoped agent
+                                    (UCP); merchants                              permissions,
+                                    carry chargeback                              injection-safe
+                                    liability but lack                            inputs
+                                    proof of what the
+                                    buyer delegated
+                                    (Justt); hidden
+                                    instructions on
+                                    product pages can
+                                    hijack an agent's
+                                    return flow (Unit 42)
+
+  P6         Opaque, slow-          Kibo shipped an         Implementer-owned     Decisions as
+             to-change              agent whose job is      configuration; AI     versioned,
+             decisions              explaining why an       explains after the    simulated,
+                                    order routed where      fact                  approvable objects
+                                    it did (Kibo); 38% of                         the business owns
+                                    2024's
+                                    differentiators
+                                    became table stakes
+                                    by 2026 (Manhattan
+                                    benchmark)
+
+
+
+
+                                                                                                Page 3 of 41
+Intent OMS — Product Requirements
+
+
+
+
+3. Competitive landscape
+Every reference vendor now ships agents, but none lets the business define the decision
+itself as an editable, typed, confidence-gated object with replay. That is the gap Intent
+OMS targets.
+
+
+  Vendor                    2026 AI position          Borrow                   Gap to exploit
+
+  IBM Sterling              Agentic Toolkit add-on,   Deepest order model      Heavy custom code and
+  OMS                       generally available       (lines, releases,        long implementations;
+                            since 6 March 2026:       quantity-level status    AI sold per agent as an
+                            order information,        pipeline); Sterling      add-on
+                            coupon, cancellation,     Intelligent Promising;
+                            inventory                 MCP extensibility;
+                            segmentation and          agent access by user
+                            contract-risk agents;     group
+                            MCP server for
+                            external agents; UCP-
+                            based flows
+
+  Manhattan                 Store Associate,          Versionless cloud        Enterprise-only pricing;
+  Active Omni               Contact Center and        microservices;           agents bolted to a
+                            OMS Configuration         fulfilment simulation;   closed platform
+                            agents (January 2026);    the stance that
+                            Agent Foundry add-on;     agents run inside
+                            fulfilment simulation;    deterministic
+                            marketplace agents        guardrails
+                            inherit deterministic
+                            guardrails (Yahoo
+                            Finance)
+
+  Blue Yonder               Native role-based         Disruption-driven re-    Full value tied to the
+  OMS                       agents for fulfilment     sourcing; returns as     wider Blue Yonder
+                            and customer service;     margin recovery;         planning and WMS
+                            sourcing simulator and    reservation scale at     suite
+                            rebalancer; AI in its     peak
+                            Smart Disposition
+                            engine for returns
+                            (ITBrief)
+
+
+
+
+                                                                                                   Page 4 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  Vendor                    2026 AI position           Borrow                  Gap to exploit
+
+  Kibo                      Order Routing Explain      Plain-language          Explaining a black box
+                            Agent (Q1 2026); KIBO      explanation of          after the fact is not the
+                            AI unified agentic layer   routing; model-         same as an inspectable
+                            across Engage,             agnostic AI; one data   decision
+                            Configure, Explain,        model across
+                            Analyze, Optimize with     commerce and OMS
+                            no LLM lock-in (August
+                            2026) (GlobeNewswire
+                            via Yahoo)
+
+  Pipe17                    Pippen agent builds        AI-native setup; MCP    Mid-market focus; thin
+                            rules and mappings in      and onX first;          promising, B2B and
+                            plain language; MCP        connector network       state-model depth
+                            server for order           for brands and 3PLs
+                            management
+                            (September 2025); co-
+                            founded the
+                            Commerce Operations
+                            Foundation and its onX
+                            standard; AI routing
+                            without rules (Pipe17)
+
+
+Positioning. Take Sterling's order-model depth, Manhattan's simulation and guardrail
+stance, Blue Yonder's returns-as-margin view, Kibo's explainability and model choice, and
+Pipe17's agent-first connectivity. Add what none ships: business-editable, typed,
+calibrated decisions with simulation, approval and replay.
+
+A "decision sidecar" mode (section 15) lets Intent OMS sell into existing Sterling or
+Manhattan estates before replacing them.
+
+
+4. Vision, principles, goals
+Vision: every order decision is a typed, explainable, business-owned function, and every
+order can be operated by a person or an agent through the same governed interface.
+
+Design principles
+
+ 1. Deterministic first, typed second, generative last. Hard constraints live in rules. Jev
+     answers bounded judgments. The LLM handles open-ended reasoning, drafting and
+     configuration authoring only.
+ 2. Decisions are data. A decision definition (state schema, questions, criteria,
+    thresholds, fallback) is versioned, tested, approved and replayable like code.
+
+
+
+
+                                                                                                   Page 5 of 41
+Intent OMS — Product Requirements
+
+
+
+
+ 3. Confidence is a routing signal. Every probabilistic decision maps confidence to act,
+     confirm or escalate, with bands set by the risk of the action.
+ 4. The ledger is the truth. Orders are event-sourced; any order can be rebuilt and any
+     decision re-run against the exact inputs it saw.
+ 5. Agent-native, human-governed. UI, integrations and AI agents call the same APIs
+     under the same permission model. No back doors for agents.
+ 6. Model-agnostic. Jev is the default System One provider; LLMs are pluggable; no
+     single-vendor lock-in.
+ 7. Margin-aware by default. Sourcing, promise, appeasement and return decisions all see
+    order contribution margin.
+ 8. Change without deploys. States, transitions, decisions and prompts change at
+     runtime, behind simulation and approval.
+
+Goals (targets to validate with design partners within 6 months of go-live)
+
+     90% or more of orders reach a terminal state with no human touch.
+     A T0–T1 policy change goes from idea to production in under one business day.
+     Split-shipment rate falls 15% against the customer's baseline without lowering on-time
+     delivery.
+     No order ships below the profitability floor without a recorded approval.
+     A mid-market brand goes live in 12 weeks or less.
+
+Non-goals: WMS and TMS execution, storefront and checkout UI, product information
+management, demand planning, building payment or tax engines, and any autonomous
+money movement outside declared bounds.
+
+
+5. Personas and use cases
+Ten personas use the product, and one of them is not human: external and internal AI
+agents get the same permission model as people.
+
+
+  Persona                           Primary goal                   Main surfaces
+
+  Omnichannel / fulfilment          Set sourcing, split, promise   Policy studio, simulation, KPI
+  strategy lead                     and margin policy              dashboards
+
+  Order operations analyst          Keep the pipeline moving,      Control tower, exception
+                                    clear exceptions               inbox, bulk actions, ops
+                                                                   copilot
+
+  Customer service rep              Change, cancel, return,        CS console, CS copilot
+                                    appease within policy
+
+
+
+
+                                                                                            Page 6 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  Persona                           Primary goal                  Main surfaces
+
+  Store associate                   Accept, pick, pack, hand      Store task app (or partner
+                                    over BOPIS and ship-from-     app)
+                                    store orders
+
+  Loss prevention / risk analyst    Contain return abuse and      Risk policies, return
+                                    risky agent orders            decisions, dispute evidence
+                                                                  packs
+
+  Finance controller                Protect margin, reconcile     Order P&L, refund ledger,
+                                    refunds and payments          margin-floor approvals
+
+  Implementer / solutions           Model order types, states     State designer, config
+  engineer                          and integrations              copilot, mapping assistant
+
+  AI governance owner               Approve decision changes,     Change approvals,
+                                    watch drift and calibration   evaluation and calibration
+                                                                  reports
+
+  Platform engineer                 Extend and integrate          APIs, event streams, SDKs,
+                                                                  extension sandbox
+
+  AI agent (shopping,               Place, track, modify and      MCP tools, UCP order
+  customer-service or internal      return orders on someone's    capability, onX
+  ops agent)                        behalf
+
+
+Primary use cases
+
+ 1. UC-01 Capture an order from web, marketplace, POS, EDI or an AI agent, validate it and
+    attach provenance.
+ 2. UC-02 Promise a delivery date at product page, cart and checkout with an on-time
+     probability.
+ 3. UC-03 Source an order across up to 100 candidate nodes while respecting the margin
+     floor.
+ 4. UC-04 Apply the buyer's fulfilment intent: ship complete, ship as available, split, or pick
+     up.
+ 5. UC-05 Watch the pipeline, predict SLA breaches and remediate before the customer
+     notices.
+ 6. UC-06 Resolve exceptions: backorder, short pick, store reject, address failure, payment
+     authorisation expiry, carrier delay.
+ 7. UC-07 Modify or cancel after release, with a feasibility and cost check.
+ 8. UC-08 Decide return eligibility, refund timing, keep-it and disposition, and contain
+     abuse.
+
+
+
+
+                                                                                         Page 7 of 41
+Intent OMS — Product Requirements
+
+
+
+
+ 9. UC-09 Accept an agent-initiated order or return only within the buyer's mandate, and
+     keep the evidence.
+10. UC-10 A business user edits a decision, simulates it on the last 30 days, gets approval
+     and rolls it out as a canary.
+11. UC-11 An implementer adds a new order type (pre-order, B2B quote-to-order, ship-to-
+     store) through the config copilot.
+12. UC-12 Anyone asks "why" about any decision and sees the full trace.
+13. UC-13 Peak-day disruption (carrier outage, storm): bulk re-source and re-promise
+     affected orders.
+14. UC-14 A tariff or duty change: re-evaluate cross-border nodes and landed cost for
+     open orders.
+
+
+6. Reference architecture
+Orders enter through one gateway, live in an event-sourced core, and every judgment a
+service needs goes through the decision fabric, which acts only inside the gate that
+governance allows.
+
+
+
+
+                                                                                       Page 8 of 41
+Intent OMS — Product Requirements
+
+
+
+
+Reference architecture · 6 tiers, 4 decision layers
+
+Read it top to bottom: people, agents and systems share one gateway; the order core
+records and drives state; domain services ask the fabric for decisions; governance sets
+what each layer may do. Jev (highlighted) is the default engine for typed decisions.
+
+Recommended building blocks (to confirm in an architecture spike)
+
+
+  Component                     Recommendation                       Why
+
+  Workflow                      Temporal; evaluate Camunda 8 and     Durable execution, timers, signals
+  engine                        AWS Step Functions as alternatives   and deterministic versioning for
+                                                                     long-lived orders
+
+
+
+
+                                                                                                  Page 9 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  Component                     Recommendation                         Why
+
+  Event ledger                  PostgreSQL with a transactional        Exactly-once per order,
+                                outbox to Kafka; CloudEvents           replayable, simple to operate
+                                format
+
+  State engine                  In-house statechart engine with        No vendor status model to fight;
+                                CEL guards; models as YAML in Git      static validation before publish
+
+  Rules (L0)                    CEL plus decision tables; DMN          Deterministic, testable, readable
+                                import at P2                           by analysts
+
+  Decision                      Stateless service calling TypeSafe's   Provider routing, timeouts, cost
+  runtime                       API for Jev and an LLM gateway for     and trace capture in one place
+                                L2
+
+  Availability                  Redis cache for promise reads;         Sub-300 ms promise with strongly
+                                reservations in PostgreSQL with        consistent reservations
+                                row locks
+
+  Search and                    OpenSearch for order search;           Fast operator queries at peak
+  metrics                       ClickHouse for control-tower           volume
+                                metrics
+
+
+
+
+7. Functional requirements
+The MVP (P0) is the state engine, durable workflows, the decision fabric with Jev,
+sourcing with intent and margin floor, the control tower, the policy studio and agent
+interfaces; everything else layers on. "Traces to" refers to the problems in section 2.
+
+
+7.1 Order capture and canonical order model
+
+  ID                     Requirement                                             Priority
+
+  FR-CAP-01              Ingest orders through REST and GraphQL APIs,            P0 (EDI P1)
+                         webhooks, marketplace connectors, POS, files, EDI
+                         X12 (850, 855, 856, 810) and agent protocols (MCP,
+                         UCP).
+
+  FR-CAP-02              One canonical model: header, lines, quantity by         P0
+                         status, fulfilment groups, charges, discounts,
+                         taxes, tenders, addresses, notes, and a typed,
+                         tenant-defined extension schema (no untyped
+                         blobs).
+
+
+
+
+                                                                                                   Page 10 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  ID                     Requirement                                             Priority
+
+  FR-CAP-03              Configurable order types, each bound to a state         P0 / P1
+                         model and decision set: standard ship, BOPIS, ship-
+                         from-store, ship-to-store, curbside, same-day local,
+                         drop-ship, pre-order, backorder (P0); B2B PO,
+                         quote-to-order, net terms, partial acceptance,
+                         subscription, exchange, marketplace (P1).
+
+  FR-CAP-04              Idempotent capture keyed on channel and channel         P0
+                         order ID; safe to replay any inbound message.
+
+  FR-CAP-05              Validation pipeline of configurable steps: schema,      P0
+                         address verification, item and price sanity,
+                         payment status, restricted items by state and ZIP,
+                         age-restricted and hazmat items.
+
+  FR-CAP-06              Capture the buyer's fulfilment intent (speed, cost,     P0
+                         completeness, pickup) from explicit choices and
+                         free-text notes, normalised into a typed intent
+                         profile by a Jev Choice question.
+
+  FR-CAP-07              Record agent provenance on every agent order:           P0
+                         agent identity, protocol (UCP, ACP, MCP), mandate
+                         or authorisation artefact, spend limits, and the
+                         buyer's instruction text as evidence.
+
+  FR-CAP-08              Draft orders and quotes with expiry and price lock.     P1
+
+  FR-CAP-09              Consolidate orders from the same customer and           P1
+                         address within a configurable window when it
+                         lowers cost without breaking the promise.
+
+
+
+7.2 Configurable state machine engine
+This is the core of the product: any status pipeline a business needs, defined as data, with
+no hard-coded statuses beyond a few system meta-states.
+
+
+  ID                   Requirement                                              Priority
+
+  FR-SM-01             Tenant-defined states per entity: order, line,           P0
+                       fulfilment group or release, shipment, return,
+                       refund, payment. Every model maps to system
+                       meta-states (Created, Active, Terminal) for cross-
+                       tenant tooling.
+
+
+
+
+                                                                                            Page 11 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  ID                   Requirement                                              Priority
+
+  FR-SM-02             Quantity-level status: one line of 10 units can sit as   P0
+                       4 Shipped, 3 Released, 3 Backordered at once.
+
+  FR-SM-03             Each transition declares a trigger (event, API           P0
+                       action, timer, decision outcome), guards (typed
+                       expressions in a safe language such as CEL),
+                       actions (workflow activities) and the permission
+                       required.
+
+  FR-SM-04             Statecharts: nested sub-states (Released →               P1
+                       Picking → Packed) and parallel regions (payment
+                       and fulfilment progress independently).
+
+  FR-SM-05             Configurable roll-up rules derive header status          P0
+                       from lines (for example "Partially Shipped").
+
+  FR-SM-06             State models are versioned. Orders pin the version       P0
+                       they started on; a migration moves in-flight orders
+                       to a new version with a dry run and a per-order
+                       report.
+
+  FR-SM-07             Holds are a first-class overlay: typed holds (fraud,     P0
+                       payment, address, compliance, agent verification,
+                       manual) block named transitions, carry reason
+                       codes and expiry, and resolve through decisions or
+                       people.
+
+  FR-SM-08             Timers and SLAs attach to states ("Released for          P0
+                       more than 4 hours without a pick → escalate").
+
+  FR-SM-09             Models are authored as YAML or JSON in Git (P0)          P0 / P1
+                       and in a visual designer that round-trips to the
+                       same file (P1).
+
+  FR-SM-10             Static checks block publishing on unreachable            P0
+                       states, dead ends, transitions without permissions,
+                       unbounded loops and guards that reference
+                       unknown fields.
+
+  FR-SM-11             Every transition writes an immutable event: actor        P0
+                       (user, system, agent or decision ID), before and
+                       after state, correlation and causation IDs.
+
+  FR-SM-12             Natural-language edits through the config copilot        P1
+                       produce a model diff that goes through the normal
+                       publish pipeline (FR-CFG-02).
+
+
+
+
+                                                                                           Page 12 of 41
+Intent OMS — Product Requirements
+
+
+
+
+7.3 Workflow orchestration and durable execution
+
+  ID                   Requirement                                           Priority
+
+  FR-WF-01             Each order runs as a durable workflow that            P0
+                       survives restarts and deploys, including long-lived
+                       orders (pre-orders, B2B, return windows).
+                       Recommended engine: Temporal; Camunda 8 and
+                       AWS Step Functions are the alternatives to
+                       evaluate.
+
+  FR-WF-02             Steps are activities with retry policies, timeouts    P0
+                       and saga compensation (if sourcing fails, release
+                       the reservation and void the authorisation).
+
+  FR-WF-03             Workflows are generated from the state model          P1
+                       plus process templates; business users insert or
+                       remove steps ("add a risk review for agent orders
+                       over $500") without code.
+
+  FR-WF-04             Human tasks (approval, review, exception              P0
+                       resolution) route to queues with SLA, skills and
+                       escalation.
+
+  FR-WF-05             External events (carrier scan, WMS short pick,        P0
+                       customer cancel) signal the running workflow with
+                       per-order ordering and idempotency.
+
+  FR-WF-06             Per-order timeline shows states, steps, decisions,    P0
+                       retries, pending timers and the next expected
+                       event.
+
+  FR-WF-07             Bulk operations (re-source, re-promise, hold,         P0
+                       release, cancel) over a query, with dry run,
+                       throttling and rollback.
+
+  FR-WF-08             In-flight workflows stay on their version; changes    P0
+                       ship through deterministic workflow versioning.
+
+
+
+7.4 Decision fabric
+The decision fabric is the product's differentiator: every judgment the OMS makes is a
+named, versioned Decision Definition evaluated through four layers.
+
+
+
+
+                                                                                        Page 13 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  ID                     Requirement                                            Priority
+
+  FR-DEC-01              A Decision Definition holds: purpose, owner, risk      P0
+                         tier, typed input schema, state builder (which
+                         fields are passed), questions (Choice, Score, Noul),
+                         criteria text, confidence bands, pre- and post-
+                         checks, fallback.
+
+  FR-DEC-02              Layered evaluation: L0 hard rules always win → L1      P0
+                         System One (Jev) typed decision → L2 System Two
+                         (LLM) reasoning for low-confidence or open-
+                         ended cases → L3 human. Any layer can be skipped
+                         per decision.
+
+  FR-DEC-03              L0 rules engine: decision tables plus CEL              P0
+                         expressions, versioned and unit-testable ("never
+                         split hazmat", "no ship-to for restricted ZIPs").
+
+  FR-DEC-04              Composite scoring: combine several Jev Score           P0
+                         answers with weights held in configuration, so
+                         priorities change by editing a weight, not a prompt.
+
+  FR-DEC-05              Large option sets: above 255 options, score            P0
+                         candidates independently, keep the top K, then run
+                         a Choice over the top K.
+
+  FR-DEC-06              Every decision stores: typed value, probabilities,     P0
+                         confidence, band, provider, model version,
+                         definition version, input hash, latency, cost, final
+                         action.
+
+  FR-DEC-07              Invocation modes: synchronous (promise,                P0
+                         sourcing), asynchronous (monitoring sweeps) and
+                         batch (nightly re-scoring).
+
+  FR-DEC-08              DecisionProvider interface: Jev is the default         P0
+                         System One provider; LLM providers (Claude, GPT,
+                         Gemini, open-weight) sit behind a gateway; routing
+                         and failover per decision.
+
+  FR-DEC-09              Shadow mode runs a new definition beside the live      P0
+                         one without acting, with comparison reports.
+
+  FR-DEC-10              Outcome labels (promise met, return judged             P0
+                         abusive, split accepted, override reason) link back
+                         to the decision for evaluation and threshold tuning.
+
+
+
+
+                                                                                           Page 14 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  ID                     Requirement                                            Priority
+
+  FR-DEC-11              Cache decisions by input hash with a TTL for safe      P1
+                         re-evaluation.
+
+
+
+7.5 Policy and prompt studio
+Business users own decision wording; the studio makes that safe by forcing simulation,
+tests and approval before anything goes live.
+
+
+  ID                     Requirement                                            Priority
+
+  FR-PRM-01              Structured editor for decision criteria, option        P0
+                         descriptions, score rubrics and LLM prompts, with
+                         field-level guidance (not a bare text box).
+
+  FR-PRM-02              Every edit is a draft. Publishing needs a passing      P0
+                         regression suite, a simulation on historical orders
+                         and sign-off by risk tier (two approvers for T2–T3).
+
+  FR-PRM-03              Impact diff: changed text plus the decisions that      P0
+                         would flip on the last N days of orders, with cost,
+                         margin, SLA and escalation deltas.
+
+  FR-PRM-04              Rollout: shadow → canary percentage by channel,        P0
+                         region or order type → full; one-click rollback.
+
+  FR-PRM-05              Typed variables: prompts reference order fields;       P0
+                         the studio validates references against the state
+                         schema.
+
+  FR-PRM-06              Mandatory change reason and linked ticket on           P0
+                         every publish; full who-what-when audit.
+
+  FR-PRM-07              Template library of common OMS decisions               P1
+                         (section 9) that tenants clone and adapt.
+
+  FR-PRM-08              Linting flags overlapping options, a missing escape    P1
+                         option, vague rubric levels, PII in prompts and text
+                         that contradicts an L0 rule.
+
+  FR-PRM-09              Customer-facing generated text in en-US and es-        P2
+                         US.
+
+
+
+
+                                                                                           Page 15 of 41
+Intent OMS — Product Requirements
+
+
+
+
+7.6 Sourcing, promising and intent-driven fulfilment
+Sourcing answers "which nodes, in how many packages, by when" from the buyer's intent
+and the order's economics, instead of one static rule set per channel.
+
+
+  ID                     Requirement                                             Priority
+
+  FR-SRC-01              A deterministic candidate generator returns up to       P0
+                         N feasible nodes (default 100) per fulfilment group
+                         using inventory, capabilities (ship-from-store,
+                         BOPIS, hazmat), capacity, cutoffs and distance.
+
+  FR-SRC-02              Rank candidates by computed economics                   P0
+                         (shipping, labour, packaging, split penalty,
+                         markdown risk, landed cost) combined with Jev
+                         composite scores for soft factors (node health, on-
+                         time likelihood).
+
+  FR-SRC-03              Choose the fulfilment policy per order from the         P0
+                         intent profile (FR-CAP-06): ship complete, ship as
+                         available, split up to K packages, pickup
+                         consolidation, same-store. Channel defaults apply
+                         when intent is unclear.
+
+  FR-SRC-04              Profitability floor: no plan may drop contribution      P0
+                         margin below the configured floor without
+                         approval; a breach routes to L3 or to an alternative
+                         offer (later date, pickup, ship complete).
+
+  FR-SRC-05              Promise service returns a date and an on-time           P0
+                         probability at product page, cart and checkout; p95
+                         under 300 ms from cached availability.
+
+  FR-SRC-06              Offer the buyer trade-offs ("$0 and Thursday as         P1
+                         one box, or $4.99 and Tuesday in two") when
+                         policies differ in cost or date.
+
+  FR-SRC-07              Store reject or timeout triggers automatic re-          P0
+                         sourcing and a learned penalty for that node and
+                         SKU.
+
+  FR-SRC-08              Node health signals (backlog, pick rate, reject rate,   P1
+                         staffing, weather, carrier capacity) feed the scores.
+
+  FR-SRC-09              Re-promise and notify the customer when on-time         P1
+                         probability falls below a threshold.
+
+
+
+
+                                                                                            Page 16 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  ID                     Requirement                                            Priority
+
+  FR-SRC-10              Allocation protection: reserve stock by channel or     P1
+                         customer tier, node safety stock, store-floor
+                         minimums.
+
+  FR-SRC-11              Negotiation mode (experimental): specialist agents     P2
+                         for cost, speed, capacity and inventory health each
+                         propose and score plans; an arbiter picks within
+                         the guardrails.
+
+
+
+7.7 Inventory availability and reservations
+
+  ID                    Requirement                                             Priority
+
+  FR-INV-01             Real-time available-to-promise across DCs, stores,      P0
+                        drop-ship vendors and in-transit, with supply types
+                        (on hand, PO, ASN) and demand types (reserved,
+                        allocated, safety).
+
+  FR-INV-02             Reservation API with TTL at cart and checkout;          P0
+                        atomic conversion at order capture.
+
+  FR-INV-03             Channel availability feeds (marketplaces, UCP           P0
+                        catalog for agents) with configurable buffers to
+                        prevent oversell.
+
+  FR-INV-04             Event-driven sync with WMS and POS, plus                P0
+                        reconciliation jobs that alert on drift.
+
+  FR-INV-05             Inventory confidence per node and SKU (cycle-           P1
+                        count age, recent rejects, shrink) scored by Jev
+                        and used in sourcing.
+
+
+
+7.8 Monitoring, SLA and exception management
+The control tower's job is to find at-risk orders before the customer does and fix most of
+them without a person.
+
+
+  ID                      Requirement                                            Priority
+
+  FR-MON-01               Live pipeline view by state, age, channel, node and    P0
+                          order type, drilling to any order's timeline.
+
+
+
+
+                                                                                            Page 17 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  ID                      Requirement                                           Priority
+
+  FR-MON-02               SLA definitions per state and order type, plus a      P0
+                          predicted breach-risk score per open order (Jev
+                          Score on order, node and carrier signals).
+
+  FR-MON-03               Tenant-configurable exception taxonomy; every         P0
+                          exception is classified (Jev Choice) into type,
+                          severity and owning queue.
+
+  FR-MON-04               Playbooks per exception type: configured              P0
+                          remediation steps (re-source, contact customer,
+                          reship, refund, cancel) gated by confidence and
+                          spend limits.
+
+  FR-MON-05               Stuck-order sweeper finds orders missing an           P0
+                          expected event within a window and starts a
+                          diagnosis.
+
+  FR-MON-06               Alerts to Slack, Microsoft Teams, email and           P0
+                          PagerDuty with de-duplication.
+
+  FR-MON-07               Anomaly detection on rejects, cancels, payment        P1
+                          failures and stuck orders, with an LLM-written
+                          incident summary linked to the evidence.
+
+  FR-MON-08               Ops copilot answers plain-language questions over     P1
+                          live data ("how many ship-from-store orders in
+                          Texas are at risk today?") and shows the query it
+                          ran.
+
+
+
+7.9 Customer service and order changes
+
+  ID                  Requirement                                             Priority
+
+  FR-CS-01            One order view across channels: lines, shipments,       P0
+                      returns, payments, decisions with their traces, and
+                      customer communications.
+
+  FR-CS-02            Modifications (address, item, quantity, ship            P0
+                      method, cancel line or order) check feasibility
+                      against current state and show the cost of the
+                      change, including carrier intercept where allowed.
+
+  FR-CS-03            WISMO self-service through chat, email, voice bot       P0
+                      and external agents via the UCP order capability.
+
+
+
+
+                                                                                           Page 18 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  ID                  Requirement                                             Priority
+
+  FR-CS-04            Appeasement limits by role; a recommended               P1
+                      appeasement from customer value, issue severity
+                      and history; above the limit, approval.
+
+  FR-CS-05            CS copilot drafts replies grounded only in order        P1
+                      facts and decision outputs; it never states a date or
+                      refund the decision service did not return.
+
+  FR-CS-06            Exchanges: even, uneven with price difference,          P1
+                      and advance exchange with a credit hold.
+
+
+
+7.10 Returns, refunds and abuse
+Returns are treated as margin recovery: each return gets a refund-timing, keep-it and
+disposition decision, and the reasons are visible to CS.
+
+
+
+
+                                                                                         Page 19 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  ID                    Requirement                                             Priority
+
+  FR-RET-01             Start a return from any channel, including buy-         P0
+                        online-return-in-store and agent-initiated returns.
+
+  FR-RET-02             Eligibility and refund timing: L0 policy (window,       P0
+                        final sale) plus a Jev risk Score (history, item,
+                        channel, receipt status) selects instant refund,
+                        refund on carrier scan, refund on inspection, store
+                        credit only, or escalate.
+
+  FR-RET-03             Risk decisions ship with reason codes from              P0
+                        separate Noul questions ("more than two not-
+                        received claims in 12 months"), because Jev
+                        returns no free-text rationale.
+
+  FR-RET-04             Refund orchestration: original tender split, partial    P0
+                        refunds, restocking fees, gift cards, PSP
+                        reconciliation.
+
+  FR-RET-05             Keep-it (returnless refund) when return cost            P1
+                        exceeds recovery value and risk is low.
+
+  FR-RET-06             Disposition (restock, refurbish, liquidate, return to   P1
+                        vendor, donate, destroy) chosen from condition
+                        notes and economics.
+
+  FR-RET-07             Cross-channel identity resolution across online,        P1
+                        store and agent returns to spot serial abuse.
+
+
+
+7.11 Payments, tax, landed cost and compliance
+
+  ID                   Requirement                                              Priority
+
+  FR-FIN-01            PSP-agnostic payment lifecycle: authorise, re-           P0
+                       authorise before expiry, capture on shipment, split
+                       tender, partial capture.
+
+  FR-FIN-02            Tax from an external engine (Avalara, Vertex) at         P0
+                       capture and on every change.
+
+  FR-FIN-03            Compliance rules at L0: restricted items by state        P0
+                       and ZIP, age-restricted goods, hazmat, export
+                       controls.
+
+
+
+
+                                                                                           Page 20 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  ID                   Requirement                                             Priority
+
+  FR-FIN-04            Order P&L: revenue, discounts, COGS, shipping,          P0
+                       labour, payment fees and a returns reserve, giving
+                       contribution margin at every decision.
+
+  FR-FIN-05            Landed cost per sourcing option for cross-border        P1
+                       nodes (duty, brokerage, surcharges), from tariff
+                       tables the business maintains with effective dates.
+
+  FR-FIN-06            Agent-order payments: accept delegated payment          P1
+                       tokens and mandates from agent protocols and
+                       store them as dispute evidence.
+
+
+
+7.12 Agent-native interfaces
+Agents are a channel and a workforce. External agents buy and service orders; internal
+agents run operations. Both use the same tools and permissions as people.
+
+
+  ID                    Requirement                                            Priority
+
+  FR-AGT-01             MCP server exposing order tools (get, search,          P0
+                        promise, modify, cancel, return, inventory) with
+                        per-tool scopes.
+
+  FR-AGT-02             UCP order capability: order retrieval plus lifecycle   P0
+                        webhooks (shipped, delivered, returned, refunded)
+                        for agents that placed orders.
+
+  FR-AGT-03             Agent registry: identity, verification (signed         P0
+                        requests or tokens), owner, trust tier. Unknown
+                        agents get read-only access to orders they can
+                        prove they own.
+
+  FR-AGT-04             Per-agent limits: allowed actions, maximum order       P0
+                        value, maximum refund, rate limits, and actions
+                        that need human confirmation.
+
+  FR-AGT-05             All agent-supplied and fetched text is data: never     P0
+                        merged into system instructions, screened for
+                        injected instructions before it reaches an LLM
+                        layer (GR-08).
+
+  FR-AGT-06             Internal agents (ops, CS, config) call the same MCP    P0
+                        tools under the same permission model as human
+                        users.
+
+
+
+
+                                                                                          Page 21 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  ID                    Requirement                                            Priority
+
+  FR-AGT-07             onX adapter for order events and inventory sync        P1
+                        with brands and 3PLs.
+
+  FR-AGT-08             ACP checkout support for orders from                   P1
+                        conversational assistants.
+
+  FR-AGT-09             One-click dispute evidence pack: mandate, agent        P1
+                        identity, instruction text, decision trail, proof of
+                        delivery.
+
+
+
+7.13 Simulation, replay and experimentation
+
+  ID                    Requirement                                            Priority
+
+  FR-SIM-01             Replay any order through the current or a              P0
+                        proposed state model and decision set from the
+                        event ledger, and show the diff.
+
+  FR-SIM-02             Batch simulation over a date range reporting cost,     P0
+                        split rate, on-time rate, margin, touchless rate and
+                        escalations.
+
+  FR-SIM-03             What-if scenarios: node closure, carrier outage,       P1
+                        tariff change, demand spike.
+
+  FR-SIM-04             A/B and multi-armed experiments on decision            P1
+                        versions, with guardrail metrics and automatic
+                        stop.
+
+  FR-SIM-05             Synthetic order generator for testing new order        P1
+                        types and peak load.
+
+
+
+7.14 Explainability and audit
+
+  ID                   Requirement                                             Priority
+
+  FR-XAI-01            "Why" on any decision shows: inputs passed,             P0
+                       questions asked, answers with probabilities and
+                       confidence, rules fired, band, action taken, actor.
+
+  FR-XAI-02            Append-only audit store (write-once retention)          P0
+                       kept 7 years by default, configurable per tenant.
+
+
+
+
+                                                                                          Page 22 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  ID                   Requirement                                             Priority
+
+  FR-XAI-03            Plain-language explanation written by an LLM from       P1
+                       the trace, labelled as generated and linked to the
+                       raw trace.
+
+  FR-XAI-04            Customer-safe explanation variant for CS and            P1
+                       agents that hides internal margin and risk data.
+
+
+
+7.15 Configuration copilot
+
+  ID                     Requirement                                            Priority
+
+  FR-CFG-01              Plain-language change requests ("add a risk review     P1
+                         for agent orders over $500 shipping to California")
+                         become a diff across state model, rules and
+                         workflow, with generated tests.
+
+  FR-CFG-02              The copilot never publishes; its output enters the     P0
+                         same publish pipeline as a human edit.
+
+  FR-CFG-03              Integration mapping assistant builds field             P1
+                         mappings from sample payloads.
+
+  FR-CFG-04              Legacy importer reads Sterling pipelines,              P2
+                         Manhattan and Kibo configuration exports or CSV
+                         status maps and proposes mappings.
+
+
+
+7.16 Analytics
+
+  ID                    Requirement                                            Priority
+
+  FR-ANL-01             Standard KPI dashboards for the metrics in section     P0
+                        13.
+
+  FR-ANL-02             Decision analytics per version: volume, band mix,      P0
+                        override rate, calibration curve, latency, cost.
+
+  FR-ANL-03             Event and change-data export to Snowflake,             P1
+                        BigQuery or Databricks.
+
+  FR-ANL-04             Plain-language analytics that always show the          P1
+                        query used.
+
+
+
+
+                                                                                           Page 23 of 41
+Intent OMS — Product Requirements
+
+
+
+
+8. AI guardrails and governance
+No model output moves money, inventory or a customer commitment unless it passes
+deterministic bounds, a confidence gate set by the action's risk tier, and an audit write.
+Jev's schema guarantee rules out malformed answers, not wrong ones: it can pick the
+wrong option with high confidence (Sanity).
+
+Risk tiers (starting thresholds; tune per decision from shadow data, as TypeSafe
+recommends thresholds that scale with stakes — docs)
+
+
+  Tier                          Examples               Autonomy       Starting gate        Change
+                                                                                           approval
+
+  T0                            Classify an            Act            Confidence ≥ 0.5,    One
+  Informational                 exception,                            else                 approver
+                                normalise a return                    "unclassified"
+                                reason, tag an                        queue
+                                order, summarise
+
+  T1 Reversible                 Re-source before       Act within     Act ≥ 0.8; confirm   One
+  operational                   release, pick          bounds         0.5–0.8; escalate    approver +
+                                carrier service, re-                  < 0.5                simulation
+                                promise, choose
+                                disposition
+
+  T2 Customer-                  Split vs hold,         Act only in    Act ≥ 0.9 and        Two
+  impacting                     cancel a line for      the top band   within $ limits;     approvers +
+                                stock,                                else human           simulation
+                                appeasement
+                                within limit, refund
+                                timing
+
+  T3 Money-                     Refund above           Never          Model may            Two
+  moving or                     limit, deny a          autonomous     recommend; a         approvers
+  irreversible                  return, cancel a                      person decides       incl. risk
+                                whole order,                                               owner
+                                release a fraud
+                                hold, agent order
+                                beyond mandate
+
+
+Guardrail requirements
+
+
+
+
+                                                                                                 Page 24 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  ID             Requirement
+
+  GR-01          Hard constraints (compliance, margin floor, spend
+                 limits, state-machine guards) are evaluated before
+                 and after every model call. An answer that violates
+                 one is discarded and logged.
+
+  GR-02          Every probabilistic decision declares act, confirm
+                 and escalate bands. The low band never acts.
+
+  GR-03          Every Choice includes an escape option ("none of
+                 these" or "not enough information"); picking it
+                 routes to L2 or L3.
+
+  GR-04          Models choose from enumerated actions only. LLM
+                 free text never becomes an action or a value
+                 without a typed parse and validation.
+
+  GR-05          Monetary limits per decision, agent, role, tenant
+                 and time window (velocity caps), plus a circuit
+                 breaker on abnormal aggregate refund or
+                 appeasement spend.
+
+  GR-06          Kill switch per decision, provider and tenant falls
+                 back to the deterministic default instantly;
+                 exercised in a monthly drill.
+
+  GR-07          Timeouts and failover: a Jev call past its budget
+                 (default 800 ms) falls back to the L0 default; an
+                 LLM failure goes to a human queue. Order capture
+                 never blocks on AI.
+
+  GR-08          Prompt-injection defence: untrusted text
+                 (customer notes, agent messages, emails, product
+                 pages) stays in data fields; a Noul screen flags text
+                 that contains instructions to the system; L2 has
+                 read-only tools unless a step is approved.
+
+  GR-09          Data minimisation: state builders pass only the
+                 fields a decision needs; names, emails and
+                 addresses are tokenised where not required;
+                 providers under zero-data-retention terms; US
+                 data residency.
+
+
+
+
+                                                                         Page 25 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  ID             Requirement
+
+  GR-10          Change governance: every decision, prompt,
+                 threshold or state-model change carries a version,
+                 reason, passing tests, simulation and approvals per
+                 tier; an emergency path requires a retro review
+                 within 48 hours.
+
+  GR-11          Evaluation gate: each decision keeps a labelled
+                 golden set (200+ cases recommended) and
+                 minimum accuracy and calibration scores;
+                 publishing is blocked below them.
+
+  GR-12          Weekly calibration and drift monitoring per
+                 decision; alert when accuracy at a confidence level
+                 diverges from the expected, or the band mix shifts
+                 sharply.
+
+  GR-13          Every human override is recorded with a reason
+                 and fed back into evaluation.
+
+  GR-14          Separation of duties: no agent approves its own
+                 proposal; the config copilot cannot publish; no
+                 model can change thresholds or limits.
+
+  GR-15          Customer-facing text states only facts from the
+                 order record and decision outputs; dates and
+                 amounts fill typed slots; no commitments outside
+                 policy.
+
+  GR-16          No protected attributes or close proxies in risk
+                 decisions; denials carry reason codes; periodic
+                 disparate-impact review of return and fraud
+                 decisions.
+
+  GR-17          Per-tenant AI cost budgets with alerts; AI cost per
+                 order tracked as a KPI.
+
+
+
+
+9. Jev integration design
+Jev is the default engine for bounded order decisions because it returns only typed
+values with calibrated probabilities, in 70–500 ms, at $0.042 per million input tokens with
+output free (TrueFoundry). A 15,000-token sourcing state (100 candidate nodes)
+therefore costs about $0.0006 per call at list price.
+
+What Jev is, and its limits (as of 4 October 2026)
+
+
+
+                                                                                     Page 26 of 41
+Intent OMS — Product Requirements
+
+
+
+
+     Released in early access on 15 September 2026 by TypeSafe AI as its first "System One"
+     model; proprietary and hosted only (Wikipedia).
+     Three primitives: Choice (pick one of up to 255 options), Score (rate on a rubric) and
+     Noul (probability a statement is true). Choice and Score return a 0–1 confidence; Noul
+     returns only its probability (TypeSafe docs).
+     Input is text or JSON state; no images or audio. Questions in one call run in parallel and
+     independently, so adding questions barely changes latency.
+     It writes no rationale, so explanations must come from decomposed questions and the
+     trace.
+     On TypeSafe's own four-workflow benchmark it reaches roughly 68% accuracy —
+     good, not superhuman (Eden AI). Every decision must be measured on our own data
+     before it acts.
+
+Integration rules
+
+ 1. Atomic questions, composed in code. One judgment per question; weights for
+     combining them live in configuration (TypeSafe's composite-scoring pattern).
+ 2. Minimal typed state. The state builder passes the exact fields a question concerns,
+     never the whole order document.
+ 3. Speculative fan-out. Ask every question a decision point might need in one call; code
+     decides which answers matter.
+ 4. Escape option in every Choice (GR-03).
+ 5. Two-stage for large sets. Over 255 options: Score each candidate, keep the top K, then
+     Choose among them.
+ 6. Reason codes by decomposition. Ask reason-code Nouls alongside the main question
+     and store them with the decision.
+ 7. Gate Nouls on the same scale. Use confidence = |2p − 1| so Nouls and Choices share
+     one threshold scale (TypeSafe confidence docs).
+ 8. Verify calibration first. Run each decision in shadow mode until accuracy at each
+     confidence level is known; only then switch on autonomy.
+ 9. Never single-vendor. The DecisionProvider interface falls back to LLM structured
+     output, then to L0 defaults, if Jev is unavailable, rate-limited or repriced.
+
+Starter decision catalogue
+
+
+
+
+                                                                                        Page 27 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  Decision point                    Type          Question and options             Feeds                Tier
+
+  Fulfilment intent                 Choice        ship_complete,                   Fulfilment           T1
+                                                  ship_as_available,               policy (FR-SRC-
+                                                  earliest_partial,                03)
+                                                  pickup_consolidated,
+                                                  unclear
+
+  Node on-time                      Score 0–4     Can this node ship on time       Sourcing             T1
+  likelihood                                      given backlog, reject rate,      composite
+                                                  staffing and cutoff?
+
+  Split                             Noul          Would this customer accept       Split vs hold        T2
+  acceptability                                   a split, given stated intent
+                                                  and history?
+
+  Exception type                    Choice        address, inventory_short,        Playbook             T0
+                                                  carrier_delay, payment,          routing
+                                                  store_reject, system, other
+
+  SLA breach risk                   Score 0–4     How likely is this order to      Proactive re-        T1
+                                                  miss its promise?                promise
+
+  Customer                          Choice        cancel_order, cancel_line,       CS automation        T1
+  request intent                                  change_address,
+                                                  change_item, wismo, return,
+                                                  other
+
+  Return abuse risk                 Score 0–4 +   Abuse risk given history,        Refund timing        T2
+                                    reason        item, channel, receipt
+                                    Nouls
+
+  Return reason                     Choice        Tenant taxonomy                  Disposition,         T0
+                                                                                   product
+                                                                                   feedback
+
+  Disposition                       Choice        restock, refurbish, liquidate,   Recovery             T1
+                                                  return_to_vendor, donate,
+                                                  destroy
+
+  Agent order                       Noul          Does this order match the        Agent                T3
+  within mandate                                  buyer's instruction and          verification hold    gate
+                                                  limits?
+
+  Injected                          Noul          Does this text contain           Input screening      T0
+  instructions                                    instructions aimed at the
+                                                  system?
+
+
+
+
+                                                                                                       Page 28 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  Decision point                    Type             Question and options              Feeds               Tier
+
+  Address risk                      Noul             Is this address likely            Address hold        T2
+                                                     undeliverable or a
+                                                     reshipper?
+
+  Appeasement                       Choice           none, refund_shipping,            CS                  T2
+                                                     credit_10, credit_20,
+                                                     escalate
+
+
+When confidence falls in the confirm band, L2 hands the case to an LLM with the trace
+and read-only tools; the LLM may propose one of the same enumerated options, never a
+new one. Section 16 shows a full decision definition.
+
+
+10. Core data model
+The model has three layers: commerce entities (what was ordered and moved), control
+entities (how it is governed) and the event ledger that records every change to both.
+
+
+  Entity                                   Key fields                                Notes
+
+  Order                                    id, channel, channel_order_id,            Header; status rolled up
+                                           order_type, customer_ref,                 from lines
+                                           intent_profile,
+                                           agent_provenance_id, totals,
+                                           margin_snapshot,
+                                           state_model_version
+
+  OrderLine                                line_id, sku, qty, unit_price,            Typed tenant extensions
+                                           discounts, tax, fulfilment_group_id,
+                                           attributes
+
+  LineQuantityStatus                       line_id, state, qty, since                Enables quantity-level
+                                                                                     status (FR-SM-02)
+
+  FulfilmentGroup /                        id, node_id, policy (complete, as-        Output of sourcing
+  Release                                  available, split), promise_date,
+                                           on_time_probability
+
+  Shipment / Package                       id, carrier, service, tracking, events,   From WMS and carrier
+                                           cost                                      feeds
+
+  Reservation                              sku, node, qty, ttl, source (cart,        Strongly consistent per
+                                           order)                                    SKU and node
+
+
+
+
+                                                                                                          Page 29 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  Entity                            Key fields                              Notes
+
+  InventoryPosition                 sku, node, supply type, demand          ATP inputs
+                                    type, qty, confidence
+
+  Node                              id, type (DC, store, vendor, 3PL),      Sourcing candidate
+                                    capabilities, capacity, cutoffs,
+                                    health signals, landed-cost profile
+
+  Return / ReturnLine               rma_id, reason, condition,
+                                    refund_timing, disposition,
+                                    risk_score, reason_codes
+
+  Payment / Refund                  tender, auth, capture, refund,          Tokens only; no card
+                                    psp_ref                                 numbers
+
+  Hold                              type, scope (order, line),              Overlay on any state
+                                    blocks_transitions, reason_code,
+                                    expiry, resolved_by
+
+  Exception                         type, severity, queue, playbook,
+                                    status, decision_id
+
+  Task                              type, queue, assignee, sla, outcome     Human work item
+
+  AgentIdentity                     agent_id, owner, protocol,              Registry (FR-AGT-03)
+                                    verification, trust_tier, limits
+
+  Mandate                           agent_id, buyer_ref, scope,             Dispute evidence
+                                    spend_limit, instruction_text,
+                                    signature, expiry
+
+  StateModel /                      entity, version, states, transitions,   YAML-backed
+  Transition                        guards, actions, timers
+
+  DecisionDefinition                name, version, owner, tier,             Studio-managed
+                                    input_schema, questions, bands,
+                                    fallback
+
+  DecisionRecord                    definition_version, provider,           One per evaluation
+                                    model_version, input_hash,
+                                    answers, probabilities, confidence,
+                                    band, action, latency_ms, cost
+
+  PolicyChange                      object, from_version, to_version,       Governance
+                                    reason, ticket, approvals,
+                                    simulation_report
+
+
+
+
+                                                                                                   Page 30 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  Entity                               Key fields                             Notes
+
+  Event (ledger)                       event_id, aggregate_id, type,          Append-only; CloudEvents
+                                       payload, actor, causation_id,          format
+                                       correlation_id, ts
+
+
+
+
+11. Integrations and open standards
+The MVP needs one storefront, one agent channel, a carrier aggregator, one PSP, tax and
+address validation; everything else follows customer demand.
+
+
+  Category                          Example systems                Pattern            Priority
+
+  Storefronts and                   Shopify, Salesforce            Webhooks and       P0: Shopify + one
+  marketplaces                      Commerce Cloud, Adobe          APIs               marketplace
+                                    Commerce, commercetools,
+                                    BigCommerce, Amazon,
+                                    Walmart Marketplace
+
+  AI agent channels                 UCP, ACP, any MCP client       Protocol           P0: UCP, MCP; P1:
+                                                                   adapters           ACP
+
+  WMS and 3PL                       Manhattan WMS, Blue            Events plus        P0: generic + one;
+                                    Yonder WMS, SAP EWM, 3PL       APIs               P1: onX
+                                    APIs, onX
+
+  Carriers                          UPS, FedEx, USPS, regional     Rates, labels,     P0
+                                    carriers via an aggregator     tracking
+                                    (EasyPost, ShipEngine)
+
+  Payments                          Stripe, Adyen, Braintree,      Tokenised APIs     P0: one PSP
+                                    PayPal
+
+  Tax                               Avalara, Vertex                Real-time API      P0
+
+  Address validation                USPS, Smarty                   Real-time API      P0
+
+  Notifications                     Twilio, SendGrid, Klaviyo      Events             P0
+
+  ERP                               NetSuite, SAP S/4HANA,         Events plus        P1
+                                    Microsoft Dynamics 365         batch
+
+  Fraud                             Signifyd, Riskified, Forter    Score in,          P1
+                                                                   decision out
+
+  CS platforms                      Salesforce Service Cloud,      Embedded app       P1
+                                    Zendesk, Gorgias               and APIs
+
+
+
+                                                                                                    Page 31 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  Category                          Example systems               Pattern             Priority
+
+  Data platforms                    Snowflake, BigQuery,          Change-data         P1
+                                    Databricks                    capture
+
+
+Standards to adopt: MCP for tools; UCP order capability for agent-placed orders; onX
+from the Commerce Operations Foundation for post-checkout order operations; ACP and
+AP2 mandates for agent payments; EDI X12 for B2B; CloudEvents for the event ledger;
+OpenTelemetry for traces.
+
+UCP itself is versioned by date (the order capability spec is at version 2026-08-25), so
+adapters must negotiate versions rather than hard-code one (UCP spec).
+
+
+12. Non-functional requirements
+The numbers below are design targets for a mid-market to lower-enterprise tenant; they
+should be load-tested before commitments are made to customers.
+
+
+  ID               Area                          Requirement
+
+  NFR-01           Throughput                    1,000 orders per second sustained and 3,000 burst
+                                                 per region; 20,000 availability reads per second.
+
+  NFR-02           Latency (p95)                 Capture acknowledgement < 200 ms; promise <
+                                                 300 ms from cache; sourcing decision including Jev
+                                                 < 800 ms; state transition < 100 ms; control tower
+                                                 freshness < 5 s.
+
+  NFR-03           Availability                  Capture and promise 99.99%; all other services
+                                                 99.95%.
+
+  NFR-04           Durability and recovery       Ledger RPO 0 (synchronous replication), RTO < 15
+                                                 minutes; multi-AZ at P0, multi-region active-
+                                                 passive at P1, active-active at P2.
+
+  NFR-05           Degraded mode                 With every AI provider down, orders still capture,
+                                                 source and ship on L0 defaults; only autonomy
+                                                 drops.
+
+  NFR-06           Consistency                   Exactly-once state transitions per order
+                                                 (idempotency keys plus per-order sequencing);
+                                                 reservations strongly consistent per SKU and node.
+
+
+
+
+                                                                                                      Page 32 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  ID               Area                           Requirement
+
+  NFR-07           Security                       SOC 2 Type II before GA; PCI DSS scope kept
+                                                  minimal (tokens only); SSO via SAML or OIDC,
+                                                  SCIM provisioning; role- and attribute-based
+                                                  access; field-level encryption for PII; per-tenant
+                                                  keys, customer-managed keys at P2.
+
+  NFR-08           Privacy                        CCPA/CPRA and other US state privacy laws;
+                                                  deletion requests honoured across the ledger by
+                                                  crypto-shredding; AI providers under zero-data-
+                                                  retention terms with no training on tenant data.
+
+  NFR-09           Multi-tenancy                  Logical isolation, per-tenant rate limits and AI
+                                                  budgets, tenant-level model routing.
+
+  NFR-10           Observability                  OpenTelemetry traces span API, workflow,
+                                                  decision and integration calls; per-decision metrics
+                                                  and logs.
+
+  NFR-11           Extensibility                  Webhooks, event streams (Kafka), SDKs in
+                                                  TypeScript, Java and Python, sandboxed extension
+                                                  functions; no tenant code in the core.
+
+  NFR-12           Upgrades                       Versionless continuous delivery; configuration
+                                                  compatibility guaranteed across releases.
+
+  NFR-13           Accessibility                  WCAG 2.2 AA for all UIs.
+
+  NFR-14           Retention                      Ledger and decision traces 7 years by default,
+                                                  configurable.
+
+  NFR-15           AI cost                        Average AI spend under $0.01 per order, tracked
+                                                  per tenant.
+
+
+
+
+13. Success metrics
+Success is judged on business outcomes first and decision quality second; targets are
+hypotheses to confirm against each design partner's baseline.
+
+
+  KPI                               Definition                            Target (6 months           Traces
+                                                                          after go-live)             to
+
+  Touchless order                   Orders reaching a terminal state      ≥ 90%                      P6
+  rate                              with no human action
+
+
+
+
+                                                                                                       Page 33 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  KPI                               Definition                           Target (6 months      Traces
+                                                                         after go-live)        to
+
+  Promise accuracy                  Orders delivered on or before the    ≥ 95%                 P3
+                                    promised date
+
+  Split-shipment rate               Orders shipped in more than one      −15% vs baseline      P2
+                                    package
+
+  Cost to serve                     Shipping, labour and packaging       −8% vs baseline       P2
+                                    per order
+
+  Margin-floor                      Orders below the floor that have a   100%                  P2
+  compliance                        recorded approval
+
+  Store reject rate                 Store-sourced lines rejected or      −30% vs baseline      P2, P3
+                                    timed out
+
+  Exception                         Median time from exception to        −50% vs baseline      P6
+  resolution time                   resolution
+
+  Return abuse loss                 Refunds later judged abusive, per    −20% vs baseline      P1
+                                    $1,000 returned
+
+  WISMO contacts                    Where-is-my-order contacts per       −30% vs baseline      P3
+                                    100 orders
+
+  Policy change lead                Idea to production for a T0–T1       < 1 business day      P6
+  time                              change
+
+  Decision accuracy                 Correct decisions against labelled   Set per decision at   All
+                                    outcomes, per decision               publish
+
+  Calibration error                 Gap between stated confidence        < 0.05 per decision   All
+                                    and observed accuracy
+
+  Override rate                     Autonomous decisions reversed        < 5%                  All
+                                    by a person
+
+  Agent dispute win                 Chargebacks on agent orders won      Baseline in phase 2   P5
+  rate                              with the evidence pack
+
+  Time to go live                   Contract signed to first             ≤ 12 weeks            —
+                                    production order
+
+
+
+
+                                                                                                 Page 34 of 41
+Intent OMS — Product Requirements
+
+
+
+
+14. Release plan
+The plan puts a design partner live on the MVP at month 6 and reaches general availability
+at month 12, with a pass/fail gate before each phase.
+
+
+
+
+Release plan · 4 phases, 3 gates
+
+Months count from project start and are planning assumptions to revisit after the
+architecture spike. The incumbent sidecar moves into phase 1 if section 15's go-to-market
+question favours it.
+
+
+15. Risks, assumptions and open questions
+The biggest risk is leaning on a model that entered early access less than three weeks ago;
+the architecture contains it through the provider abstraction, shadow mode and L0
+defaults.
+
+
+  Risk                              Impact                      Mitigation
+
+  Jev is early access,              Pricing, quotas or          DecisionProvider abstraction;
+  proprietary and single-           availability change under   LLM structured-output
+  vendor                            us                          fallback; L0 defaults (GR-07)
+
+  Jev accuracy on OMS               Wrong confident answers     Golden sets, shadow mode,
+  decisions is unproven             in production               calibration measured before
+                                                                autonomy (GR-11, GR-12)
+
+  Business users write poor         Silent quality drop         Structured editor, linting,
+  criteria                                                      simulation diff, two-person
+                                                                approval for T2–T3
+
+
+
+                                                                                         Page 35 of 41
+Intent OMS — Product Requirements
+
+
+
+
+  Risk                              Impact                    Mitigation
+
+  Peak-season latency               Slow checkout promise     Cached availability, async
+                                                              where possible, timeouts to
+                                                              defaults
+
+  Agent protocols keep              Integration churn         Adapter layer with version
+  changing (UCP, ACP, AP2,                                    negotiation; contribute to the
+  onX)                                                        standards bodies
+
+  Liability for agent orders        Chargeback losses         Mandate evidence,
+                                                              conservative per-agent limits,
+                                                              T3 gate beyond mandate
+
+  Incumbents close the gap          Weaker differentiation    Compete on decision
+                                                              governance, speed of change,
+                                                              price and the sidecar mode
+
+  Enterprise integration            Long sales and delivery   Start with mid-market Shopify-
+  effort                            cycles                    plus-3PL brands; sidecar mode
+                                                              for incumbents' customers
+
+
+Assumptions
+
+     First customers are US brands and retailers with roughly $50M–$1B in online revenue,
+     several fulfilment nodes and at least one 3PL or store network.
+     Delivered as multi-tenant SaaS on one major cloud.
+     TypeSafe grants production access with acceptable rate limits.
+
+Open questions
+
+     Ideal first customer: mid-market brands on Shopify with 3PLs, or store-based retailers
+     with ship-from-store?
+     Lead with a decision sidecar that plugs into Sterling, Manhattan or Kibo through their
+     MCP and APIs, or a full OMS from day one?
+     Will TypeSafe sign zero-data-retention terms and provide SOC 2 evidence for Jev, at
+     the same bar used for other model providers?
+     Temporal Cloud or self-hosted workflow engine?
+     Build the store fulfilment app or partner for it?
+     Pricing basis: per order, percentage of GMV or platform fee plus usage?
+
+
+
+
+                                                                                       Page 36 of 41
+Intent OMS — Product Requirements
+
+
+
+
+16. Appendix
+
+A. Example state model (order line, standard ship)
+State models are tenant data in Git; this one shows quantity-level status, an SLA timer, a
+margin-floor guard and a store-reject loop.
+
+  stateModel: order_line.standard_ship
+  version: 3
+  entity: order_line
+  quantityLevel: true
+  states:
+    - { id: created, meta: Created }
+    - { id: awaiting_sourcing }
+      - { id: released, sla: { maxAge: PT4H, onBreach: playbook.store_backlog } }
+      - { id: picking }
+      - { id: packed }
+      - { id: shipped }
+      - { id: backordered, sla: { maxAge: P3D, onBreach:
+  decision.backorder_next_action } }
+    - { id: delivered, meta: Terminal }
+    - { id: cancelled, meta: Terminal }
+  transitions:
+    - from: created
+      to: awaiting_sourcing
+        trigger: event.order_validated
+      - from: awaiting_sourcing
+        to: released
+          trigger: decision.sourcing_plan
+          guards:
+            - "plan.margin >= tenant.margin_floor || approval.present"
+            - "!order.holds.exists(h, 'release' in h.blocks)"
+          actions: [reserve_inventory, send_release_to_wms]
+      - from: awaiting_sourcing
+        to: backordered
+        trigger: decision.sourcing_plan
+        guards: ["plan.result == 'no_feasible_node'"]
+      - from: released
+        to: awaiting_sourcing
+        trigger: event.store_rejected
+        actions: [penalise_node, release_reservation]
+      - from: [created, awaiting_sourcing, released]
+          to: cancelled
+          trigger: api.cancel_line
+          permission: order.cancel
+
+
+
+
+                                                                                    Page 37 of 41
+Intent OMS — Product Requirements
+
+
+
+
+B. Example decision definition (fulfilment policy)
+This is Intent OMS's own definition format; the runtime compiles the questions into one
+Jev call and applies bands, post-checks and fallback in code.
+
+  decision: fulfilment_policy
+  version: 7
+  owner: omnichannel-strategy
+  tier: T1
+  provider: jev
+  fallbackProvider: llm.structured
+  timeoutMs: 800
+  default: channel_default_policy             # L0 fallback
+  state:
+      include:
+        - order.channel
+        - order.notes
+          - order.intent_choices
+          - customer.tier
+          - customer.history.split_acceptance_rate
+          - plan_options[].packages
+          - plan_options[].eta
+      - plan_options[].cost_delta
+  questions:
+    intent:
+          type: choice
+          instructions: Which fulfilment outcome does the buyer most want?
+          criteria:
+              ship_complete: Everything together, even if it arrives later
+              ship_as_available: Each item as soon as it is ready
+              earliest_partial: One specific item is needed urgently
+          pickup_consolidated: Prefers to collect in store
+          unclear: Not enough information to tell
+      split_ok:
+          type: noul
+          statement: This buyer would accept the order in more than one package.
+      is_gift:
+        type: noul
+        statement: The order notes indicate the order is a gift.
+  bands:
+    act: { confidence_gte: 0.8 }
+    confirm: { confidence_gte: 0.5 }           # apply channel default and notify
+  buyer
+    escalate: { otherwise: true }
+  postChecks:
+      - "chosen_plan.margin >= tenant.margin_floor"
+
+
+
+
+                                                                                  Page 38 of 41
+Intent OMS — Product Requirements
+
+
+
+
+    - "!(order.has_hazmat && chosen_plan.packages > 1)"
+  evaluation:
+    goldenSet: fulfilment_policy_gold_v7   # 240 labelled cases
+      minAccuracyInActBand: 0.90
+      maxCalibrationError: 0.05
+
+
+
+
+                                                                  Page 39 of 41
+Intent OMS — Product Requirements
+
+
+
+
+C. Glossary
+
+  Term                              Meaning
+
+  ATP                               Available to promise: sellable quantity after
+                                    reservations and safety stock
+
+  BOPIS / BORIS                     Buy online, pick up in store / buy online, return in
+                                    store
+
+  SFS                               Ship from store
+
+  WISMO                             "Where is my order" customer contact
+
+  RMA                               Return merchandise authorisation
+
+  MCP                               Model Context Protocol: standard for exposing
+                                    tools to AI agents
+
+  UCP                               Universal Commerce Protocol from Google and
+                                    partners, covering discovery to post-purchase
+                                    orders
+
+  ACP                               Agentic Commerce Protocol from OpenAI and
+                                    Stripe for in-chat checkout
+
+  AP2                               Google's Agent Payments Protocol: signed
+                                    mandates for agent payments
+
+  onX                               Order Network eXchange: open, MCP-based
+                                    standard for order operations data
+
+  System One model                  TypeSafe's class of models that return typed
+                                    decisions with probabilities instead of text
+
+  Choice / Score / Noul             Jev's three question types: pick an option, rate on a
+                                    rubric, probability a statement is true
+
+  CEL                               Common Expression Language, a safe, non-Turing-
+                                    complete expression language for guards
+
+  Calibration error                 Gap between stated confidence and observed
+                                    accuracy
+
+
+
+D. Sources
+     TypeSafe AI: introduction, confidence, patterns, launch post
+     Jev coverage: TrueFoundry, Eden AI, Sanity glossary, Wikipedia
+     IBM: Sterling OMS agentic availability, AI agent docs
+
+
+                                                                                            Page 40 of 41
+Intent OMS — Product Requirements
+
+
+
+
+     Manhattan: Active Omni enhancements, 2026 Unified Commerce Benchmark
+     Blue Yonder: OMS overview, cognitive OMS release
+     Kibo: Q1 2026 releases, KIBO AI launch
+     Pipe17: Pippen, onX implementation
+     Standards: UCP, Commerce Operations Foundation
+     US market data: NRF returns 2025, Appriss Total Retail Loss 2026, Carra Globe on de
+     minimis, Justt on agent chargebacks, Unit 42 on agentic retail fraud
+
+
+
+
+                                                                                   Page 41 of 41
+

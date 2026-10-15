@@ -1,0 +1,424 @@
+{
+  "goldenSet": "backorder_next_action_gold",
+  "cases": [
+    {
+      "caseId": "ba_01",
+      "input": {
+        "line": {
+          "sku": "LAP-AERO-14",
+          "category": "laptop",
+          "days_backordered": 7,
+          "expected_restock_days": 9,
+          "substitute_available": true,
+          "substitute_sku": ""
+        },
+        "order": {
+          "channel": "web",
+          "intent": "ship_complete",
+          "notes": "happy to wait, don't substitute",
+          "other_lines_in_stock": 0,
+          "needed_by_days": -1
+        },
+        "customer": {
+          "tier": "gold"
+        },
+        "network": {
+          "atp_elsewhere": 0
+        }
+      },
+      "expected": {
+        "value": "wait"
+      },
+      "notes": "Rule customer_declined_substitute"
+    },
+    {
+      "caseId": "ba_02",
+      "input": {
+        "line": {
+          "sku": "LAP-AERO-14",
+          "category": "laptop",
+          "days_backordered": 7,
+          "expected_restock_days": 9,
+          "substitute_available": false,
+          "substitute_sku": ""
+        },
+        "order": {
+          "channel": "web",
+          "intent": "ship_as_available",
+          "notes": "need it by Friday or cancel",
+          "other_lines_in_stock": 0,
+          "needed_by_days": 3
+        },
+        "customer": {
+          "tier": "silver"
+        },
+        "network": {
+          "atp_elsewhere": 0
+        }
+      },
+      "expected": {
+        "value": "cancel"
+      },
+      "notes": "Rule deadline_already_missed"
+    },
+    {
+      "caseId": "ba_03",
+      "input": {
+        "line": {
+          "sku": "LAP-AERO-14",
+          "category": "laptop",
+          "days_backordered": 7,
+          "expected_restock_days": 9,
+          "substitute_available": false,
+          "substitute_sku": ""
+        },
+        "order": {
+          "channel": "web",
+          "intent": "ship_as_available",
+          "notes": "",
+          "other_lines_in_stock": 0,
+          "needed_by_days": -1
+        },
+        "customer": {
+          "tier": "standard"
+        },
+        "network": {
+          "atp_elsewhere": 4
+        }
+      },
+      "expected": {
+        "value": "split"
+      },
+      "notes": "Rule stock_elsewhere: four units at another node"
+    },
+    {
+      "caseId": "ba_04",
+      "input": {
+        "line": {
+          "sku": "LAP-AERO-14",
+          "category": "laptop",
+          "days_backordered": 7,
+          "expected_restock_days": 1,
+          "substitute_available": false,
+          "substitute_sku": ""
+        },
+        "order": {
+          "channel": "web",
+          "intent": "ship_as_available",
+          "notes": "",
+          "other_lines_in_stock": 0,
+          "needed_by_days": -1
+        },
+        "customer": {
+          "tier": "standard"
+        },
+        "network": {
+          "atp_elsewhere": 0
+        }
+      },
+      "expected": {
+        "value": "wait"
+      },
+      "notes": "Restock tomorrow"
+    },
+    {
+      "caseId": "ba_05",
+      "input": {
+        "line": {
+          "sku": "LAP-AERO-14",
+          "category": "laptop",
+          "days_backordered": 7,
+          "expected_restock_days": 21,
+          "substitute_available": true,
+          "substitute_sku": "LAP-FORGE-16"
+        },
+        "order": {
+          "channel": "web",
+          "intent": "ship_as_available",
+          "notes": "",
+          "other_lines_in_stock": 0,
+          "needed_by_days": -1
+        },
+        "customer": {
+          "tier": "standard"
+        },
+        "network": {
+          "atp_elsewhere": 0
+        }
+      },
+      "expected": {
+        "value": "substitute"
+      },
+      "notes": "Three weeks out, comparable model in stock, no refusal"
+    },
+    {
+      "caseId": "ba_06",
+      "input": {
+        "line": {
+          "sku": "LAP-AERO-14",
+          "category": "laptop",
+          "days_backordered": 20,
+          "expected_restock_days": 45,
+          "substitute_available": false,
+          "substitute_sku": ""
+        },
+        "order": {
+          "channel": "web",
+          "intent": "ship_as_available",
+          "notes": "",
+          "other_lines_in_stock": 0,
+          "needed_by_days": -1
+        },
+        "customer": {
+          "tier": "standard"
+        },
+        "network": {
+          "atp_elsewhere": 0
+        }
+      },
+      "expected": {
+        "value": "cancel"
+      },
+      "notes": "No credible ETA and no alternative"
+    },
+    {
+      "caseId": "ba_07",
+      "input": {
+        "line": {
+          "sku": "LAP-AERO-14",
+          "category": "laptop",
+          "days_backordered": 7,
+          "expected_restock_days": 12,
+          "substitute_available": false,
+          "substitute_sku": ""
+        },
+        "order": {
+          "channel": "web",
+          "intent": "ship_as_available",
+          "notes": "",
+          "other_lines_in_stock": 2,
+          "needed_by_days": -1
+        },
+        "customer": {
+          "tier": "standard"
+        },
+        "network": {
+          "atp_elsewhere": 0
+        }
+      },
+      "expected": {
+        "value": "split"
+      },
+      "notes": "Two other lines in stock and the buyer accepts partials"
+    },
+    {
+      "caseId": "ba_08",
+      "input": {
+        "line": {
+          "sku": "LAP-AERO-14",
+          "category": "laptop",
+          "days_backordered": 7,
+          "expected_restock_days": 3,
+          "substitute_available": false,
+          "substitute_sku": ""
+        },
+        "order": {
+          "channel": "web",
+          "intent": "ship_complete",
+          "notes": "",
+          "other_lines_in_stock": 2,
+          "needed_by_days": -1
+        },
+        "customer": {
+          "tier": "gold"
+        },
+        "network": {
+          "atp_elsewhere": 0
+        }
+      },
+      "expected": {
+        "value": "wait"
+      },
+      "notes": "Ship-complete intent, ETA three days"
+    },
+    {
+      "caseId": "ba_09",
+      "input": {
+        "line": {
+          "sku": "LAP-AERO-14",
+          "category": "laptop",
+          "days_backordered": 7,
+          "expected_restock_days": -1,
+          "substitute_available": false,
+          "substitute_sku": ""
+        },
+        "order": {
+          "channel": "web",
+          "intent": "unclear",
+          "notes": "",
+          "other_lines_in_stock": 0,
+          "needed_by_days": -1
+        },
+        "customer": {
+          "tier": "standard"
+        },
+        "network": {
+          "atp_elsewhere": 0
+        }
+      },
+      "expected": {
+        "value": "unclear"
+      },
+      "notes": "No ETA, no note, nothing to offer"
+    },
+    {
+      "caseId": "ba_10",
+      "input": {
+        "line": {
+          "sku": "LAP-AERO-14",
+          "category": "laptop",
+          "days_backordered": 7,
+          "expected_restock_days": 12,
+          "substitute_available": false,
+          "substitute_sku": ""
+        },
+        "order": {
+          "channel": "web",
+          "intent": "unclear",
+          "notes": "send whatever is in stock now",
+          "other_lines_in_stock": 2,
+          "needed_by_days": -1
+        },
+        "customer": {
+          "tier": "standard"
+        },
+        "network": {
+          "atp_elsewhere": 0
+        }
+      },
+      "expected": {
+        "value": "split"
+      }
+    },
+    {
+      "caseId": "ba_11",
+      "input": {
+        "line": {
+          "sku": "LAP-AERO-14",
+          "category": "laptop",
+          "days_backordered": 7,
+          "expected_restock_days": 14,
+          "substitute_available": true,
+          "substitute_sku": "LAP-FORGE-16"
+        },
+        "order": {
+          "channel": "web",
+          "intent": "ship_as_available",
+          "notes": "exact model only please",
+          "other_lines_in_stock": 0,
+          "needed_by_days": -1
+        },
+        "customer": {
+          "tier": "standard"
+        },
+        "network": {
+          "atp_elsewhere": 0
+        }
+      },
+      "expected": {
+        "value": "wait"
+      },
+      "notes": "Rule customer_declined_substitute"
+    },
+    {
+      "caseId": "ba_12",
+      "input": {
+        "line": {
+          "sku": "LAP-AERO-14",
+          "category": "laptop",
+          "days_backordered": 7,
+          "expected_restock_days": 18,
+          "substitute_available": true,
+          "substitute_sku": "LAP-FORGE-16"
+        },
+        "order": {
+          "channel": "web",
+          "intent": "ship_as_available",
+          "notes": "",
+          "other_lines_in_stock": 0,
+          "needed_by_days": -1
+        },
+        "customer": {
+          "tier": "gold"
+        },
+        "network": {
+          "atp_elsewhere": 0
+        }
+      },
+      "expected": {
+        "value": "substitute"
+      },
+      "notes": "Gold customer offered the upgraded model"
+    },
+    {
+      "caseId": "ba_13",
+      "input": {
+        "line": {
+          "sku": "LAP-AERO-14",
+          "category": "laptop",
+          "days_backordered": 7,
+          "expected_restock_days": 10,
+          "substitute_available": false,
+          "substitute_sku": ""
+        },
+        "order": {
+          "channel": "web",
+          "intent": "ship_as_available",
+          "notes": "need it before the 20th or just cancel",
+          "other_lines_in_stock": 0,
+          "needed_by_days": 4
+        },
+        "customer": {
+          "tier": "standard"
+        },
+        "network": {
+          "atp_elsewhere": 0
+        }
+      },
+      "expected": {
+        "value": "cancel"
+      },
+      "notes": "Rule deadline_already_missed"
+    },
+    {
+      "caseId": "ba_14",
+      "input": {
+        "line": {
+          "sku": "MON-UW-34",
+          "category": "monitor",
+          "days_backordered": 7,
+          "expected_restock_days": 2,
+          "substitute_available": false,
+          "substitute_sku": ""
+        },
+        "order": {
+          "channel": "marketplace",
+          "intent": "ship_complete",
+          "notes": "",
+          "other_lines_in_stock": 0,
+          "needed_by_days": -1
+        },
+        "customer": {
+          "tier": "standard"
+        },
+        "network": {
+          "atp_elsewhere": 0
+        }
+      },
+      "expected": {
+        "value": "wait"
+      },
+      "notes": "Marketplace order, ETA two days"
+    }
+  ]
+}

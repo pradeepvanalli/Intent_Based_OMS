@@ -1,0 +1,52 @@
+# Maple & Main (retail reference tenant) — decision `fulfilment_intent`. Same shape as the starter with production evaluation gates
+# (minAccuracyInActBand 0.90, maxCalibrationError 0.05). Review: owner, tier, bands, criteria wording, and add a
+# golden set under golden-sets/ before publishing through the normal approval path (see README.md §4). fallbackProvider stays
+# `heuristic` so the tenant works without AI keys; switch to `llm.structured` once an LLM key is configured.
+# Fulfilment intent (PRD section 9 starter catalogue, FR-CAP-06, FR-SRC-03). Tier T1: acts >= 0.8, confirms 0.5-0.8.
+decision: fulfilment_intent
+version: 1
+owner: omnichannel-strategy
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: channel_default_policy
+state:
+  include:
+    - order.channel
+    - order.notes
+    - order.intent_choices
+    - customer.tier
+    - customer.history.split_acceptance_rate
+questions:
+  intent:
+    type: choice
+    instructions: Which fulfilment outcome does the buyer most want?
+    feeds: fulfilment_policy
+    criteria:
+      ship_complete: Everything together in one delivery, even if it arrives later
+      ship_as_available: Each item as soon as it is ready, in separate shipments
+      earliest_partial: One specific item is needed urgently before the rest
+      pickup_consolidated: Prefers to collect the whole order in store
+      unclear: Not enough information to tell
+  split_ok:
+    type: noul
+    statement: This buyer would accept the order in more than one package.
+    reasonCode: true
+  is_gift:
+    type: noul
+    statement: The order notes indicate the order is a gift.
+    reasonCode: true
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+postChecks:
+  - "!has(chosen_plan.margin) || chosen_plan.margin >= tenant.margin_floor"
+  - "!(has(order.has_hazmat) && order.has_hazmat == true && has(chosen_plan.packages) && chosen_plan.packages > 1)"
+cache:
+  ttl: PT10M
+evaluation:
+  goldenSet: fulfilment_intent_gold
+  minAccuracyInActBand: 0.90
+  maxCalibrationError: 0.05

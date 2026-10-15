@@ -1,0 +1,85 @@
+# Example decision: VIP appeasement (T2 Choice). Extends the demo `appeasement` decision for a loyalty programme.
+#
+# What it shows
+#   * L0 rules that make policy deterministic before any model runs: a role limit that escalates, a hard cap that
+#     blocks, and a fast lane for top-tier customers with a first-time issue.
+#   * A Choice whose options are amounts finance has approved; the escape option `escalate` forces a person.
+#   * A post-check that no credit ever exceeds the order total, whatever any layer says (GR-01).
+#   * T2 bands: act only at >= 0.9 confidence; otherwise the L2 LLM may pick one of these options in the confirm
+#     band, else a human task. `default: none` means a failed provider never grants money.
+# Load it: POST /api/v1/decisions/vip_appeasement/drafts {"yaml": "<this file>"}, then lint → evaluate → submit →
+# approve (two people, T2) → publish. Call it with DecisionService.decide("vip_appeasement", input, ...).
+#
+# Input shape (top-level keys): case{issue, severity, customer_sentiment, first_issue}, order{total, shipping_paid},
+# customer{tier, history{appeasements_12m, orders_12m, lifetime_value_usd}}, request{credit_usd}, actor{limit_usd}.
+decision: vip_appeasement
+version: 1
+owner: customer-service
+tier: T2
+provider: jev
+fallbackProvider: heuristic          # production: llm.structured once an LLM key is configured
+timeoutMs: 800
+default: none                        # safe when wrong: no money moves
+state:
+  include:
+    - case.issue
+    - case.severity
+    - case.customer_sentiment
+    - case.first_issue
+    - order.total
+    - order.shipping_paid
+    - customer.tier
+    - customer.history.appeasements_12m
+    - customer.history.orders_12m
+    - customer.history.lifetime_value_usd
+rules:
+  # Lower priority runs first. The first matching rule wins.
+  - id: above_role_limit
+    when: "has(input.request) && has(input.actor) && has(input.request.credit_usd) && has(input.actor.limit_usd) && input.request.credit_usd > input.actor.limit_usd"
+    then: escalate                   # straight to L3 with the reason; the agent's own limit is policy, not judgement
+    reason: above_role_limit
+    priority: 10
+  - id: hard_cap
+    when: "has(input.request) && has(input.request.credit_usd) && input.request.credit_usd > 100"
+    then: block                      # action `blocked`; the default (`none`) applies
+    reason: above_hard_cap
+    priority: 20
+  - id: repeat_appeasements
+    when: "has(input.customer.history.appeasements_12m) && input.customer.history.appeasements_12m >= 3"
+    then: escalate
+    reason: repeat_appeasements
+    priority: 30
+  - id: vip_first_issue_shipping
+    # Fast lane: a platinum customer's first issue this year with shipping paid gets the shipping refunded, no model.
+    when: "input.customer.tier == 'platinum' && input.case.first_issue == true && input.order.shipping_paid > 0 && input.case.severity != 'high'"
+    then: refund_shipping
+    reason: vip_first_issue_fast_lane
+    priority: 40
+questions:
+  appeasement:
+    type: choice
+    instructions: Which appeasement fits this case and this customer's history?
+    feeds: cs
+    escapeOption: escalate
+    criteria:
+      none: No appeasement is warranted, the issue was minor, already resolved, or caused by the customer
+      refund_shipping: Refund the shipping charge for a late or damaged delivery when shipping was paid
+      credit_10: Ten dollar credit for a moderate inconvenience to a regular customer with few past appeasements
+      credit_25: Twenty-five dollar credit for a serious inconvenience, or a moderate one to a gold or platinum customer
+      credit_50: Fifty dollar credit for a severe inconvenience to a gold or platinum customer with high lifetime value
+      escalate: Unusual case, request outside these options, or not enough information; a person decides
+bands:
+  act: { confidence_gte: 0.9 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+postChecks:
+  # The credit implied by the chosen option may never exceed the order total, whatever layer chose it.
+  - "!(decision.value == 'credit_50' && input.order.total < 50)"
+  - "!(decision.value == 'credit_25' && input.order.total < 25)"
+  - "!(decision.value == 'refund_shipping' && input.order.shipping_paid == 0)"
+cache:
+  ttl: PT5M
+evaluation:
+  goldenSet: vip_appeasement_gold    # PUT /api/v1/golden-sets/vip_appeasement_gold with labelled cases before publishing
+  minAccuracyInActBand: 0.90
+  maxCalibrationError: 0.05

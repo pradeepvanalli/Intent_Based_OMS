@@ -1,0 +1,67 @@
+# High-value address risk. Score 0-4, tier T2 (the outcome is a hold on a $2,400 laptop or a release into a reshipper's
+# hands: money-moving either way): act only >= 0.9, two approvers. Deliverability and reshipper signals only (GR-16):
+# verification status, address type, freight-forwarder match, forwarding language in the notes, customer tenure, AVS and
+# chargeback history. Orders under $500 are a rule (score 0) so the model is only asked about orders that matter; a
+# forwarder match on an export-controlled item is a rule too (score 4) because it is policy, not judgement.
+# Scores map to actions in playbook high_value_review: 0-1 release, 2 signature + CS call, 3-4 hold for risk_review.
+# Sandbox gates 0.6 / 0.5 (production 0.90 / 0.05).
+decision: high_value_address_risk
+version: 1
+owner: returns-and-risk
+tier: T2
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: 2
+state:
+  include:
+    - address.verification_status
+    - address.type
+    - address.freight_forwarder_match
+    - address.po_box
+    - address.prior_failed_deliveries
+    - address.matches_billing
+    - order.total
+    - order.ship_method
+    - order.notes
+    - order.export_controlled
+    - order.item_categories
+    - customer.history.orders_12m
+    - customer.history.chargebacks_12m
+    - customer.account_age_days
+    - payment.avs_match
+rules:
+  - id: below_high_value_threshold
+    when: "input.order.total < 500.0"
+    then: 0
+    reason: below_high_value_threshold
+    priority: 10
+  - id: forwarder_with_export_controlled_item
+    when: "input.address.freight_forwarder_match == true && input.order.export_controlled == true"
+    then: 4
+    reason: export_controlled_to_freight_forwarder
+    priority: 20
+  - id: undeliverable
+    when: "input.address.verification_status == 'undeliverable'"
+    then: 4
+    reason: address_undeliverable
+    priority: 21
+questions:
+  address_risk:
+    type: score
+    instructions: How risky is releasing this high-value electronics order to this address?
+    feeds: release_or_hold
+    criteria:
+      - Verified residential or business address matching billing, established customer, AVS match, no forwarding language
+      - Verified address with one soft signal such as a new account, a mismatch with billing or a commercial mail drop
+      - Unverified address, or the note mentions forwarding or re-export, or the customer is new with a first order over one thousand dollars
+      - Freight forwarder or reshipper match, or prior failed deliveries, or AVS mismatch on a new account
+      - Forwarder match combined with re-export language, chargeback history or an export-controlled item, do not release
+bands:
+  act: { confidence_gte: 0.9 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+evaluation:
+  goldenSet: high_value_address_risk_gold
+  minAccuracyInActBand: 0.6
+  maxCalibrationError: 0.5

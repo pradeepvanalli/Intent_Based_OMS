@@ -1,0 +1,25 @@
+# Starter tenant — initial on-hand positions. Loaded by scripts/new-tenant.sh through POST /api/v1/inventory/feed
+# (the demo seeder generates its own deterministic inventory and ignores this file). Replace with your WMS feed:
+# POST /webhooks/inventory/{nodeId} keeps positions current.
+source: starter
+positions:
+  - { sku: SKU-APP-001, nodeId: DC-EAST, supplyType: on_hand, qty: 200 }
+  - { sku: SKU-APP-001, nodeId: DC-WEST, supplyType: on_hand, qty: 150 }
+  - { sku: SKU-APP-001, nodeId: STORE-001, supplyType: on_hand, qty: 12 }
+  - { sku: SKU-APP-002, nodeId: DC-EAST, supplyType: on_hand, qty: 180 }
+  - { sku: SKU-APP-002, nodeId: DC-WEST, supplyType: on_hand, qty: 140 }
+  - { sku: SKU-APP-002, nodeId: STORE-002, supplyType: on_hand, qty: 10 }
+  - { sku: SKU-FTW-001, nodeId: DC-EAST, supplyType: on_hand, qty: 90 }
+  - { sku: SKU-FTW-001, nodeId: DC-WEST, supplyType: on_hand, qty: 60 }
+  - { sku: SKU-HOM-001, nodeId: DC-EAST, supplyType: on_hand, qty: 300 }
+  - { sku: SKU-HOM-001, nodeId: STORE-001, supplyType: on_hand, qty: 20 }
+  - { sku: SKU-HOM-001, nodeId: STORE-002, supplyType: on_hand, qty: 20 }
+  - { sku: SKU-HOM-002, nodeId: DC-EAST, supplyType: on_hand, qty: 25 }
+  - { sku: SKU-HOM-002, nodeId: DC-WEST, supplyType: on_hand, qty: 15 }
+  - { sku: SKU-ELC-001, nodeId: DC-EAST, supplyType: on_hand, qty: 120 }
+  - { sku: SKU-ELC-001, nodeId: DC-WEST, supplyType: on_hand, qty: 80 }
+  - { sku: SKU-HAZ-001, nodeId: DC-EAST, supplyType: on_hand, qty: 60 }
+  - { sku: SKU-HAZ-001, nodeId: DC-WEST, supplyType: on_hand, qty: 40 }
+  - { sku: SKU-AGE-001, nodeId: DC-EAST, supplyType: on_hand, qty: 100 }
+  - { sku: SKU-FIN-001, nodeId: DC-WEST, supplyType: on_hand, qty: 40 }
+  - { sku: SKU-FIN-001, nodeId: STORE-001, supplyType: on_hand, qty: 8 }

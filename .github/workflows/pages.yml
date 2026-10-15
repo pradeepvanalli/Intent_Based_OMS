@@ -1,0 +1,46 @@
+name: pages
+# Publishes docs/site/ (the static project site) to GitHub Pages on every push to main that touches it, or by hand.
+# One-time setup: repository Settings → Pages → Source: "GitHub Actions". The site is then served at
+# https://<owner>.github.io/<repo>/ (or the custom domain in docs/site/CNAME if present).
+on:
+  push:
+    branches: [main]
+    paths: ["docs/site/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the site folder
+        run: |
+          test -f docs/site/index.html || { echo "docs/site/index.html is missing; nothing to publish" >&2; exit 1; }
+          mkdir -p docs/site/images
+          # index.html references ./images/*.png; copy the real screenshots in (missing ones are skipped, not fatal,
+          # so the site still deploys before every shot is captured).
+          cp docs/images/*.png docs/site/images/ 2>/dev/null || true
+          touch docs/site/.nojekyll   # serve files and folders starting with an underscore as-is
+          du -sh docs/site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: docs/site }
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

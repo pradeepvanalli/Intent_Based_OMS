@@ -1,0 +1,441 @@
+{
+  "goldenSet": "return_risk_gold",
+  "cases": [
+    {
+      "caseId": "rr_01",
+      "input": {
+        "return": {
+          "reason": "changed_mind",
+          "days_since_delivery": 5,
+          "receipt": "present",
+          "item_condition": "matches",
+          "value_usd": 49.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 1,
+            "not_received_claims": 0,
+            "flags": [
+              "first_return"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 0
+      }
+    },
+    {
+      "caseId": "rr_02",
+      "input": {
+        "return": {
+          "reason": "wrong_size",
+          "days_since_delivery": 8,
+          "receipt": "present",
+          "item_condition": "resalable",
+          "value_usd": 79.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 3,
+            "not_received_claims": 0,
+            "flags": [
+              "occasional_returns"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 1
+      }
+    },
+    {
+      "caseId": "rr_03",
+      "input": {
+        "return": {
+          "reason": "defective",
+          "days_since_delivery": 12,
+          "receipt": "missing",
+          "item_condition": "resalable",
+          "value_usd": 120.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 6,
+            "not_received_claims": 0,
+            "flags": [
+              "frequent_returns"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 2
+      }
+    },
+    {
+      "caseId": "rr_04",
+      "input": {
+        "return": {
+          "reason": "not_received",
+          "days_since_delivery": 10,
+          "receipt": "present",
+          "item_condition": "mismatch",
+          "value_usd": 340.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 7,
+            "not_received_claims": 3,
+            "flags": [
+              "repeated_claims"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 3
+      }
+    },
+    {
+      "caseId": "rr_05",
+      "input": {
+        "return": {
+          "reason": "not_received",
+          "days_since_delivery": 4,
+          "receipt": "missing",
+          "item_condition": "mismatch",
+          "value_usd": 899.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 14,
+            "not_received_claims": 6,
+            "flags": [
+              "serial_returner",
+              "multiple_not_received_claims"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 4
+      }
+    },
+    {
+      "caseId": "rr_06",
+      "input": {
+        "return": {
+          "reason": "changed_mind",
+          "days_since_delivery": 45,
+          "receipt": "present",
+          "item_condition": "matches",
+          "value_usd": 49.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 1,
+            "not_received_claims": 0,
+            "flags": [
+              "first_return"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": "deny_out_of_window"
+      }
+    },
+    {
+      "caseId": "rr_07",
+      "input": {
+        "return": {
+          "reason": "wrong_size",
+          "days_since_delivery": 3,
+          "receipt": "present",
+          "item_condition": "matches",
+          "value_usd": 59.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": true
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 1,
+            "not_received_claims": 0,
+            "flags": [
+              "first_return"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": "deny_final_sale"
+      }
+    },
+    {
+      "caseId": "rr_08",
+      "input": {
+        "return": {
+          "reason": "changed_mind",
+          "days_since_delivery": 2,
+          "receipt": "present",
+          "item_condition": "matches",
+          "value_usd": 25.0
+        },
+        "order": {
+          "channel": "store",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 0,
+            "not_received_claims": 0,
+            "flags": [
+              "first_return"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 0
+      }
+    },
+    {
+      "caseId": "rr_09",
+      "input": {
+        "return": {
+          "reason": "wrong_item",
+          "days_since_delivery": 6,
+          "receipt": "present",
+          "item_condition": "resalable",
+          "value_usd": 65.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 2,
+            "not_received_claims": 0,
+            "flags": [
+              "occasional_returns"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 1
+      }
+    },
+    {
+      "caseId": "rr_10",
+      "input": {
+        "return": {
+          "reason": "defective",
+          "days_since_delivery": 14,
+          "receipt": "missing",
+          "item_condition": "damaged",
+          "value_usd": 210.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 5,
+            "not_received_claims": 0,
+            "flags": [
+              "frequent_returns"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 2
+      }
+    },
+    {
+      "caseId": "rr_11",
+      "input": {
+        "return": {
+          "reason": "not_received",
+          "days_since_delivery": 9,
+          "receipt": "present",
+          "item_condition": "mismatch",
+          "value_usd": 450.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 8,
+            "not_received_claims": 4,
+            "flags": [
+              "repeated_claims"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 3
+      }
+    },
+    {
+      "caseId": "rr_12",
+      "input": {
+        "return": {
+          "reason": "not_received",
+          "days_since_delivery": 7,
+          "receipt": "missing",
+          "item_condition": "mismatch",
+          "value_usd": 1200.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 20,
+            "not_received_claims": 9,
+            "flags": [
+              "serial_returner",
+              "multiple_not_received_claims"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 4
+      }
+    },
+    {
+      "caseId": "rr_13",
+      "input": {
+        "return": {
+          "reason": "changed_mind",
+          "days_since_delivery": 61,
+          "receipt": "present",
+          "item_condition": "matches",
+          "value_usd": 30.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 2,
+            "not_received_claims": 0,
+            "flags": [
+              "occasional_returns"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 60
+        }
+      },
+      "expected": {
+        "value": "deny_out_of_window"
+      }
+    },
+    {
+      "caseId": "rr_14",
+      "input": {
+        "return": {
+          "reason": "arrived_late",
+          "days_since_delivery": 1,
+          "receipt": "present",
+          "item_condition": "matches",
+          "value_usd": 40.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 1,
+            "not_received_claims": 0,
+            "flags": [
+              "first_return"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 0
+      }
+    }
+  ]
+}

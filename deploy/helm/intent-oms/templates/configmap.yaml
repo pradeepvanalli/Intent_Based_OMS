@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "intent-oms.configMapName" . }}
+  labels:
+    {{- include "intent-oms.labels" . | nindent 4 }}
+data:
+  {{- $profile := include "intent-oms.springProfile" . }}
+  SPRING_PROFILES_ACTIVE: {{ $profile | quote }}
+  OMS_CONFIG_DIR: "/config"
+  {{- if .Values.demo.enabled }}
+  OMS_DEMO_SEED: "true"
+  OMS_DEMO_TENANTS: {{ .Values.demo.tenants | quote }}
+  {{- with .Values.demo.devUsers }}
+  OMS_DEV_USERS: {{ . | quote }}
+  {{- end }}
+  {{- else }}
+  OMS_DEMO_SEED: "false"
+  OMS_DEV_USERS: ""
+  {{- end }}
+  {{- range $k, $v := .Values.config }}
+  {{- if ne (toString $v) "" }}
+  {{ $k }}: {{ toString $v | quote }}
+  {{- end }}
+  {{- end }}
+{{- if and .Values.configDir.enabled (not .Values.configDir.existingConfigMap) }}
+---
+# Tenant configuration directory, mounted at /config (keys use "__" for "/", see the volume items in deployment.yaml)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "intent-oms.configDirName" . }}
+  labels:
+    {{- include "intent-oms.labels" . | nindent 4 }}
+data:
+  {{- range $path, $content := .Values.configDir.files }}
+  {{ $path | replace "/" "__" }}: |
+    {{- $content | nindent 4 }}
+  {{- end }}
+{{- end }}

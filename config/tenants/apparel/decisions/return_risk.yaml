@@ -1,0 +1,92 @@
+# Return abuse risk (FR-RET-02/03). Score 0–4 plus reason-code Nouls, tier T2. Score < 1 refunds instantly, 1–2 on the
+# carrier scan, 2–3 on inspection, >= 3 store credit only (RefundTimingMapper). Apparel reality: 30 % of orders come
+# back and most of that is fit, so the business-owned fast lanes are generous for size returns with a receipt and the
+# serial-returner threshold is 8 (tenant key returns.serial_returner_threshold). Policy denials (final sale, out of
+# window) never reach the model; a denial is a T3 recommendation a person applies (ReturnService.applyDenial).
+decision: return_risk
+version: 1
+owner: returns-and-fit
+tier: T2
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: on_inspection
+mainQuestion: abuse_risk
+state:
+  include:
+    - return.reason
+    - return.days_since_delivery
+    - return.receipt
+    - return.item_condition
+    - return.value_usd
+    - return.line_count
+    - order.channel
+    - order.order_type
+    - order.return_channel
+    - customer.history.returns_12m
+    - customer.history.not_received_claims
+    - customer.history.flags
+    - policy.window_days
+rules:
+  - id: out_of_window
+    when: "input.return.days_since_delivery > input.policy.window_days"
+    then: deny_out_of_window
+    reason: out_of_window
+    priority: 10
+  - id: final_sale
+    when: "input.order.final_sale == true"
+    then: deny_final_sale
+    reason: final_sale
+    priority: 20
+  - id: flagged_customer
+    when: "'flagged_customer' in input.customer.history.flags || input.customer.history.not_received_claims >= 2"
+    then: 4
+    reason: flagged_or_repeated_not_received_claims
+    priority: 30
+  # Fit returns are the business: a size or bracketing return with a receipt from a customer with no claims history is
+  # refunded instantly up to $300 even if she has returned a few times this year.
+  - id: size_return_fast_lane
+    when: "input.return.reason in ['wrong_size', 'didnt_fit_as_expected', 'bracketing'] && input.return.receipt == true && input.customer.history.not_received_claims == 0 && input.customer.history.returns_12m <= 5 && input.return.value_usd <= 300"
+    then: 0
+    reason: size_return_fast_lane
+    priority: 35
+  - id: trusted_customer
+    when: "input.return.receipt == true && input.customer.history.returns_12m <= 1 && input.customer.history.not_received_claims == 0 && input.return.value_usd <= 250"
+    then: 0
+    reason: trusted_customer_fast_lane
+    priority: 40
+questions:
+  abuse_risk:
+    type: score
+    instructions: How high is the abuse risk of this return given the customer's history, the item, the channel and the receipt?
+    feeds: refund_timing
+    criteria:
+      - No abuse signals, a fit or changed-mind return with a receipt from a customer with an ordinary history
+      - Low risk, frequent but ordinary returns within policy, receipt present, resalable condition
+      - Moderate risk, receipt missing, worn-item claims, or returns well above the shopper's order count
+      - High risk, repeated not-received claims, a quality claim on a high-value item without photos, or value mismatch
+      - Severe risk, flagged serial returner with multiple not-received claims and a value mismatch
+  many_not_received_claims:
+    type: noul
+    statement: The customer has made repeated not-received claims recently.
+    reasonCode: true
+  serial_returner:
+    type: noul
+    statement: The customer returns far more than an ordinary shopper of this brand.
+    reasonCode: true
+  wardrobing_suspected:
+    type: noul
+    statement: The item appears to have been worn for an occasion and returned, for example a quality claim after an event date.
+    reasonCode: true
+  receipt_missing:
+    type: noul
+    statement: The receipt or order confirmation is missing for this return.
+    reasonCode: true
+bands:
+  act: { confidence_gte: 0.9 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+evaluation:
+  goldenSet: return_risk_gold
+  minAccuracyInActBand: 0.90
+  maxCalibrationError: 0.05

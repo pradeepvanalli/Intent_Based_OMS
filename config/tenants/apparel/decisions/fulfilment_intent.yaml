@@ -1,0 +1,56 @@
+# Fulfilment intent (FR-CAP-06, FR-SRC-03). Tier T1: acts >= 0.8, confirms 0.5–0.8. Reads the checkout choice and the
+# customer's note ("it is a gift, please send everything together" / "I need the dress before Saturday") and decides
+# the fulfilment policy the planner optimises for. Nouls surface gift and gift-wrap intent as reason codes so the DC
+# packs accordingly. Production evaluation gates (0.90 / 0.05): bootstrap through the seeder or --publish emergency.
+decision: fulfilment_intent
+version: 1
+owner: omnichannel-ops
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: channel_default_policy
+state:
+  include:
+    - order.channel
+    - order.order_type
+    - order.notes
+    - order.intent_choices
+    - order.line_count
+    - customer.tier
+    - customer.history.split_acceptance_rate
+questions:
+  intent:
+    type: choice
+    instructions: Which fulfilment outcome does this shopper most want for her order?
+    feeds: fulfilment_policy
+    criteria:
+      ship_complete: Everything together in one parcel even if it arrives later, typical for gifts, outfits bought for one event and wholesale deliveries
+      ship_as_available: Each item as soon as it is ready in separate parcels, acceptable to a shopper who did not mention an occasion or a date
+      earliest_partial: One specific item is needed by a date and the rest can follow, for example a dress for a wedding on Saturday
+      pickup_consolidated: The shopper prefers to collect the whole order in one of the stores
+      unclear: Not enough information in the choice or the note to tell
+  split_ok:
+    type: noul
+    statement: This shopper would accept receiving the order in more than one parcel.
+    reasonCode: true
+  is_gift:
+    type: noul
+    statement: The order note indicates the order is a gift for someone else.
+    reasonCode: true
+  gift_wrap_requested:
+    type: noul
+    statement: The shopper asks for gift wrapping, a gift message or no prices on the packing slip.
+    reasonCode: true
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+postChecks:
+  - "!has(chosen_plan.margin) || chosen_plan.margin >= tenant.margin_floor"
+cache:
+  ttl: PT10M
+evaluation:
+  goldenSet: fulfilment_intent_gold
+  minAccuracyInActBand: 0.90
+  maxCalibrationError: 0.05

@@ -1,0 +1,66 @@
+# Starter tenant — fulfilment network: two distribution centres and two stores as placeholders. Replace ids, names,
+# coordinates (used for distance and transit), cutoffs and capacities with your own. `health` feeds the
+# sourcing_node_score decision and is updated live through POST /api/v1/nodes/{id}/health; `costProfile` feeds the
+# plan economics. Capabilities: ship, bopis (pickup), sfs (ship from store), hazmat, same_day.
+nodes:
+  - id: DC-EAST
+    name: East distribution centre (placeholder)
+    type: dc
+    lat: 40.0583           # New Jersey; replace
+    lon: -74.4057
+    country: US
+    state: NJ
+    zip: "08837"
+    capabilities: [ship, hazmat]
+    dailyCapacity: 10000
+    cutoff: "17:00"
+    timezone: America/New_York
+    health: { backlog: 0, pick_rate: 0.97, reject_rate: 0.005, staffing: 1.0 }
+    costProfile: { labour_per_unit: 1.10, packaging: 0.65, handling: 0.40 }
+  - id: DC-WEST
+    name: West distribution centre (placeholder)
+    type: dc
+    lat: 39.5296           # Nevada; replace
+    lon: -119.8138
+    country: US
+    state: NV
+    zip: "89502"
+    capabilities: [ship, hazmat]
+    dailyCapacity: 8000
+    cutoff: "16:00"
+    timezone: America/Los_Angeles
+    health: { backlog: 0, pick_rate: 0.97, reject_rate: 0.005, staffing: 1.0 }
+    costProfile: { labour_per_unit: 1.20, packaging: 0.65, handling: 0.40 }
+  - id: STORE-001
+    name: Store 001 (placeholder)
+    type: store
+    lat: 41.8819           # Chicago; replace
+    lon: -87.6278
+    country: US
+    state: IL
+    zip: "60601"
+    capabilities: [bopis, sfs, same_day]
+    dailyCapacity: 150
+    cutoff: "14:00"
+    timezone: America/Chicago
+    health: { backlog: 0, pick_rate: 0.90, reject_rate: 0.05, staffing: 0.8 }
+    costProfile: { labour_per_unit: 2.40, packaging: 0.90, handling: 0.60 }
+  - id: STORE-002
+    name: Store 002 (placeholder)
+    type: store
+    lat: 34.0522           # Los Angeles; replace
+    lon: -118.2437
+    country: US
+    state: CA
+    zip: "90012"
+    capabilities: [bopis, sfs, same_day]
+    dailyCapacity: 150
+    cutoff: "14:00"
+    timezone: America/Los_Angeles
+    health: { backlog: 0, pick_rate: 0.90, reject_rate: 0.05, staffing: 0.8 }
+    costProfile: { labour_per_unit: 2.60, packaging: 0.90, handling: 0.60 }
+  # Drop-ship vendors and 3PLs follow the same shape:
+  # - id: VENDOR-001
+  #   type: vendor
+  #   capabilities: [ship]
+  #   landedCost: { originCountry: MX }     # customs origin for landed-cost estimates

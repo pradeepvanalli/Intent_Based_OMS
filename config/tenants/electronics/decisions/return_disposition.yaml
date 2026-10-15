@@ -1,0 +1,54 @@
+# Return disposition (FR-RET-04/06). Tier T1 choice feeding recovery. The option keys are the platform's disposition
+# vocabulary (restock, refurbish, liquidate, return_to_vendor, donate, destroy); the descriptions are Voltline's bench
+# rules: refurbish = certified-refurbished programme at RFB-LOU, return_to_vendor = RTV claim against the vendor
+# warranty, destroy = scrap (swollen battery, liquid damage). The warranty_triage answer arrives in
+# return.inspection_notes as "triage=<value>".
+decision: return_disposition
+version: 1
+owner: returns-and-risk
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: refurbish
+state:
+  include:
+    - return.reason
+    - return.item_condition
+    - return.inspection_notes
+    - item.sku
+    - item.category
+    - item.cost_usd
+    - item.resale_value_usd
+    - item.vendor_return_eligible
+    - item.hazmat
+rules:
+  - id: unopened_restock
+    when: "input.return.item_condition == 'new' && input.return.reason == 'changed_mind'"
+    then: restock
+    reason: sealed_box_restock
+    priority: 10
+  - id: defective_rtv
+    when: "input.return.reason == 'defective' && input.item.vendor_return_eligible == true && input.return.item_condition != 'damaged'"
+    then: return_to_vendor
+    reason: vendor_warranty_claim
+    priority: 20
+questions:
+  disposition:
+    type: choice
+    instructions: What should happen to this returned electronics item after the bench inspection?
+    feeds: recovery
+    criteria:
+      restock: Sealed or like-new with all accessories and the serial matching the order, back to sellable inventory
+      refurbish: Works or has a minor fault the refurbishment centre can fix, resell as certified refurbished
+      liquidate: Works but cosmetically poor or superseded model, sell through the outlet or liquidation channel
+      return_to_vendor: Genuine defect within the vendor warranty, raise an RTV claim and ship it back to the vendor
+      donate: Functional but not sellable, for example an old model with no resale channel, donate it
+      destroy: Unsafe or worthless, swollen or punctured battery, liquid damage, recalled, scrap it under battery rules
+      unclear: Not enough information to decide, needs a second bench opinion
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+postChecks:
+  - "!(has(input.item) && has(input.item.hazmat) && input.item.hazmat == true && (decision.value == 'donate' || decision.value == 'liquidate'))"

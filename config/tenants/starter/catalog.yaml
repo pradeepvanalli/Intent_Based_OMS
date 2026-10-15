@@ -1,0 +1,15 @@
+# Starter tenant — ten generic SKUs that exercise every attribute the pipeline reads. Replace with a feed from your PIM.
+# price: list price; cogs: unit cost for the P&L; weightKg: feeds rate bands. Flags drive compliance rules
+# (rules/compliance.yaml), sourcing (hazmat capability, oversized) and returns (finalSale, digital).
+products:
+  - { sku: SKU-APP-001,  name: "Apparel item size M",           price: 45.00,  cogs: 14.00,  weightKg: 0.40, category: apparel }
+  - { sku: SKU-APP-002,  name: "Apparel item size L",           price: 45.00,  cogs: 14.00,  weightKg: 0.40, category: apparel }
+  - { sku: SKU-FTW-001,  name: "Footwear item size 10",         price: 120.00, cogs: 42.00,  weightKg: 1.10, category: footwear }
+  - { sku: SKU-HOM-001,  name: "Home item small",               price: 30.00,  cogs: 9.00,   weightKg: 0.80, category: home }
+  - { sku: SKU-HOM-002,  name: "Home item oversized",           price: 350.00, cogs: 120.00, weightKg: 12.00, category: home, oversized: true }
+  - { sku: SKU-ELC-001,  name: "Electronics with lithium cell",  price: 199.00, cogs: 70.00,  weightKg: 0.35, category: electronics, lithium: true }
+  - { sku: SKU-HAZ-001,  name: "Flammable liquid (hazmat)",      price: 60.00,  cogs: 15.00,  weightKg: 0.30, category: beauty, hazmat: true, hazmatClass: "3 flammable liquid" }
+  - { sku: SKU-AGE-001,  name: "Age-restricted item (21+)",      price: 40.00,  cogs: 16.00,  weightKg: 1.40, category: alcohol, ageRestricted: true, minAge: 21 }
+  - { sku: SKU-FIN-001,  name: "Clearance item (final sale)",    price: 15.00,  cogs: 6.00,   weightKg: 0.20, category: apparel, finalSale: true }
+  - { sku: SKU-DIG-001,  name: "Digital gift card",              price: 50.00,  cogs: 0.00,   weightKg: 0.00, category: gift_card, digital: true }
+  # Other recognised attributes: exportControlled (export rule), restrictedStates [list], hsCode (landed cost).

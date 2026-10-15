@@ -1,0 +1,29 @@
+# SLA definitions per state and order type (FR-MON-02); mirrored by the `sla:` blocks of the state models. pre_order
+# lines sit in backordered by design, so their breach evaluates drop_oversell_action after a day rather than
+# backorder_next_action after three. try_before_you_buy adds the 7-day trial clock on `delivered`.
+slas:
+  - { orderType: standard_ship,      entity: order_line, state: awaiting_sourcing, maxAge: PT30M, onBreach: playbook.resource }
+  - { orderType: standard_ship,      entity: order_line, state: released,         maxAge: PT4H,  onBreach: playbook.store_backlog }
+  - { orderType: standard_ship,      entity: order_line, state: picking,          maxAge: PT6H,  onBreach: playbook.store_backlog }
+  - { orderType: standard_ship,      entity: order_line, state: packed,           maxAge: PT12H, onBreach: playbook.repromise }
+  - { orderType: standard_ship,      entity: order_line, state: backordered,      maxAge: P3D,   onBreach: decision.backorder_next_action }
+  - { orderType: ship_from_store,    entity: order_line, state: released,         maxAge: PT2H,  onBreach: playbook.store_backlog }
+  - { orderType: ship_from_store,    entity: order_line, state: picking,          maxAge: PT3H,  onBreach: playbook.store_backlog }
+  - { orderType: exchange,           entity: order_line, state: awaiting_sourcing, maxAge: PT15M, onBreach: playbook.resource }
+  - { orderType: exchange,           entity: order_line, state: released,         maxAge: PT2H,  onBreach: playbook.store_backlog }
+  - { orderType: try_before_you_buy, entity: order_line, state: released,         maxAge: PT4H,  onBreach: playbook.store_backlog }
+  - { orderType: try_before_you_buy, entity: order_line, state: delivered,        maxAge: P7D,   onBreach: playbook.trial_period_ended }
+  - { orderType: wholesale,          entity: order_line, state: released,         maxAge: P2D,   onBreach: playbook.repromise }
+  - { orderType: wholesale,          entity: order_line, state: backordered,      maxAge: P5D,   onBreach: decision.backorder_next_action }
+  - { orderType: pre_order,          entity: order_line, state: backordered,      maxAge: P1D,   onBreach: decision.drop_oversell_action }
+  - { orderType: bopis,              entity: order_line, state: released,         maxAge: PT2H,  onBreach: playbook.store_backlog }
+  - { orderType: bopis,              entity: order_line, state: ready_for_pickup, maxAge: P5D,   onBreach: playbook.pickup_reminder }
+  - { orderType: "*",                entity: return,     state: awaiting_receipt, maxAge: P14D,  onBreach: playbook.return_not_received }
+  - { orderType: "*",                entity: shipment,   state: exception,        maxAge: P2D,   onBreach: playbook.carrier_exception }
+expectedNextEventWithin:
+  released: PT4H
+  picking: PT6H
+  packed: PT12H
+  shipped: P7D
+  in_transit: P7D
+  delivered: P7D              # try_before_you_buy: the trial should end within a week

@@ -1,0 +1,449 @@
+{
+  "goldenSet": "return_risk_gold",
+  "cases": [
+    {
+      "caseId": "re_01",
+      "input": {
+        "return": {
+          "reason": "defective",
+          "days_since_delivery": 12,
+          "receipt": true,
+          "item_condition": "matches",
+          "value_usd": 349.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 1,
+            "not_received_claims": 0,
+            "flags": [
+              "first_return"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 0
+      },
+      "notes": "Rule trusted_customer_defect: headphones, left ear cuts out"
+    },
+    {
+      "caseId": "re_02",
+      "input": {
+        "return": {
+          "reason": "changed_mind",
+          "days_since_delivery": 3,
+          "receipt": true,
+          "item_condition": "matches",
+          "value_usd": 799.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 0,
+            "not_received_claims": 0,
+            "flags": [
+              "first_return"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 1
+      },
+      "notes": "Unopened phone, clean history, above the $250 fast lane"
+    },
+    {
+      "caseId": "re_03",
+      "input": {
+        "return": {
+          "reason": "damaged_in_transit",
+          "days_since_delivery": 2,
+          "receipt": true,
+          "item_condition": "damaged",
+          "value_usd": 1799.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 2,
+            "not_received_claims": 0,
+            "flags": [
+              "occasional_returns"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 1
+      },
+      "notes": "TV with carrier damage, modest history"
+    },
+    {
+      "caseId": "re_04",
+      "input": {
+        "return": {
+          "reason": "defective",
+          "days_since_delivery": 20,
+          "receipt": false,
+          "item_condition": "resalable",
+          "value_usd": 449.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 5,
+            "not_received_claims": 0,
+            "flags": [
+              "frequent_returns"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 2
+      }
+    },
+    {
+      "caseId": "re_05",
+      "input": {
+        "return": {
+          "reason": "not_received",
+          "days_since_delivery": 10,
+          "receipt": true,
+          "item_condition": "mismatch",
+          "value_usd": 1299.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 7,
+            "not_received_claims": 3,
+            "flags": [
+              "repeated_claims"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 4
+      },
+      "notes": "Rule flagged_customer via not_received_claims >= 2"
+    },
+    {
+      "caseId": "re_06",
+      "input": {
+        "return": {
+          "reason": "not_received",
+          "days_since_delivery": 4,
+          "receipt": false,
+          "item_condition": "mismatch",
+          "value_usd": 2399.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 14,
+            "not_received_claims": 6,
+            "flags": [
+              "serial_returner",
+              "multiple_not_received_claims"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 4
+      }
+    },
+    {
+      "caseId": "re_07",
+      "input": {
+        "return": {
+          "reason": "changed_mind",
+          "days_since_delivery": 45,
+          "receipt": true,
+          "item_condition": "matches",
+          "value_usd": 49.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 1,
+            "not_received_claims": 0,
+            "flags": [
+              "first_return"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": "deny_out_of_window"
+      }
+    },
+    {
+      "caseId": "re_08",
+      "input": {
+        "return": {
+          "reason": "changed_mind",
+          "days_since_delivery": 3,
+          "receipt": true,
+          "item_condition": "matches",
+          "value_usd": 219.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": true
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 1,
+            "not_received_claims": 0,
+            "flags": [
+              "first_return"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": "deny_final_sale"
+      },
+      "notes": "Open-box refurbished headphones are final sale"
+    },
+    {
+      "caseId": "re_09",
+      "input": {
+        "return": {
+          "reason": "changed_mind",
+          "days_since_delivery": 2,
+          "receipt": true,
+          "item_condition": "matches",
+          "value_usd": 19.0
+        },
+        "order": {
+          "channel": "store",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 0,
+            "not_received_claims": 0,
+            "flags": [
+              "first_return"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 0
+      },
+      "notes": "Rule trusted_customer_low_value: cable"
+    },
+    {
+      "caseId": "re_10",
+      "input": {
+        "return": {
+          "reason": "wrong_item",
+          "days_since_delivery": 6,
+          "receipt": true,
+          "item_condition": "resalable",
+          "value_usd": 89.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 2,
+            "not_received_claims": 0,
+            "flags": [
+              "occasional_returns"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 1
+      }
+    },
+    {
+      "caseId": "re_11",
+      "input": {
+        "return": {
+          "reason": "defective",
+          "days_since_delivery": 14,
+          "receipt": false,
+          "item_condition": "damaged",
+          "value_usd": 899.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 5,
+            "not_received_claims": 0,
+            "flags": [
+              "frequent_returns"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 2
+      }
+    },
+    {
+      "caseId": "re_12",
+      "input": {
+        "return": {
+          "reason": "not_as_described",
+          "days_since_delivery": 9,
+          "receipt": true,
+          "item_condition": "mismatch",
+          "value_usd": 1099.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 8,
+            "not_received_claims": 1,
+            "flags": [
+              "frequent_returns"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 3
+      },
+      "notes": "Serial on the returned phone differs from the one shipped"
+    },
+    {
+      "caseId": "re_13",
+      "input": {
+        "return": {
+          "reason": "changed_mind",
+          "days_since_delivery": 16,
+          "receipt": true,
+          "item_condition": "matches",
+          "value_usd": 129.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 2,
+            "not_received_claims": 0,
+            "flags": [
+              "occasional_returns"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 14
+        }
+      },
+      "expected": {
+        "value": "deny_out_of_window"
+      },
+      "notes": "Refurbished 14-day window"
+    },
+    {
+      "caseId": "re_14",
+      "input": {
+        "return": {
+          "reason": "arrived_late",
+          "days_since_delivery": 1,
+          "receipt": true,
+          "item_condition": "matches",
+          "value_usd": 39.0
+        },
+        "order": {
+          "channel": "web",
+          "final_sale": false
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 1,
+            "not_received_claims": 0,
+            "flags": [
+              "first_return"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 0
+      },
+      "notes": "Rule trusted_customer_low_value"
+    }
+  ]
+}

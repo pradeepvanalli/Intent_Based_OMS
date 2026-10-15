@@ -1,0 +1,48 @@
+# Appeasement (FR-CS-04). Tier T2 choice within role limits (tenant key appeasement.role_limits); requests above the
+# actor's limit or a third appeasement this year escalate by rule (GR-05). Options are the amounts the finance team
+# approved for a brand whose average order is about $160.
+decision: appeasement
+version: 1
+owner: customer-service
+tier: T2
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: none
+state:
+  include:
+    - case.issue
+    - case.severity
+    - case.customer_sentiment
+    - order.total
+    - order.shipping_paid
+    - customer.tier
+    - customer.history.appeasements_12m
+    - customer.history.orders_12m
+rules:
+  - id: above_role_limit
+    when: "has(input.request) && has(input.actor) && has(input.request.credit_usd) && has(input.actor.limit_usd) && input.request.credit_usd > input.actor.limit_usd"
+    then: escalate
+    reason: above_role_limit
+    priority: 10
+  - id: repeat_appeasements
+    when: "has(input.customer) && has(input.customer.history) && has(input.customer.history.appeasements_12m) && input.customer.history.appeasements_12m >= 3"
+    then: escalate
+    reason: repeat_appeasements
+    priority: 20
+questions:
+  appeasement:
+    type: choice
+    instructions: Which appeasement fits this case and this customer?
+    feeds: cs
+    criteria:
+      none: No appeasement is warranted, the issue was minor, already resolved or caused by the customer
+      refund_shipping: Refund the shipping charge for a late or damaged delivery
+      free_exchange_shipping: Waive the shipping on the exchange order when the first size was our sizing guide's fault
+      credit_15: Fifteen dollar credit for moderate inconvenience to a regular customer
+      credit_25: Twenty-five dollar credit for serious inconvenience, a lost parcel or a high-value customer
+      escalate: Needs a human, unusual case or a request outside the options
+bands:
+  act: { confidence_gte: 0.9 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }

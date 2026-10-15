@@ -1,0 +1,79 @@
+# Example decision: carrier service choice (T1 Choice). Picks the service level for a shipment from promise slack,
+# weight, hazmat and destination.
+#
+# What it shows
+#   * Rules for policy that must never be a judgement call: hazmat ships ground; same-day only inside the radius.
+#   * A Choice whose options are the services in shipping-rates.yaml, with `defer` as the escape option.
+#   * A post-check that refuses air for hazmat even if a model picked it (belt and braces with the rule, GR-01).
+#   * `cache` keyed by input hash so identical shipments in a batch reuse one answer (FR-DEC-11).
+#   * T1: the cost impact is bounded by the rate card, so the decision may act at >= 0.8 and apply its default in the
+#     confirm band when no L2 provider is configured.
+# Hook it in from a playbook or workflow step before label creation; e.g. the orchestration ship step can call
+# DecisionService.decide("carrier_service_choice", input, DecisionOptions.live("shipment", shipmentId, actor)).
+#
+# Input shape: shipment{weight_kg, hazmat, oversized, package_count}, promise{hours_remaining, on_time_probability_ground},
+# destination{state, distance_km, residential}, order{channel, customer_tier, shipping_paid_service}.
+decision: carrier_service_choice
+version: 1
+owner: transportation
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: ground                      # when every layer fails, ship the way the customer paid for or ground
+state:
+  include:
+    - shipment.weight_kg
+    - shipment.hazmat
+    - shipment.oversized
+    - shipment.package_count
+    - promise.hours_remaining
+    - promise.on_time_probability_ground
+    - destination.state
+    - destination.distance_km
+    - destination.residential
+    - order.channel
+    - order.customer_tier
+    - order.shipping_paid_service
+rules:
+  - id: hazmat_ground_only
+    when: "input.shipment.hazmat == true"
+    then: ground                     # legal/policy: hazmat never flies
+    reason: hazmat_ground_only
+    priority: 10
+  - id: same_day_outside_radius
+    when: "input.order.shipping_paid_service == 'same_day' && input.destination.distance_km > 40"
+    then: escalate                   # the customer paid for something the network cannot do; a person re-promises
+    reason: same_day_out_of_radius
+    priority: 20
+  - id: plenty_of_slack
+    when: "input.promise.hours_remaining >= 96 && input.promise.on_time_probability_ground >= 0.9"
+    then: ground                     # no judgement needed when ground comfortably meets the promise
+    reason: ground_meets_promise
+    priority: 30
+questions:
+  service:
+    type: choice
+    instructions: Which carrier service keeps the delivery promise at the lowest cost for this shipment?
+    feeds: label_creation
+    escapeOption: defer
+    criteria:
+      ground: Ground service meets the promise with margin; the default for most parcels
+      two_day: Two-day air when ground would likely miss the promise and the parcel is under 20 kg
+      next_day: Next-day air when fewer than 36 hours remain on the promise, or a gold or platinum customer paid for expedited service
+      same_day: Same-day courier when the destination is within the same-day radius and the promise is today
+      defer: Not enough information to choose, or none of the services fits; hold for a person
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+postChecks:
+  - "!(input.shipment.hazmat == true && (decision.value == 'two_day' || decision.value == 'next_day'))"
+  - "!(decision.value == 'same_day' && input.destination.distance_km > 40)"
+  - "!(input.shipment.weight_kg > 20 && decision.value != 'ground')"
+cache:
+  ttl: PT15M
+evaluation:
+  goldenSet: carrier_service_choice_gold
+  minAccuracyInActBand: 0.90
+  maxCalibrationError: 0.05

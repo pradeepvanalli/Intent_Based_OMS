@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Intent OMS</title>
+<meta name="description" content="Open-source order management where every decision is typed, explainable and owned by the business. Java 21, Spring Boot, PostgreSQL. Apache-2.0.">
+<meta property="og:title" content="Intent OMS">
+<meta property="og:description" content="Open-source order management built on typed, explainable LLM decisions.">
+<meta property="og:image" content="images/hero-playground.png">
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #fbfaf7;
+    --bg-2: #f1efe9;
+    --fg: #16181d;
+    --muted: #5b6069;
+    --line: #dcd9d1;
+    --card: #ffffff;
+    --accent: #0f6b5c;
+    --accent-ink: #ffffff;
+    --l0: #5b6069;
+    --l1: #0f6b5c;
+    --l2: #8a5a00;
+    --l3: #8c2f39;
+    --code-bg: #16181d;
+    --code-fg: #e8e6df;
+    --shadow: 0 1px 2px rgba(0,0,0,.05), 0 8px 24px rgba(0,0,0,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --bg: #0f1419;
+      --bg-2: #161c23;
+      --fg: #e8e6df;
+      --muted: #9aa1ab;
+      --line: #2a323c;
+      --card: #161c23;
+      --accent: #4fc3a8;
+      --accent-ink: #0f1419;
+      --l0: #9aa1ab;
+      --l1: #4fc3a8;
+      --l2: #e0a93c;
+      --l3: #e2707b;
+      --code-bg: #0a0d11;
+      --code-fg: #e8e6df;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+  header.top {
+    position: sticky; top: 0; z-index: 10;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+  header.top .wrap { display: flex; align-items: center; justify-content: space-between; height: 56px; gap: 16px; }
+  .brand { font-weight: 700; letter-spacing: .01em; color: var(--fg); display: flex; align-items: center; gap: 10px; }
+  .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); display: inline-block; }
+  nav a { color: var(--muted); margin-left: 18px; font-size: 14px; }
+  nav a:hover { color: var(--fg); }
+  @media (max-width: 640px) { nav a:not(.cta) { display: none; } }
+  .cta {
+    background: var(--accent); color: var(--accent-ink) !important; padding: 8px 14px; border-radius: 8px;
+    font-weight: 600; font-size: 14px;
+  }
+  .cta:hover { text-decoration: none; filter: brightness(1.05); }
+
+  section { padding: 56px 0; }
+  section + section { border-top: 1px solid var(--line); }
+  h1 { font-size: clamp(30px, 4.6vw, 46px); line-height: 1.12; letter-spacing: -.02em; margin: 0 0 16px; }
+  h2 { font-size: 26px; letter-spacing: -.015em; margin: 0 0 8px; }
+  h3 { font-size: 17px; margin: 0 0 6px; }
+  p.lead { font-size: 18px; color: var(--muted); max-width: 62ch; margin: 0 0 24px; }
+  p.kicker { text-transform: uppercase; letter-spacing: .12em; font-size: 12px; color: var(--accent); font-weight: 700; margin: 0 0 10px; }
+  .muted { color: var(--muted); }
+
+  .hero { padding-top: 64px; }
+  .hero-grid { display: grid; grid-template-columns: 1.1fr .9fr; gap: 40px; align-items: start; }
+  @media (max-width: 860px) { .hero-grid { grid-template-columns: 1fr; } }
+  .try {
+    background: var(--code-bg); color: var(--code-fg); border-radius: 12px; padding: 18px 20px;
+    box-shadow: var(--shadow); overflow-x: auto;
+  }
+  .try .label { font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: #9aa1ab; margin-bottom: 10px; }
+  .try pre { margin: 0; white-space: pre; }
+  .try .prompt { color: #4fc3a8; user-select: none; }
+  .try .note { margin: 12px 0 0; font-size: 13px; color: #9aa1ab; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 18px 0 0; font-size: 13px; color: var(--muted); }
+  .badges span::before { content: "•"; margin-right: 6px; color: var(--accent); }
+  .badges span:first-child::before { content: none; }
+  .shot {
+    display: block; width: 100%; border-radius: 12px; border: 1px solid var(--line); box-shadow: var(--shadow);
+    background: var(--bg-2);
+  }
+  figure { margin: 28px 0 0; }
+  figcaption { font-size: 13px; color: var(--muted); margin-top: 8px; }
+
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 24px; }
+  @media (max-width: 860px) { .cards { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .cards { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 18px 16px;
+  }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  .card .num { font-size: 12px; color: var(--accent); font-weight: 700; letter-spacing: .08em; margin-bottom: 8px; }
+
+  .layers { margin-top: 28px; display: grid; grid-template-columns: 1fr; gap: 0; }
+  .flow { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr; gap: 0; align-items: stretch; }
+  @media (max-width: 860px) { .flow { grid-template-columns: 1fr; } .flow .arrow { transform: rotate(90deg); justify-self: center; } }
+  .layer {
+    background: var(--card); border: 1px solid var(--line); border-top: 4px solid var(--c); border-radius: 12px;
+    padding: 16px 16px 14px; min-height: 100%;
+  }
+  .layer .tag { font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--c); letter-spacing: .06em; }
+  .layer h3 { margin: 8px 0 6px; }
+  .layer p { margin: 0; font-size: 14px; color: var(--muted); }
+  .layer .band { margin-top: 10px; font-size: 12px; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 8px; }
+  .arrow { display: flex; align-items: center; justify-content: center; padding: 0 6px; color: var(--muted); }
+  .arrow svg { width: 26px; height: 26px; }
+  .legend { margin-top: 16px; font-size: 14px; color: var(--muted); max-width: 80ch; }
+  .trace {
+    margin-top: 18px; background: var(--code-bg); color: var(--code-fg); border-radius: 10px; padding: 14px 16px;
+    overflow-x: auto; white-space: pre; font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .trace .k { color: #9aa1ab; } .trace .v { color: #4fc3a8; } .trace .b { color: #e0a93c; }
+
+  .tenants { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 24px; }
+  @media (max-width: 960px) { .tenants { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .tenants { grid-template-columns: 1fr; } }
+  .tenant { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; }
+  .tenant .id { font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--accent); background: var(--bg-2); padding: 4px 8px; border-radius: 6px; align-self: flex-start; }
+  .tenant h3 { margin-top: 10px; }
+  .tenant ul { margin: 8px 0 12px; padding-left: 18px; color: var(--muted); font-size: 14px; }
+  .tenant code { font-size: 12px; color: var(--fg); background: var(--bg-2); padding: 2px 6px; border-radius: 5px; }
+
+  .shots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 24px; }
+  @media (max-width: 860px) { .shots { grid-template-columns: 1fr; } }
+
+  .cols { display: grid; grid-template-columns: repeat(2, 1fr); gap: 32px; margin-top: 20px; }
+  @media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
+  .cols ul { margin: 0; padding-left: 18px; color: var(--muted); }
+  .cols li { margin-bottom: 8px; }
+  .cols li strong { color: var(--fg); }
+
+  .callout {
+    margin-top: 28px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 12px; padding: 22px;
+    display: flex; gap: 20px; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  }
+  .callout p { margin: 0; max-width: 60ch; }
+
+  footer { border-top: 1px solid var(--line); padding: 32px 0 48px; color: var(--muted); font-size: 14px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 28px; justify-content: space-between; align-items: center; }
+  footer nav a { margin: 0 18px 0 0; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#top"><span class="dot"></span>Intent OMS</a>
+    <nav>
+      <a href="#different">Why</a>
+      <a href="#fabric">Decision fabric</a>
+      <a href="#tenants">Reference implementations</a>
+      <a href="#screens">Screens</a>
+      <a href="#who">Who it is for</a>
+      <a class="cta" href="https://github.com/pradeepvanalli/Invent_Based_OMS">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <p class="kicker">Open source · Apache-2.0</p>
+      <h1>Order management where every decision is typed, explainable and owned by the business.</h1>
+      <p class="lead">Sourcing, promising, returns, exceptions and agent-placed orders run on one decision fabric: rules first, then a typed decision model with a confidence score, then an LLM restricted to strict JSON, then a person. Change a policy from a sentence. Replay your own orders. Show the customer why.</p>
+      <div class="try">
+        <div class="label">Try it in 3 minutes</div>
+<pre><span class="prompt">$ </span>git clone https://github.com/pradeepvanalli/Invent_Based_OMS.git
+<span class="prompt">$ </span>cd Invent_Based_OMS
+<span class="prompt">$ </span>make try</pre>
+        <p class="note">Docker only. Builds the image in Docker and opens http://localhost:8080 with four tenants seeded. No AI key needed; add one to switch the typed layer on. Or open it in <a href="https://codespaces.new/pradeepvanalli/Invent_Based_OMS?quickstart=1">GitHub Codespaces</a>.</p>
+      </div>
+      <div class="badges">
+        <span>Java 21 · Spring Boot 3.5 · PostgreSQL 16</span>
+        <span>One deployable</span>
+        <span>570 backend tests</span>
+        <span>Runs without an AI key</span>
+      </div>
+    </div>
+    <div>
+      <img class="shot" src="images/hero-playground.png" alt="The Playground: an order placed, the decision trace animated layer by layer, and the network map showing the chosen route." width="1920" height="1080">
+      <figcaption style="font-size:13px;color:var(--muted);margin-top:8px">The Playground: place an order, watch it decide. Layer, confidence, latency and cost on every step.</figcaption>
+    </div>
+  </div>
+</section>
+
+<section id="different">
+  <div class="wrap">
+    <p class="kicker">What makes it different</p>
+    <h2>Six ideas, none of them a chatbot</h2>
+    <div class="cards">
+      <div class="card"><div class="num">01</div><h3>Typed decisions with confidence bands</h3><p>A decision is YAML: risk tier, enumerated options, an escape option, a default, a golden set. The model answers inside the options and reports calibrated confidence. The band decides whether it acts, asks an LLM to confirm, or opens a task. In the demo: 350 to 850 ms per call at about $0.00002.</p></div>
+      <div class="card"><div class="num">02</div><h3>Policy from a sentence</h3><p>"Gold customers returning under $250 with a receipt get an instant refund" becomes a validated draft with a diff, generated golden cases and the approvals it needs. The copilot never publishes. The studio runs lint, impact diff, golden-set gate, separation of duties and a canary.</p></div>
+      <div class="card"><div class="num">03</div><h3>Margin replay of your own orders</h3><p>Upload a Shopify CSV export and see what the policies would have saved: shipping avoided, margin recovered, splits avoided. A bundled sample runs without an upload. Everything stays on your machine.</p></div>
+      <div class="card"><div class="num">04</div><h3>Agent commerce built in</h3><p>An MCP server with 11 tools, a UCP order capability, signed mandates with limits enforced before capture, injection screening that keeps instructions as data, and a one-click dispute evidence pack.</p></div>
+      <div class="card"><div class="num">05</div><h3>Explainability to customers</h3><p>Every decision stores its full trace. Operators see the layer, the rules that fired, the band and the provider. Customers see a safe sentence derived from the same trace on the public tracking page.</p></div>
+      <div class="card"><div class="num">06</div><h3>Everything is data</h3><p>State models, decisions, compliance rules, playbooks, SLAs, order types, nodes and rate cards are YAML per tenant, versioned, replayable from an append-only ledger, and editable at runtime behind a publish pipeline.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="fabric">
+  <div class="wrap">
+    <p class="kicker">The decision fabric</p>
+    <h2>Four layers. Autonomous exactly as far as the confidence allows.</h2>
+    <p class="lead">Every decision passes through the same four layers. The risk tier (T0 to T3) sets the confidence bands; money-moving decisions act only above 0.9, recommendation-only decisions never act. Thresholds are changed by humans in the studio, never by a model or an agent.</p>
+    <div class="layers">
+      <div class="flow">
+        <div class="layer" style="--c: var(--l0)">
+          <div class="tag">L0</div>
+          <h3>Deterministic rules</h3>
+          <p>CEL expressions evaluated first, in priority order. The policy that must never be a judgement call: a flagged customer gets store credit, hazmat does not fly.</p>
+          <div class="band">Match → act with confidence 1.0</div>
+        </div>
+        <div class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+        <div class="layer" style="--c: var(--l1)">
+          <div class="tag">L1</div>
+          <h3>Typed decision model</h3>
+          <p>Asked the question with enumerated options. Answers inside them and returns a calibrated confidence. Jev by default; any structured-output model behind the same interface.</p>
+          <div class="band">Act band → apply · confirm band → L2 · else → L3</div>
+        </div>
+        <div class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+        <div class="layer" style="--c: var(--l2)">
+          <div class="tag">L2</div>
+          <h3>LLM, strict JSON</h3>
+          <p>Shown the trace and the same options. May only pick one of them. Anything else is discarded. Runs only in the confirm band on T1 and T2 decisions.</p>
+          <div class="band">Valid option → apply · otherwise → L3</div>
+        </div>
+        <div class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+        <div class="layer" style="--c: var(--l3)">
+          <div class="tag">L3</div>
+          <h3>A person</h3>
+          <p>A task opens in a queue with the recommendation attached, an SLA and an escalation path. Every T3 decision ends here. Escalation is a first-class outcome, not an exception.</p>
+          <div class="band">Decision recorded with actor and reason</div>
+        </div>
+      </div>
+    </div>
+    <p class="legend">Below the layers: kill switches per decision, per provider and for the whole AI layer; a per-tenant daily AI budget; a deterministic fallback provider and a default on every definition. With no key at all the system still captures, sources, ships and returns.</p>
+    <div class="trace"><span class="k">decision</span> fulfilment_intent v1 tier T1 | <span class="k">layer</span> <span class="v">L1_SYSTEM_ONE</span> | <span class="k">band</span> <span class="b">ACT</span> | <span class="k">action</span> act | <span class="k">value</span> <span class="v">ship_complete</span> | <span class="k">confidence</span> 1.0 | <span class="k">provider</span> jev
+<span class="k">decision</span> return_risk v2 tier T2 | <span class="k">layer</span> <span class="v">L3_HUMAN</span> | <span class="k">band</span> <span class="b">CONFIRM</span> | <span class="k">action</span> escalate | <span class="k">value</span> <span class="v">1.39</span> | <span class="k">confidence</span> 0.66 | <span class="k">provider</span> jev</div>
+    <p class="muted" style="font-size:13px;margin-top:8px">Two lines from the captured demo run (<a href="https://github.com/pradeepvanalli/Invent_Based_OMS/blob/main/docs/DEMO_SAMPLES.md">docs/DEMO_SAMPLES.md</a>): a gift note read as ship-complete, and a mixed-history return scored below the T2 act band and sent to a reviewer.</p>
+  </div>
+</section>
+
+<section id="tenants">
+  <div class="wrap">
+    <p class="kicker">Reference implementations</p>
+    <h2>Start from a business that looks like yours</h2>
+    <p class="lead">Three complete tenants plus the seeded demo. Each is a folder of YAML under <code>config/tenants/</code> with five scripted scenarios. Copy one, or describe your business to the Bootstrap copilot.</p>
+    <div class="tenants">
+      <div class="tenant"><span class="id">demo</span><h3>Sample retailer</h3><ul><li>Intent-driven sourcing and the margin floor</li><li>Returns as margin recovery</li><li>A DC goes dark: what-if, then bulk re-source</li><li>Agent orders with proof</li><li>A policy change before lunch</li><li>Copilot and Margin Guardian</li></ul><code>scripts/usecases/run-all.sh</code></div>
+      <div class="tenant"><span class="id">retail</span><h3>Maple &amp; Main General Store</h3><ul><li>R1 Store-reject reroute</li><li>R2 Hazmat and oversized routing</li><li>R3 Margin-floor marketplace order</li><li>R4 Holiday surge capacity</li><li>R5 Curbside promise</li></ul><code>scripts/reference/retail.sh</code></div>
+      <div class="tenant"><span class="id">electronics</span><h3>Voltline Electronics</h3><ul><li>E1 Launch-day pre-order allocation</li><li>E2 High-value address risk hold</li><li>E3 Backorder next action from a note</li><li>E4 Warranty triage and disposition</li><li>E5 Drop-ship vendor SLA breach re-promise</li></ul><code>scripts/reference/electronics.sh</code></div>
+      <div class="tenant"><span class="id">apparel</span><h3>Lumen &amp; Loom</h3><ul><li>A1 Bracketing detected at capture</li><li>A2 Size exchange from the nearest store</li><li>A3 Keep-it vs return margin decision</li><li>A4 Drop oversell handled by policy</li><li>A5 Final-sale dispute, grounded CS draft</li></ul><code>scripts/reference/apparel.sh</code></div>
+    </div>
+  </div>
+</section>
+
+<section id="screens">
+  <div class="wrap">
+    <p class="kicker">Screens</p>
+    <h2>The trace is the product</h2>
+    <div class="shots">
+      <figure style="margin:0"><img class="shot" src="images/decision-trace.png" alt="The Why drawer on an order: the decision trace with layer, band, value, confidence and provider." width="1920" height="1080"><figcaption>Why drawer. Layer, band, value, confidence, provider, and the customer-safe variant one toggle away.</figcaption></figure>
+      <figure style="margin:0"><img class="shot" src="images/margin-replay.png" alt="Margin Replay report: shipping saved, margin recovered and splits avoided for an uploaded Shopify export." width="1920" height="1080"><figcaption>Margin Replay. A Shopify export, replayed under your candidate policies.</figcaption></figure>
+      <figure style="margin:0"><img class="shot" src="images/copilot-changeset.png" alt="Copilot change set: one card per proposed change with diff, risk tier and required approvals." width="1920" height="1080"><figcaption>Copilot change set. A sentence in, a diffed and tested draft out. A human publishes.</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section id="who">
+  <div class="wrap">
+    <p class="kicker">Who it is for</p>
+    <h2>Retailers, OMS teams, agencies, researchers</h2>
+    <div class="cols">
+      <ul>
+        <li><strong>Mid-market retailers</strong> replacing a spreadsheet-and-ERP order flow, or a first OMS whose rules nobody dares to touch. Start from a reference tenant and a Shopify export.</li>
+        <li><strong>OMS teams</strong> building a new platform who want a decision layer, policy studio and ledger they do not have to design from scratch.</li>
+      </ul>
+      <ul>
+        <li><strong>Agencies and integrators</strong> who want configuration to be versioned data they can test and hand over.</li>
+        <li><strong>Researchers</strong> working on typed decisions, calibration and governance of LLM-assisted operations. Every record carries its trace, confidence and golden-set result.</li>
+      </ul>
+    </div>
+    <div class="callout">
+      <p><strong>Building a new OMS?</strong> I am looking to work with teams doing exactly that. The one-pager explains what you get, what adoption takes, and what I bring.</p>
+      <div>
+        <a class="cta" href="https://github.com/pradeepvanalli/Invent_Based_OMS/blob/main/docs/launch/PITCH_ONE_PAGER.md">Read the one-pager</a>
+        &nbsp; <a href="https://www.linkedin.com/in/REPLACE_ME">LinkedIn</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <nav>
+      <a href="https://github.com/pradeepvanalli/Invent_Based_OMS">Repository</a>
+      <a href="https://github.com/pradeepvanalli/Invent_Based_OMS/blob/main/docs/GETTING_STARTED.md">Getting started</a>
+      <a href="https://github.com/pradeepvanalli/Invent_Based_OMS/blob/main/docs/WHY.md">Why</a>
+      <a href="https://github.com/pradeepvanalli/Invent_Based_OMS/blob/main/docs/COMPARISON.md">Comparison</a>
+      <a href="https://github.com/pradeepvanalli/Invent_Based_OMS/blob/main/docs/ROADMAP.md">Roadmap</a>
+      <a href="https://github.com/pradeepvanalli/Invent_Based_OMS/discussions">Discussions</a>
+      <a href="https://www.linkedin.com/in/REPLACE_ME">LinkedIn</a>
+    </nav>
+    <div>Intent OMS · Apache License 2.0</div>
+  </div>
+</footer>
+
+</body>
+</html>

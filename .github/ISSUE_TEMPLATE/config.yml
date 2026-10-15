@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/pradeepvanalli/Invent_Based_OMS/security/advisories/new
+    about: Report privately. Never open a public issue for a vulnerability.
+  - name: Questions and help
+    url: https://github.com/pradeepvanalli/Invent_Based_OMS/discussions
+    about: Ask how to use or configure Intent OMS.

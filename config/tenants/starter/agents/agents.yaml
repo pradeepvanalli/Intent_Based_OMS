@@ -1,0 +1,24 @@
+# Starter tenant — agent registry (FR-AGT-03/04). One placeholder per protocol; delete what you do not use. Secrets are
+# generated at registration and shown once (POST /api/v1/agents response, or the seeder log). trustTier: 0 unknown
+# (read-only on own orders), 1 verified, 2 trusted partner, 3 internal. confirmActions force a human task before the
+# action completes. callbackUrl receives UCP lifecycle webhooks signed with the agent secret.
+agents:
+  - id: shopping-agent-example
+    owner: "External shopping agent (placeholder)"
+    protocol: ucp
+    trustTier: 1
+    allowedActions: [order_get, promise, order_create, order_cancel, return_create, inventory_check]
+    maxOrderValueUsd: 500
+    maxRefundUsd: 100
+    ratePerMinute: 120
+    confirmActions: [order_create, order_cancel]
+    # callbackUrl: https://agent.example.com/oms-events
+  - id: ops-copilot
+    owner: "Internal operations agent"
+    protocol: mcp
+    trustTier: 3
+    allowedActions: [order_get, order_search, order_modify, task_list, task_complete, decision_why, inventory_check]
+    maxOrderValueUsd: 0
+    maxRefundUsd: 0
+    ratePerMinute: 600
+    confirmActions: [order_modify]

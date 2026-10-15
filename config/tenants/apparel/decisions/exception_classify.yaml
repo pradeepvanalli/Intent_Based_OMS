@@ -1,0 +1,45 @@
+# Exception type (FR-MON-03). Tier T0: classify at >= 0.5, otherwise "unclear" goes to the triage queue. Every option is
+# a type in exception-taxonomy.yaml; carrier_lost is separate from carrier_delay because the playbook differs (reship or
+# refund rather than re-promise).
+decision: exception_classify
+version: 1
+owner: control-tower
+tier: T0
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: unclear
+state:
+  include:
+    - exception.source
+    - exception.code
+    - exception.message
+    - exception.node_type
+    - order.channel
+    - order.status
+    - order.days_since_shipped
+questions:
+  type:
+    type: choice
+    instructions: What kind of exception is this?
+    feeds: playbook_routing
+    escapeOption: unclear
+    criteria:
+      address: Address problem such as invalid, unverifiable or undeliverable address, or a missing apartment number
+      inventory_short: Inventory shortage such as a short pick at the 3PL, a stockout or an oversold drop
+      carrier_delay: Carrier delay, missed scan at a hub or a late delivery that is still moving
+      carrier_lost: Parcel lost in transit, no scan for several days, returned to sender or confirmed lost by the carrier
+      payment: Payment problem such as authorisation declined, an expiring trial authorisation or a capture failure
+      store_reject: A store rejected the release, could not find the unit on the shop floor or timed out
+      system: System error, timeout, integration failure or bad data from the WMS, PSP or carrier
+      other: A real exception that fits none of the categories
+      unclear: Not enough information to classify
+bands:
+  act: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+cache:
+  ttl: PT1H
+evaluation:
+  goldenSet: exception_classify_gold
+  minAccuracyInActBand: 0.90
+  maxCalibrationError: 0.05

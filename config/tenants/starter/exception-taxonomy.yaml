@@ -1,0 +1,26 @@
+# Starter tenant. `exceptionTypes` are loaded by the seeder only (no write API yet); `queues` are loaded through
+# PUT /api/v1/queues/{name}. Queue names must match the queues used by playbooks and the decision escalation handler.
+# Exception taxonomy (FR-MON-03). The decision `exception_classify` maps raw signals onto `type`; this file adds severity, owning queue and playbook.
+exceptionTypes:
+  - { type: address,          severity: medium, queue: cs_exceptions,     playbook: address_fix,        slaMinutes: 240, description: Address undeliverable or failed verification }
+  - { type: inventory_short,  severity: high,   queue: ops_exceptions,    playbook: resource,           slaMinutes: 120, description: Short pick, oversell or no feasible node }
+  - { type: carrier_delay,    severity: medium, queue: ops_exceptions,    playbook: repromise,          slaMinutes: 480, description: Carrier scan shows delay or exception }
+  - { type: payment,          severity: high,   queue: finance_exceptions, playbook: payment_retry,     slaMinutes: 120, description: Authorisation failed or expiring }
+  - { type: store_reject,     severity: high,   queue: ops_exceptions,    playbook: resource,           slaMinutes: 60,  description: Store rejected or timed out on a release }
+  - { type: system,           severity: critical, queue: platform_oncall, playbook: notify_oncall,      slaMinutes: 30,  description: Integration or workflow failure }
+  - { type: stuck,            severity: medium, queue: ops_exceptions,    playbook: diagnose_stuck,     slaMinutes: 240, description: Missing an expected event within the window }
+  - { type: sla_breach,       severity: medium, queue: ops_exceptions,    playbook: store_backlog,      slaMinutes: 120, description: State SLA breached }
+  - { type: margin_floor,     severity: high,   queue: margin_floor_approvals, playbook: margin_review, slaMinutes: 120, description: Plan below profitability floor }
+  - { type: agent_verification, severity: high, queue: risk_review,       playbook: agent_review,       slaMinutes: 60,  description: Agent order outside mandate or unverified agent }
+  - { type: return_not_received, severity: low, queue: cs_exceptions,     playbook: return_not_received, slaMinutes: 1440, description: RMA approved but no carrier scan }
+  - { type: other,            severity: low,    queue: ops_exceptions,    playbook: manual_review,      slaMinutes: 480, description: Unclassified }
+queues:
+  - { name: ops_exceptions,         slaMinutes: 240, escalateTo: ops_lead,        skills: [ops] }
+  - { name: cs_exceptions,          slaMinutes: 240, escalateTo: cs_lead,         skills: [cs] }
+  - { name: finance_exceptions,     slaMinutes: 240, escalateTo: finance_controller, skills: [finance] }
+  - { name: margin_floor_approvals, slaMinutes: 120, escalateTo: finance_controller, skills: [finance, strategy] }
+  - { name: risk_review,            slaMinutes: 60,  escalateTo: risk_lead,       skills: [risk] }
+  - { name: platform_oncall,        slaMinutes: 30,  escalateTo: platform_lead,   skills: [platform] }
+  - { name: decision_escalations,   slaMinutes: 120, escalateTo: ops_lead,        skills: [ops] }
+  - { name: refund_approvals,       slaMinutes: 240, escalateTo: finance_controller, skills: [finance] }
+  - { name: unclassified,           slaMinutes: 480, escalateTo: ops_lead,        skills: [] }

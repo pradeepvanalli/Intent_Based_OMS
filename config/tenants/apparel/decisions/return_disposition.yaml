@@ -1,0 +1,55 @@
+# Return disposition in the runtime vocabulary (FR-RET-04/06): the returns module stores one of restock, refurbish,
+# liquidate, return_to_vendor, donate, destroy on the RMA. For Lumen & Loom these mean: restock = steam, re-bag, back
+# to sellable; refurbish = the Columbus repair bench; liquidate = the outlet channel; return_to_vendor = defect claim to
+# the mill or factory; donate = wearable but not sellable; destroy = textile recycling (never landfill). The
+# merchandising-facing view of the same question is return_disposition_apparel; keep the two in step.
+decision: return_disposition
+version: 1
+owner: returns-and-fit
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: restock
+state:
+  include:
+    - return.reason
+    - return.item_condition
+    - return.inspection_notes
+    - item.sku
+    - item.category
+    - item.cost_usd
+    - item.resale_value_usd
+    - item.vendor_return_eligible
+    - item.hazmat
+rules:
+  - id: new_condition_fit_return
+    when: "input.return.item_condition == 'new' && input.return.reason in ['wrong_size', 'didnt_fit_as_expected', 'bracketing', 'changed_mind', 'wrong_item']"
+    then: restock
+    reason: new_condition_fit_return
+    priority: 10
+  - id: missing_belt_or_buttons
+    when: "input.return.item_condition == 'missing_parts'"
+    then: refurbish
+    reason: missing_parts_repair_bench
+    priority: 20
+questions:
+  disposition:
+    type: choice
+    instructions: What should happen to this returned garment after inspection?
+    feeds: recovery
+    criteria:
+      restock: Unworn with tags, steam and re-bag, back to sellable inventory at full price
+      refurbish: Minor wear, a loose seam, a missing button or belt that the repair bench can fix before resale
+      liquidate: Sellable only through the outlet channel, past season or light wear that cannot be hidden
+      return_to_vendor: A manufacturing defect such as dye transfer or a broken zip that the mill or factory should credit
+      donate: Wearable but not sellable at any price, donate through the brand's partner
+      destroy: Unwearable, send to textile recycling, never to landfill
+      unclear: Not enough information to decide
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+postChecks:
+  - "!(input.return.item_condition == 'damaged' && decision.value == 'restock')"
+  - "!(has(input.item) && has(input.item.hazmat) && input.item.hazmat == true && (decision.value == 'donate' || decision.value == 'liquidate'))"

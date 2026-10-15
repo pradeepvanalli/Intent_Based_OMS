@@ -1,0 +1,47 @@
+# Appeasement (FR-CS-04). Tier T2 choice within limits; requests above the actor's role limit escalate by rule (GR-05).
+# Electronics appeasements are larger than apparel (a late $1,799 TV earns more than a $10 credit) but still bounded.
+decision: appeasement
+version: 1
+owner: customer-service
+tier: T2
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: none
+state:
+  include:
+    - case.issue
+    - case.severity
+    - case.customer_sentiment
+    - order.total
+    - order.shipping_paid
+    - customer.tier
+    - customer.history.appeasements_12m
+    - customer.history.orders_12m
+rules:
+  - id: above_role_limit
+    when: "has(input.request) && has(input.actor) && has(input.request.credit_usd) && has(input.actor.limit_usd) && input.request.credit_usd > input.actor.limit_usd"
+    then: escalate
+    reason: above_role_limit
+    priority: 10
+  - id: repeat_appeasements
+    when: "has(input.customer) && has(input.customer.history) && has(input.customer.history.appeasements_12m) && input.customer.history.appeasements_12m >= 3"
+    then: escalate
+    reason: repeat_appeasements
+    priority: 20
+questions:
+  appeasement:
+    type: choice
+    instructions: Which appeasement fits this case and customer?
+    feeds: cs
+    criteria:
+      none: No appeasement is warranted, the issue was minor or already resolved
+      refund_shipping: Refund the shipping charge for a late or damaged delivery
+      credit_15: Fifteen dollar credit for moderate inconvenience on an accessory order
+      credit_50: Fifty dollar credit for a late or re-promised device order or a regular customer waiting on a pre-order
+      warranty_extension: Add one year of VoltCare protection instead of cash for a repaired device
+      escalate: Needs a human, unusual case or request outside the options
+bands:
+  act: { confidence_gte: 0.9 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }

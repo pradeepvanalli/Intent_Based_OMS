@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>ai.intentoms</groupId>
+    <artifactId>oms-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+  <artifactId>oms-copilot</artifactId>
+  <name>oms-copilot</name>
+  <description>Prompt-based configuration: config copilot, bootstrap, ops Q&amp;A, explain, CS reply drafts, margin digest (FR-CFG, FR-SM-12, FR-WF-03, FR-MON-08, FR-XAI-03, FR-CS-05)</description>
+  <dependencies>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-platform</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-decision</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-statemachine</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-workflow</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-finance</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-order</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-sourcing</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-monitoring</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-returns</artifactId></dependency>
+    <dependency><groupId>com.networknt</groupId><artifactId>json-schema-validator</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-testing</artifactId><scope>test</scope></dependency>
+    <dependency><groupId>org.wiremock</groupId><artifactId>wiremock-standalone</artifactId><scope>test</scope></dependency>
+  </dependencies>
+  <build>
+    <resources>
+      <resource><directory>src/main/resources</directory></resource>
+      <!-- The prompt templates live once, in config/copilot; they are packaged into the jar as a classpath fallback
+           so the application also starts when the config directory is not mounted. -->
+      <resource><directory>${project.basedir}/../../config/copilot</directory><targetPath>copilot</targetPath></resource>
+    </resources>
+  </build>
+</project>

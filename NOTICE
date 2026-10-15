@@ -1,0 +1,27 @@
+Intent OMS
+Copyright 2026 Intent OMS contributors
+
+This product includes software developed by the Intent OMS contributors
+(https://github.com/intentoms/intent-oms).
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+Third-party components are used under their own licences, including:
+  - Spring Boot and Spring Framework (Apache-2.0)
+  - PostgreSQL JDBC driver (BSD-2-Clause)
+  - Flyway Community (Apache-2.0)
+  - cel-java (Apache-2.0)
+  - Caffeine (Apache-2.0)
+  - Bucket4j (Apache-2.0)
+  - JJWT (Apache-2.0)
+  - springdoc-openapi (Apache-2.0)
+  - networknt json-schema-validator (Apache-2.0)
+  - Micrometer and OpenTelemetry (Apache-2.0)
+  - Testcontainers and WireMock (Apache-2.0, test scope only)
+  - React, Vite, TanStack Query, js-yaml (MIT)
+
+"Jev", "System One" and "TypeSafe" are trademarks of their respective owners.
+"Claude" and "Anthropic" are trademarks of Anthropic, PBC. "OpenAI" is a trademark
+of OpenAI. "Shopify" is a trademark of Shopify Inc. "Stripe" is a trademark of
+Stripe, Inc. Use of these names describes interoperability only and implies no
+endorsement.

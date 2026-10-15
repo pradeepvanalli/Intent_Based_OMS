@@ -1,0 +1,66 @@
+# Maple & Main (retail reference tenant) — decision `curbside_eta_promise`. Retail-specific T1 score 0-4: how confident
+# are we that this curbside order will be staged within the promised minutes (tenant key pickup.curbside_promise_minutes,
+# default 20)? 0 = will not make it, 4 = certain. Feeds the ETA shown to the customer and the store_backlog playbook.
+# Evaluate it from the scripts with POST /api/v1/decisions/curbside_eta_promise/evaluate-now (scenario R5) or wire it
+# into your checkout: the input is store health (POST /api/v1/nodes/{id}/health) plus the order's size.
+decision: curbside_eta_promise
+version: 1
+owner: store-operations
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: 2
+mainQuestion: readiness
+state:
+  include:
+    - store.backlog_units
+    - store.staffing
+    - store.pick_rate
+    - store.minutes_to_cutoff
+    - store.open
+    - order.units
+    - order.line_count
+    - order.has_oversized
+    - order.promise_minutes
+    - customer.arrival_minutes
+rules:
+  - id: store_closed
+    when: "input.store.open == false"
+    then: 0
+    reason: store_closed
+    priority: 10
+  - id: idle_store_small_order
+    when: "input.store.backlog_units <= 5 && input.store.staffing >= 0.8 && input.order.units <= 4 && input.order.has_oversized == false"
+    then: 4
+    reason: idle_store_small_basket
+    priority: 20
+questions:
+  readiness:
+    type: score
+    instructions: How likely is the store to have this curbside order staged at the curb within the promised minutes?
+    feeds: curbside_eta
+    criteria:
+      - Will not make the promise; store closed, no staff, or a backlog many times the order
+      - Unlikely; heavy backlog or a single associate and an oversized or large order
+      - Even chance; moderate backlog, normal staffing, ordinary basket
+      - Likely; light backlog, healthy staffing, a few units
+      - Certain; idle store, well staffed, small basket, customer still minutes away
+  needs_two_associates:
+    type: noul
+    statement: The order needs two associates to carry out (oversized item or more than a basketful of units).
+    reasonCode: true
+  customer_waiting:
+    type: noul
+    statement: The customer will arrive before the store can realistically stage the order.
+    reasonCode: true
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+cache:
+  ttl: PT2M
+evaluation:
+  goldenSet: curbside_eta_promise_gold
+  minAccuracyInActBand: 0.90
+  maxCalibrationError: 0.05

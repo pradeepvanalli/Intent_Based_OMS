@@ -1,0 +1,135 @@
+# Maple & Main General Store — fulfilment network (PRD section 10 "Node", FR-SRC-01/08).
+# Two regional DCs (hazmat-certified), six stores (pickup, curbside, ship-from-store, same-day where the city allows)
+# and one drop-ship furniture vendor. `health` feeds sourcing_node_score; `costProfile` feeds plan economics;
+# `dailyCapacity` is the hard daily release cap the candidate generator enforces (units released since midnight UTC):
+# the Denver store is deliberately small (60 units) so the holiday-surge batch in sample-orders.yaml overflows to a DC.
+# Capabilities: ship, bopis (pickup), curbside (pickup variant; the `curbside` order type requires it), sfs (ship from
+# store), hazmat (aerosols, flammables), same_day (local courier within 40 km).
+nodes:
+  - id: DC-COL
+    name: Columbus OH distribution centre
+    type: dc
+    lat: 39.9612
+    lon: -82.9988
+    country: US
+    state: OH
+    zip: "43215"
+    capabilities: [ship, hazmat]
+    dailyCapacity: 18000
+    cutoff: "17:00"
+    timezone: America/New_York
+    health: { backlog: 900, pick_rate: 0.97, reject_rate: 0.004, staffing: 0.94 }
+    costProfile: { labour_per_unit: 1.10, packaging: 0.70, handling: 0.40 }
+  - id: DC-RNO
+    name: Reno NV distribution centre
+    type: dc
+    lat: 39.5296
+    lon: -119.8138
+    country: US
+    state: NV
+    zip: "89502"
+    capabilities: [ship, hazmat]
+    dailyCapacity: 12000
+    cutoff: "16:00"
+    timezone: America/Los_Angeles
+    health: { backlog: 500, pick_rate: 0.98, reject_rate: 0.003, staffing: 0.92 }
+    costProfile: { labour_per_unit: 1.25, packaging: 0.70, handling: 0.40 }
+  - id: ST-CHI
+    name: Chicago Lincoln Park store
+    type: store
+    lat: 41.9214
+    lon: -87.6513
+    country: US
+    state: IL
+    zip: "60614"
+    capabilities: [bopis, curbside, sfs, same_day]
+    dailyCapacity: 160
+    cutoff: "14:00"
+    timezone: America/Chicago
+    # The store that rejects picks in scenario R1: thin staffing and a high learned reject rate.
+    health: { backlog: 28, pick_rate: 0.86, reject_rate: 0.08, staffing: 0.65 }
+    costProfile: { labour_per_unit: 2.40, packaging: 0.95, handling: 0.60 }
+  - id: ST-DAL
+    name: Dallas Uptown store
+    type: store
+    lat: 32.8010
+    lon: -96.8030
+    country: US
+    state: TX
+    zip: "75204"
+    capabilities: [bopis, curbside, sfs]
+    dailyCapacity: 140
+    cutoff: "14:00"
+    timezone: America/Chicago
+    health: { backlog: 12, pick_rate: 0.91, reject_rate: 0.03, staffing: 0.85 }
+    costProfile: { labour_per_unit: 2.30, packaging: 0.95, handling: 0.60 }
+  - id: ST-ATL
+    name: Atlanta Midtown store
+    type: store
+    lat: 33.7838
+    lon: -84.3830
+    country: US
+    state: GA
+    zip: "30308"
+    capabilities: [bopis, sfs, same_day]
+    dailyCapacity: 120
+    cutoff: "13:30"
+    timezone: America/New_York
+    health: { backlog: 15, pick_rate: 0.90, reject_rate: 0.04, staffing: 0.80 }
+    costProfile: { labour_per_unit: 2.35, packaging: 0.95, handling: 0.60 }
+  - id: ST-DEN
+    name: Denver Cherry Creek store
+    type: store
+    lat: 39.7177
+    lon: -104.9535
+    country: US
+    state: CO
+    zip: "80206"
+    capabilities: [bopis, curbside, sfs, same_day]
+    dailyCapacity: 60            # small on purpose: scenario R4 (holiday surge) fills it and overflows to DC-RNO / DC-COL
+    cutoff: "14:00"
+    timezone: America/Denver
+    health: { backlog: 6, pick_rate: 0.94, reject_rate: 0.02, staffing: 0.95 }
+    costProfile: { labour_per_unit: 2.20, packaging: 0.95, handling: 0.60 }
+  - id: ST-SEA
+    name: Seattle Ballard store
+    type: store
+    lat: 47.6687
+    lon: -122.3850
+    country: US
+    state: WA
+    zip: "98107"
+    capabilities: [bopis, curbside, sfs, same_day]
+    dailyCapacity: 150
+    cutoff: "14:00"
+    timezone: America/Los_Angeles
+    health: { backlog: 10, pick_rate: 0.93, reject_rate: 0.03, staffing: 0.90 }
+    costProfile: { labour_per_unit: 2.60, packaging: 0.95, handling: 0.60 }
+  - id: ST-PHX
+    name: Phoenix Arcadia store
+    type: store
+    lat: 33.5083
+    lon: -111.9870
+    country: US
+    state: AZ
+    zip: "85018"
+    capabilities: [bopis, sfs]
+    dailyCapacity: 130
+    cutoff: "13:00"
+    timezone: America/Phoenix
+    health: { backlog: 9, pick_rate: 0.92, reject_rate: 0.03, staffing: 0.88 }
+    costProfile: { labour_per_unit: 2.25, packaging: 0.95, handling: 0.60 }
+  - id: VND-GFF
+    name: Great Falls Furniture Co. (drop-ship vendor, Hickory NC)
+    type: vendor
+    lat: 35.7332
+    lon: -81.3412
+    country: US
+    state: NC
+    zip: "28601"
+    capabilities: [ship]
+    dailyCapacity: 400
+    cutoff: "12:00"
+    timezone: America/New_York
+    health: { backlog: 60, pick_rate: 0.90, reject_rate: 0.02, staffing: 0.90 }
+    costProfile: { labour_per_unit: 0.00, packaging: 0.00, handling: 18.00 }   # vendor bills a flat handling fee per unit, no labour of ours

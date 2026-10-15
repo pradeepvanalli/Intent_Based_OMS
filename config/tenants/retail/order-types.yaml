@@ -1,0 +1,67 @@
+# Maple & Main — order types (FR-CAP-03). Each binds a header + line state model, a workflow and the decision set it may
+# invoke; the `sourcing:` blocks are also written to tenant_config `sourcing.order_type_constraints`.
+# `curbside` is a pickup variant: same BOPIS state models and workflow, but only stores with the `curbside` capability
+# qualify and the curbside_eta_promise decision scores the "ready in 20 minutes" promise.
+orderTypes:
+  - name: standard_ship
+    description: Ship to home from any DC or store
+    headerStateModel: order.standard_ship
+    lineStateModel: order_line.standard_ship
+    workflowType: order.standard_ship
+    decisions: [fulfilment_intent, sourcing_node_score, split_acceptability, sla_breach_risk, exception_classify, address_risk, store_reject_reroute]
+    channelDefaults:
+      web: ship_as_available
+      marketplace: ship_complete
+      pos: ship_complete
+      agent: ship_complete
+      b2b: ship_complete
+    returnWindowDays: 30
+  - name: bopis
+    description: Buy online, pick up at the counter
+    headerStateModel: order.bopis
+    lineStateModel: order_line.bopis
+    workflowType: order.bopis
+    decisions: [sla_breach_risk, exception_classify, store_reject_reroute]
+    channelDefaults: { web: pickup_consolidated, agent: pickup_consolidated, pos: pickup_consolidated }
+    returnWindowDays: 30
+  - name: curbside
+    description: Buy online, collect at the curb (store brings it to the car)
+    headerStateModel: order.bopis
+    lineStateModel: order_line.bopis
+    workflowType: order.bopis
+    decisions: [curbside_eta_promise, sla_breach_risk, exception_classify, store_reject_reroute]
+    channelDefaults: { web: pickup_consolidated, agent: pickup_consolidated }
+    sourcing: { nodeTypes: [store], capabilities: [curbside] }
+    returnWindowDays: 30
+  - name: ship_from_store
+    description: Ship to home from store stock only (clearance, local assortments)
+    headerStateModel: order.standard_ship
+    lineStateModel: order_line.standard_ship
+    workflowType: order.standard_ship
+    decisions: [fulfilment_intent, sourcing_node_score, sla_breach_risk, exception_classify, store_reject_reroute]
+    sourcing: { nodeTypes: [store] }
+    returnWindowDays: 30
+  - name: same_day_local
+    description: Same-day courier from a store within 40 km
+    headerStateModel: order.standard_ship
+    lineStateModel: order_line.standard_ship
+    workflowType: order.standard_ship
+    decisions: [sourcing_node_score, sla_breach_risk, exception_classify]
+    sourcing: { capabilities: [same_day], maxDistanceKm: 40 }
+    returnWindowDays: 14
+  - name: drop_ship
+    description: Oversized furniture shipped by Great Falls Furniture Co.
+    headerStateModel: order.standard_ship
+    lineStateModel: order_line.standard_ship
+    workflowType: order.standard_ship
+    decisions: [sla_breach_risk, exception_classify]
+    sourcing: { nodeTypes: [vendor] }
+    returnWindowDays: 14
+  - name: backorder
+    description: Accepted without stock; sourced when inventory arrives
+    headerStateModel: order.standard_ship
+    lineStateModel: order_line.standard_ship
+    workflowType: order.standard_ship
+    decisions: [backorder_next_action, sourcing_node_score]
+    sourcing: { allowBackorder: true, includeInbound: true }
+    returnWindowDays: 30

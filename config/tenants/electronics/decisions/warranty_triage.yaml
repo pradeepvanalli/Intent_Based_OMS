@@ -1,0 +1,60 @@
+# Warranty RMA triage. Tier T1 choice run at the inspection bench on the customer's words, the reason code, the shipment
+# history and what the inspector sees: defective / buyer_remorse / transit_damage (+ unclear). It does not move money —
+# return_risk (T2) sets the refund timing and return_disposition (T1) the recovery — but it decides whether the refund
+# is full (defective, transit damage) or carries the restocking fee (buyer's remorse on an opened box), and whether a
+# carrier claim or a vendor RTV claim is raised. Transit damage with a carrier exception on file is a rule, not a guess.
+# Sandbox gates 0.6 / 0.5 (production 0.90 / 0.05).
+decision: warranty_triage
+version: 1
+owner: returns-and-risk
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: unclear
+state:
+  include:
+    - return.customer_reason_text
+    - return.reason_code
+    - return.days_since_delivery
+    - return.item_condition
+    - return.box_opened
+    - return.inspection_notes
+    - item.category
+    - item.serial_matches_order
+    - shipment.carrier_exception
+    - shipment.oversized
+rules:
+  - id: carrier_exception_on_file
+    when: "input.shipment.carrier_exception == true && input.return.item_condition == 'damaged'"
+    then: transit_damage
+    reason: carrier_exception_matches_damage
+    priority: 10
+  - id: sealed_box_remorse
+    when: "input.return.box_opened == false && input.return.reason_code == 'changed_mind'"
+    then: buyer_remorse
+    reason: sealed_box_changed_mind
+    priority: 20
+  - id: serial_mismatch
+    when: "input.item.serial_matches_order == false"
+    then: escalate
+    reason: returned_serial_differs_from_shipped
+    priority: 30
+questions:
+  triage:
+    type: choice
+    instructions: Based on the customer's description, the reason code, the shipment history and the bench inspection, what is this return?
+    feeds: refund_amount_and_claims
+    criteria:
+      defective: The device has a functional fault the customer describes or the bench reproduces, such as audio cutting out, not charging, dead pixels or will not power on, with no transit damage
+      buyer_remorse: The device works, the customer changed their mind, found it cheaper or bought the wrong model, whether the box is sealed or opened
+      transit_damage: Physical damage consistent with transport, crushed or wet packaging, cracked panel or dented housing, especially on oversized items or with a carrier exception
+      unclear: The description and the inspection disagree or say too little, needs a second bench opinion
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+evaluation:
+  goldenSet: warranty_triage_gold
+  minAccuracyInActBand: 0.6
+  maxCalibrationError: 0.5

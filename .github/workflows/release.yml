@@ -1,0 +1,190 @@
+name: release
+# Builds and tests backend + UI, publishes a multi-arch image to GHCR (ghcr.io/<owner>/<repo>:<version> and :latest),
+# signs it with cosign (keyless, best effort), generates CycloneDX SBOMs and attaches jar + SBOMs to the GitHub
+# release. Triggered by a `v*` tag (`git tag v0.2.0 && git push --tags`) or by hand (workflow_dispatch → a
+# pre-release named after the version you type; the release action creates that git tag on the dispatched ref).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 0.2.0-rc1). Image tag and release name; no git tag is created."
+        required: true
+      latest:
+        description: "Also move the :latest image tag"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write      # create the GitHub release and upload assets
+  packages: write      # push to GHCR
+  id-token: write      # cosign keyless (Sigstore OIDC)
+  attestations: write  # build provenance attestation
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+  VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+  IS_TAG: ${{ github.event_name == 'push' }}
+
+jobs:
+  build-test:
+    name: build + test (backend, ui)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_DB: oms, POSTGRES_USER: oms, POSTGRES_PASSWORD: oms }
+        ports: ["5440:5432"]
+        options: --health-cmd "pg_isready -U oms" --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm, cache-dependency-path: ui/package-lock.json }
+      - name: UI lint, test, build
+        working-directory: ui
+        run: npm ci --no-audit --no-fund && npm run lint && npm test -- --run && npm run build
+      - name: Copy UI into the backend static folder
+        run: rm -rf backend/oms-app/src/main/resources/static && mkdir -p backend/oms-app/src/main/resources/static && cp -R ui/dist/. backend/oms-app/src/main/resources/static/
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21", cache: maven }
+      - name: Backend verify (tests) + SBOM
+        working-directory: backend
+        run: mvn -B -ntp -Psbom verify
+      - name: UI SBOM
+        working-directory: ui
+        run: npx --yes @cyclonedx/cyclonedx-npm --output-format JSON --output-file ../backend/target/sbom-ui.cdx.json --ignore-npm-errors || echo "ui sbom skipped"
+      - name: Collect release assets
+        run: |
+          set -e
+          V="${VERSION#v}"
+          mkdir -p dist
+          cp backend/oms-app/target/intent-oms.jar "dist/intent-oms-${V}.jar"
+          for f in backend/target/sbom*.json backend/target/sbom*.xml; do [ -f "$f" ] && cp "$f" "dist/$(basename "${f%.*}")-${V}.${f##*.}"; done
+          ( cd dist && sha256sum * > "SHA256SUMS-${V}.txt" )
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with: { name: release-assets, path: dist/*, if-no-files-found: error }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: surefire-reports, path: backend/**/target/surefire-reports/*.xml, if-no-files-found: ignore }
+
+  image:
+    name: multi-arch image → GHCR
+    needs: build-test
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lowercase image name (GHCR requires it; github.repository preserves case)
+        run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - name: Image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ env.VERSION }}
+            type=semver,pattern={{version}},value=${{ env.VERSION }},enable=${{ env.IS_TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.VERSION }},enable=${{ env.IS_TAG }}
+            type=raw,value=latest,enable=${{ env.IS_TAG == 'true' || inputs.latest == true }}
+            type=sha,prefix=sha-
+          labels: |
+            org.opencontainers.image.title=Intent OMS
+            org.opencontainers.image.description=Open-source order management system with typed, explainable AI decisions
+            org.opencontainers.image.licenses=Apache-2.0
+      - name: Build and push (linux/amd64, linux/arm64)
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/oms-app/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+      - name: Build provenance attestation
+        continue-on-error: true
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - name: cosign keyless signature (optional)
+        continue-on-error: true
+        uses: sigstore/cosign-installer@v3
+      - name: Sign the image (keyless, Sigstore)
+        continue-on-error: true
+        env: { COSIGN_YES: "true" }
+        run: |
+          cosign sign --recursive "${IMAGE}@${{ steps.push.outputs.digest }}"
+          echo "verify with: cosign verify ${IMAGE}@${{ steps.push.outputs.digest }} --certificate-identity-regexp '^https://github.com/${{ github.repository }}/' --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+      - name: Image SBOM (CycloneDX, from the pushed image)
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE }}@${{ steps.push.outputs.digest }}
+          format: cyclonedx
+          output: sbom-image-${{ env.VERSION }}.cdx.json
+          exit-code: "0"
+      - uses: actions/upload-artifact@v4
+        with: { name: sbom-image, path: sbom-image-*.cdx.json, if-no-files-found: ignore }
+
+  release:
+    name: GitHub release
+    needs: [build-test, image]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lowercase image name (GHCR requires it; github.repository preserves case) — same fix as the image job, which runs in its own environment
+        run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with: { name: release-assets, path: dist }
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with: { name: sbom-image, path: dist }
+      - name: Release notes
+        run: |
+          set -e
+          V="${VERSION#v}"
+          {
+            echo "## Intent OMS ${VERSION}"
+            echo
+            echo '```bash'
+            echo "docker pull ${IMAGE}:${VERSION}"
+            echo "curl -fsSL ${{ github.server_url }}/${{ github.repository }}/raw/${{ github.ref_name }}/docker-compose.quickstart.yml -o docker-compose.yml && OMS_IMAGE=${IMAGE}:${VERSION} docker compose up -d"
+            echo '```'
+            echo
+            echo "Image digest: \`${{ needs.image.outputs.digest }}\` (linux/amd64, linux/arm64; cosign keyless signature and provenance attestation when available)."
+            echo
+            echo "Assets: the runnable jar (\`java -jar intent-oms-${V}.jar\`, needs PostgreSQL 16), CycloneDX SBOMs for the backend, the UI and the image, and SHA256SUMS."
+            echo
+            echo "### Changes"
+            section() { awk -v tag="$1" '/^## \[/ { if (found) exit; if (index($0, "[" tag "]")) { found=1; next } } found { print }' CHANGELOG.md | sed '/^\[.*\]: http/d'; }
+            NOTES="$(section "${V}")"; [ -n "$(echo "$NOTES" | tr -d '[:space:]')" ] || NOTES="$(section Unreleased)"
+            echo "$NOTES"
+            echo
+            echo "Full changelog: ${{ github.server_url }}/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md · Upgrade notes: docs/DEPLOYMENT.md §10"
+          } > notes.md
+          cat notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: Intent OMS ${{ env.VERSION }}
+          body_path: notes.md
+          prerelease: ${{ env.IS_TAG != 'true' || contains(env.VERSION, '-') }}
+          files: dist/*
+          fail_on_unmatched_files: true

@@ -1,0 +1,66 @@
+# Order line, standard ship. Quantity-level: a wholesale line of 12 can be 8 shipped / 4 backordered (FR-SM-02).
+# The margin-floor guard (GR-01) uses the tenant's 18 % floor; a store reject or a 3PL short pick re-sources the line and
+# penalises the node (FR-SRC-07). Payment is captured on shipment (try_before_you_buy has its own model that does not).
+stateModel: order_line.standard_ship
+version: 1
+entity: order_line
+quantityLevel: true
+states:
+  - { id: created, meta: Created }
+  - { id: awaiting_sourcing }
+  - { id: released, sla: { maxAge: PT4H, onBreach: playbook.store_backlog } }
+  - { id: picking, parent: released }
+  - { id: packed, parent: released }
+  - { id: shipped }
+  - { id: backordered, sla: { maxAge: P3D, onBreach: decision.backorder_next_action } }
+  - { id: delivered, meta: Terminal }
+  - { id: cancelled, meta: Terminal }
+transitions:
+  - from: created
+    to: awaiting_sourcing
+    trigger: event.order_validated
+  - from: awaiting_sourcing
+    to: backordered
+    trigger: decision.sourcing_plan
+    guards: ["plan.result == 'no_feasible_node'"]
+  - from: awaiting_sourcing
+    to: released
+    trigger: decision.sourcing_plan
+    guards:
+      - "plan.margin >= tenant.margin_floor || approval.present"
+      - "!order.holds.exists(h, 'release' in h.blocks)"
+    actions: [reserve_inventory, send_release_to_wms]
+  - from: released
+    to: awaiting_sourcing
+    trigger: event.store_rejected
+    actions: [penalise_node, release_reservation]
+  - from: released
+    to: awaiting_sourcing
+    trigger: event.short_pick
+    actions: [penalise_node, release_reservation]
+  - from: released
+    to: picking
+    trigger: event.pick_started
+  - from: picking
+    to: awaiting_sourcing
+    trigger: event.short_pick
+    actions: [penalise_node, release_reservation]
+  - from: picking
+    to: packed
+    trigger: event.packed
+  - from: packed
+    to: shipped
+    trigger: event.shipped
+    actions: [capture_payment, notify_customer_shipped]
+  - from: shipped
+    to: delivered
+    trigger: event.delivered
+    actions: [notify_customer_delivered]
+  - from: backordered
+    to: awaiting_sourcing
+    trigger: event.inventory_available
+  - from: [created, awaiting_sourcing, released, backordered]
+    to: cancelled
+    trigger: api.cancel_line
+    permission: order.cancel
+    actions: [release_reservation, void_or_refund]

@@ -1,0 +1,137 @@
+# Voltline Electronics — initial supply positions, loaded through POST /api/v1/inventory/feed (the multi-tenant seeder
+# and scripts/new-tenant.sh both use this file). Replace with your WMS feed: POST /webhooks/inventory/{nodeId} keeps
+# positions current. supplyType: on_hand | po | asn | in_transit; only on_hand counts in ATP while
+# inventory.include_inbound is false, so ASN/PO rows are ETAs for promises and backorder decisions, not sellable stock.
+#
+# Scenario positions:
+#   * PHN-NOVA-X2-256 (launch pre-order): 10 units on hand at DC-MEM = wave 1; 350 on ASN = wave 2 (E1).
+#   * LAP-AERO-14: sold out everywhere, 60 on PO at DC-MEM = the backorder with an ETA (E3).
+#   * TVs and monitors live at the vendor (drop_ship sources nodeTypes [vendor]); TV-LED-43 and MON-4K-27 are also
+#     stocked in the DCs so a standard_ship TV order and a vendor_repromise re-source have somewhere to go (E5).
+#   * Certified-refurbished SKUs are stocked only at RFB-LOU. Loose battery packs never sit in stores (no hazmat cert).
+source: electronics-seed
+positions:
+  # -- Nova X2 launch ----------------------------------------------------------------------------------------------------
+  - { sku: PHN-NOVA-X2-256, nodeId: DC-MEM, supplyType: on_hand, qty: 10 }
+  - { sku: PHN-NOVA-X2-256, nodeId: DC-SPK, supplyType: on_hand, qty: 0 }
+  - { sku: PHN-NOVA-X2-256, nodeId: DC-MEM, supplyType: asn, qty: 200 }
+  - { sku: PHN-NOVA-X2-256, nodeId: DC-SPK, supplyType: asn, qty: 150 }
+  # -- Phones --------------------------------------------------------------------------------------------------------------
+  - { sku: PHN-NOVA-X1-128, nodeId: DC-MEM, qty: 240 }
+  - { sku: PHN-NOVA-X1-128, nodeId: DC-SPK, qty: 160 }
+  - { sku: PHN-NOVA-X1-128, nodeId: ST-AUS-01, qty: 8 }
+  - { sku: PHN-NOVA-X1-128, nodeId: ST-CHI-02, qty: 10 }
+  - { sku: PHN-NOVA-X1-128, nodeId: ST-NWK-03, qty: 6 }
+  - { sku: PHN-NOVA-X1-128, nodeId: ST-SJC-04, qty: 12 }
+  - { sku: PHN-NOVA-X1-256, nodeId: DC-MEM, qty: 180 }
+  - { sku: PHN-NOVA-X1-256, nodeId: DC-SPK, qty: 120 }
+  - { sku: PHN-NOVA-X1-256, nodeId: ST-AUS-01, qty: 6 }
+  - { sku: PHN-NOVA-X1-256, nodeId: ST-CHI-02, qty: 8 }
+  - { sku: PHN-NOVA-X1-256, nodeId: ST-NWK-03, qty: 4 }
+  - { sku: PHN-NOVA-X1-256, nodeId: ST-SJC-04, qty: 9 }
+  - { sku: PHN-PULSE-A5,    nodeId: DC-MEM, qty: 300 }
+  - { sku: PHN-PULSE-A5,    nodeId: DC-SPK, qty: 200 }
+  - { sku: PHN-PULSE-A5,    nodeId: ST-AUS-01, qty: 10 }
+  - { sku: PHN-PULSE-A5,    nodeId: ST-CHI-02, qty: 12 }
+  - { sku: PHN-PULSE-A5,    nodeId: ST-NWK-03, qty: 9 }
+  - { sku: PHN-PULSE-A5,    nodeId: ST-SJC-04, qty: 11 }
+  # -- Laptops (Aero 14 sold out: PO ETA only) -------------------------------------------------------------------------
+  - { sku: LAP-AERO-14,     nodeId: DC-MEM, supplyType: on_hand, qty: 0 }
+  - { sku: LAP-AERO-14,     nodeId: DC-SPK, supplyType: on_hand, qty: 0 }
+  - { sku: LAP-AERO-14,     nodeId: DC-MEM, supplyType: po, qty: 60 }
+  - { sku: LAP-FORGE-16,    nodeId: DC-MEM, qty: 35 }
+  - { sku: LAP-FORGE-16,    nodeId: DC-SPK, qty: 20 }
+  - { sku: LAP-FORGE-16,    nodeId: ST-SJC-04, qty: 2 }
+  # -- TVs and monitors (vendor drop-ship, some DC stock) ----------------------------------------------------------------
+  - { sku: TV-OLED-65,      nodeId: VND-LUMEN, qty: 120 }
+  - { sku: TV-QLED-55,      nodeId: VND-LUMEN, qty: 200 }
+  - { sku: TV-LED-43,       nodeId: VND-LUMEN, qty: 300 }
+  - { sku: TV-LED-43,       nodeId: DC-MEM, qty: 40 }
+  - { sku: TV-LED-43,       nodeId: DC-SPK, qty: 25 }
+  - { sku: MON-4K-27,       nodeId: VND-LUMEN, qty: 400 }
+  - { sku: MON-4K-27,       nodeId: DC-MEM, qty: 30 }
+  - { sku: MON-UW-34,       nodeId: VND-LUMEN, qty: 150 }
+  - { sku: MON-GAME-27,     nodeId: VND-LUMEN, qty: 180 }
+  - { sku: MON-GAME-27,     nodeId: DC-SPK, qty: 20 }
+  # -- Audio -----------------------------------------------------------------------------------------------------------
+  - { sku: HDP-ANC-PRO,     nodeId: DC-MEM, qty: 400 }
+  - { sku: HDP-ANC-PRO,     nodeId: DC-SPK, qty: 260 }
+  - { sku: HDP-ANC-PRO,     nodeId: ST-AUS-01, qty: 15 }
+  - { sku: HDP-ANC-PRO,     nodeId: ST-CHI-02, qty: 20 }
+  - { sku: HDP-ANC-PRO,     nodeId: ST-NWK-03, qty: 12 }
+  - { sku: HDP-ANC-PRO,     nodeId: ST-SJC-04, qty: 18 }
+  - { sku: HDP-BUDS-2,      nodeId: DC-MEM, qty: 900 }
+  - { sku: HDP-BUDS-2,      nodeId: DC-SPK, qty: 600 }
+  - { sku: HDP-BUDS-2,      nodeId: ST-AUS-01, qty: 25 }
+  - { sku: HDP-BUDS-2,      nodeId: ST-CHI-02, qty: 25 }
+  - { sku: HDP-BUDS-2,      nodeId: ST-NWK-03, qty: 25 }
+  - { sku: HDP-BUDS-2,      nodeId: ST-SJC-04, qty: 25 }
+  - { sku: SPK-BT-GO,       nodeId: DC-MEM, qty: 350 }
+  - { sku: SPK-BT-GO,       nodeId: DC-SPK, qty: 200 }
+  - { sku: SPK-BT-GO,       nodeId: ST-AUS-01, qty: 10 }
+  - { sku: SPK-BT-GO,       nodeId: ST-CHI-02, qty: 12 }
+  - { sku: SPK-BT-GO,       nodeId: ST-NWK-03, qty: 8 }
+  - { sku: SPK-BT-GO,       nodeId: ST-SJC-04, qty: 14 }
+  # -- Chargers --------------------------------------------------------------------------------------------------------
+  - { sku: CHG-GAN-65,      nodeId: DC-MEM, qty: 1500 }
+  - { sku: CHG-GAN-65,      nodeId: DC-SPK, qty: 900 }
+  - { sku: CHG-GAN-65,      nodeId: ST-AUS-01, qty: 40 }
+  - { sku: CHG-GAN-65,      nodeId: ST-CHI-02, qty: 45 }
+  - { sku: CHG-GAN-65,      nodeId: ST-NWK-03, qty: 30 }
+  - { sku: CHG-GAN-65,      nodeId: ST-SJC-04, qty: 50 }
+  - { sku: CHG-GAN-140,     nodeId: DC-MEM, qty: 600 }
+  - { sku: CHG-GAN-140,     nodeId: DC-SPK, qty: 400 }
+  - { sku: CHG-GAN-140,     nodeId: ST-AUS-01, qty: 15 }
+  - { sku: CHG-GAN-140,     nodeId: ST-CHI-02, qty: 15 }
+  - { sku: CHG-GAN-140,     nodeId: ST-NWK-03, qty: 15 }
+  - { sku: CHG-GAN-140,     nodeId: ST-SJC-04, qty: 15 }
+  - { sku: CHG-WLS-PAD,     nodeId: DC-MEM, qty: 700 }
+  - { sku: CHG-WLS-PAD,     nodeId: DC-SPK, qty: 400 }
+  - { sku: CHG-WLS-PAD,     nodeId: ST-AUS-01, qty: 20 }
+  - { sku: CHG-WLS-PAD,     nodeId: ST-CHI-02, qty: 20 }
+  - { sku: CHG-WLS-PAD,     nodeId: ST-NWK-03, qty: 20 }
+  - { sku: CHG-WLS-PAD,     nodeId: ST-SJC-04, qty: 20 }
+  # -- Loose lithium packs (DCs and the refurbishment centre only: hazmat certified) --------------------------------------
+  - { sku: BAT-PWR-10K,     nodeId: DC-MEM, qty: 800 }
+  - { sku: BAT-PWR-10K,     nodeId: DC-SPK, qty: 500 }
+  - { sku: BAT-PWR-27K,     nodeId: DC-MEM, qty: 300 }
+  - { sku: BAT-PWR-27K,     nodeId: DC-SPK, qty: 180 }
+  - { sku: BAT-LAP-AERO,    nodeId: DC-MEM, qty: 120 }
+  - { sku: BAT-LAP-AERO,    nodeId: RFB-LOU, qty: 40 }
+  # -- Cases and cables ------------------------------------------------------------------------------------------------
+  - { sku: CAS-X2-CLR,      nodeId: DC-MEM, qty: 2000 }
+  - { sku: CAS-X2-CLR,      nodeId: DC-SPK, qty: 1200 }
+  - { sku: CAS-X2-CLR,      nodeId: ST-AUS-01, qty: 60 }
+  - { sku: CAS-X2-CLR,      nodeId: ST-CHI-02, qty: 60 }
+  - { sku: CAS-X2-CLR,      nodeId: ST-NWK-03, qty: 60 }
+  - { sku: CAS-X2-CLR,      nodeId: ST-SJC-04, qty: 60 }
+  - { sku: CAS-X1-LTH,      nodeId: DC-MEM, qty: 900 }
+  - { sku: CAS-X1-LTH,      nodeId: DC-SPK, qty: 600 }
+  - { sku: CAS-X1-LTH,      nodeId: ST-AUS-01, qty: 30 }
+  - { sku: CAS-X1-LTH,      nodeId: ST-CHI-02, qty: 30 }
+  - { sku: CAS-X1-LTH,      nodeId: ST-NWK-03, qty: 30 }
+  - { sku: CAS-X1-LTH,      nodeId: ST-SJC-04, qty: 30 }
+  - { sku: CAS-AERO-SLV,    nodeId: DC-MEM, qty: 400 }
+  - { sku: CAS-AERO-SLV,    nodeId: DC-SPK, qty: 250 }
+  - { sku: CAS-AERO-SLV,    nodeId: ST-SJC-04, qty: 12 }
+  - { sku: CBL-USBC-2M,     nodeId: DC-MEM, qty: 3000 }
+  - { sku: CBL-USBC-2M,     nodeId: DC-SPK, qty: 2000 }
+  - { sku: CBL-USBC-2M,     nodeId: ST-AUS-01, qty: 80 }
+  - { sku: CBL-USBC-2M,     nodeId: ST-CHI-02, qty: 80 }
+  - { sku: CBL-USBC-2M,     nodeId: ST-NWK-03, qty: 80 }
+  - { sku: CBL-USBC-2M,     nodeId: ST-SJC-04, qty: 80 }
+  - { sku: CBL-HDMI-21,     nodeId: DC-MEM, qty: 1800 }
+  - { sku: CBL-HDMI-21,     nodeId: DC-SPK, qty: 1100 }
+  - { sku: CBL-HDMI-21,     nodeId: VND-LUMEN, qty: 500 }
+  - { sku: CBL-HDMI-21,     nodeId: ST-AUS-01, qty: 50 }
+  - { sku: CBL-HDMI-21,     nodeId: ST-CHI-02, qty: 50 }
+  - { sku: CBL-HDMI-21,     nodeId: ST-NWK-03, qty: 50 }
+  - { sku: CBL-HDMI-21,     nodeId: ST-SJC-04, qty: 50 }
+  - { sku: CBL-TB4-1M,      nodeId: DC-MEM, qty: 500 }
+  - { sku: CBL-TB4-1M,      nodeId: DC-SPK, qty: 300 }
+  - { sku: CBL-TB4-1M,      nodeId: ST-SJC-04, qty: 20 }
+  # -- Certified refurbished (RFB-LOU only) ----------------------------------------------------------------------------
+  - { sku: RFB-PHN-X1-128,  nodeId: RFB-LOU, qty: 45 }
+  - { sku: RFB-LAP-AERO-14, nodeId: RFB-LOU, qty: 22 }
+  - { sku: RFB-HDP-ANC,     nodeId: RFB-LOU, qty: 60 }
+  # Digital SKUs (gift cards, VoltCare) have no positions.

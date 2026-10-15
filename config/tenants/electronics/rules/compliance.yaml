@@ -1,0 +1,146 @@
+# Voltline Electronics — L0 compliance rules (FR-FIN-03, FR-CAP-05, GR-01).
+#
+# Loaded into the compliance_rule table by ComplianceRuleLoader (the seeder calls loadFile on this path; scripts/new-tenant.sh
+# PUTs it to /api/v1/compliance/rules). Each rule is a CEL boolean over three roots:
+#   line   : line_id, sku, qty, attributes (raw map) and every catalogue attribute flattened in snake_case: hazmat,
+#            hazmat_class, lithium, lithium_battery, export_controlled, oversized, digital, category, catalog_price,
+#            weight_kg, cogs; well-known attributes default when absent (hazmat=false, lithium_battery=false,
+#            export_controlled=false, age_restricted=false, category="", min_age=0)
+#   order  : destination {state, zip, zip5, country, address_type, is_po_box}, customer {age_verified, age},
+#            ship_method (lower-cased), ship_method_is_air (air | overnight | express | next_day), line_count
+#   tenant : tenant_config snapshot (dots → underscores) plus compliance_restricted_zips and compliance_restricted_states
+# scope: line (default) evaluates once per line; order evaluates once with an empty line.
+# action: block (capture rejected) | hold (order captured, compliance hold blocks release) | require_signature.
+# severity: error | warning. Lower priority runs first.
+#
+# address_type values the capture pipeline produces: residential | commercial | po_box | freight_forwarder (from the
+# channel's address kind or the verifier; "PO Box" in line1 always becomes po_box).
+rules:
+  # ---- Lithium batteries ---------------------------------------------------------------------------------------------
+  - id: lithium_loose_pack_no_air
+    name: Loose lithium battery packs (UN3480) never fly
+    scope: line
+    when: line.lithium_battery == true && line.category == "battery" && order.ship_method_is_air
+    action: block
+    reason_code: LITHIUM_AIR
+    severity: error
+    message: "{sku} is a standalone lithium battery and is forbidden on air services; choose ground"
+    priority: 10
+
+  - id: hazmat_no_air
+    name: Any hazmat line ships ground only
+    scope: line
+    when: line.hazmat == true && order.ship_method_is_air
+    action: block
+    reason_code: HAZMAT_AIR
+    severity: error
+    message: "{sku} is hazardous material and cannot ship via {shipMethod}; choose a ground service"
+    priority: 11
+
+  - id: lithium_device_bulk_air
+    name: More than two lithium devices on one air shipment need a hazmat review
+    scope: line
+    when: line.lithium_battery == true && line.category != "battery" && line.qty > 2 && order.ship_method_is_air
+    action: hold
+    reason_code: LITHIUM_BULK_AIR_REVIEW
+    severity: error
+    message: "{sku} x{qty} with installed lithium batteries exceeds the per-parcel air limit; hazmat desk must approve or split to ground"
+    priority: 12
+
+  - id: lithium_no_po_box
+    name: Lithium batteries may not ship to PO boxes or APO/FPO/DPO
+    scope: line
+    when: >-
+      line.lithium_battery == true
+      && (order.destination.is_po_box || order.destination.zip.matches("^(09[0-8][0-9]{2}|340[0-9]{2}|96[2-6][0-9]{2})(-[0-9]{4})?$"))
+    action: hold
+    reason_code: LITHIUM_PO_BOX
+    severity: error
+    message: "{sku} contains lithium batteries and our carriers cannot deliver it to a PO box or APO/FPO/DPO address; CS must obtain a street address"
+    priority: 20
+
+  - id: loose_pack_adult_signature
+    name: Loose lithium packs need an adult signature on delivery
+    scope: line
+    when: line.lithium_battery == true && line.category == "battery" && order.destination.country == "US"
+    action: require_signature
+    reason_code: LITHIUM_ADULT_SIGNATURE
+    severity: warning
+    message: "Adult signature required on delivery for {sku} (lithium battery pack)"
+    priority: 21
+
+  # ---- Export control ------------------------------------------------------------------------------------------------
+  - id: export_controlled_us_only
+    name: Export-controlled items ship within the US only
+    scope: line
+    when: line.export_controlled == true && order.destination.country != "US"
+    action: block
+    reason_code: EXPORT_CONTROLLED
+    severity: error
+    message: "{sku} is export-controlled (EAR) and cannot be shipped to {country}"
+    priority: 30
+
+  - id: export_controlled_to_forwarder
+    name: Export-controlled items addressed to a freight forwarder need an export review
+    scope: line
+    when: line.export_controlled == true && order.destination.address_type == "freight_forwarder"
+    action: hold
+    reason_code: EXPORT_FORWARDER_REVIEW
+    severity: error
+    message: "{sku} is export-controlled and the destination is a freight forwarder / reshipper; the trade-compliance desk must clear the end destination before release"
+    priority: 31
+
+  - id: high_value_to_forwarder_signature
+    name: High-value items to a freight forwarder require adult signature
+    scope: line
+    when: order.destination.address_type == "freight_forwarder" && line.catalog_price * double(line.qty) >= 500.0
+    action: require_signature
+    reason_code: FORWARDER_ADULT_SIGNATURE
+    severity: warning
+    message: "{sku} is high-value and addressed to a freight forwarder; adult signature required"
+    priority: 32
+
+  # ---- Adult signature above $500 ------------------------------------------------------------------------------------
+  - id: high_value_adult_signature
+    name: Lines worth $500 or more require an adult signature on delivery
+    scope: line
+    when: line.digital != true && line.catalog_price * double(line.qty) >= 500.0 && order.destination.country == "US"
+    action: require_signature
+    reason_code: HIGH_VALUE_ADULT_SIGNATURE
+    severity: warning
+    message: "Adult (21+) signature required on delivery for {sku}: line value is at or above the $500 threshold"
+    priority: 40
+
+  # ---- Oversized -----------------------------------------------------------------------------------------------------
+  - id: oversized_no_po_box
+    name: Oversized items cannot be delivered to a PO box
+    scope: line
+    when: line.oversized == true && order.destination.is_po_box
+    action: hold
+    reason_code: OVERSIZED_PO_BOX
+    severity: error
+    message: "{sku} ships as oversized freight and cannot be delivered to a PO box; CS must obtain a street address"
+    priority: 50
+
+  - id: oversized_no_air
+    name: Oversized items ship by ground freight only
+    scope: line
+    when: line.oversized == true && order.ship_method_is_air
+    action: block
+    reason_code: OVERSIZED_AIR
+    severity: error
+    message: "{sku} is oversized freight and is not available on {shipMethod}; choose ground"
+    priority: 51
+
+  # ---- Tenant restricted ZIPs ----------------------------------------------------------------------------------------
+  - id: restricted_zip
+    name: Destination ZIP is on the tenant's restricted list
+    scope: order
+    when: >-
+      size(tenant.compliance_restricted_zips) > 0
+      && tenant.compliance_restricted_zips.exists(z, order.destination.zip5 == string(z) || order.destination.zip.startsWith(string(z)))
+    action: hold
+    reason_code: ZIP_RESTRICTED
+    severity: error
+    message: "Destination ZIP {zip} is restricted for this tenant; manual review required"
+    priority: 60

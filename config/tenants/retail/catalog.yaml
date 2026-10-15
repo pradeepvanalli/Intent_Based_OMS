@@ -1,0 +1,54 @@
+# Maple & Main General Store — catalogue. 41 SKUs across home, kitchen, outdoor, toys, cleaning, wine, knives, oversized
+# furniture (drop-ship), lithium power tools and gift cards. `cogs` drives the P&L and the 12 % margin floor, `weightKg`
+# the rate bands, the flags the compliance rules (rules/compliance.yaml) and sourcing (hazmat → hazmat-capable node only).
+products:
+  # ---- Home -------------------------------------------------------------------------------------------------------
+  - { sku: HOME-THROW-GRY,   name: Chunky knit throw grey,              price: 79.00,   cogs: 24.00,  weightKg: 1.40, category: home }
+  - { sku: HOME-LAMP-ARC,    name: Arc floor lamp brass,                price: 149.00,  cogs: 52.00,  weightKg: 6.50, category: home }
+  - { sku: HOME-RUG-8X10,    name: Jute area rug 8x10,                  price: 329.00,  cogs: 118.00, weightKg: 14.00, category: home, oversized: true }
+  - { sku: HOME-PILLOW-SET,  name: Linen pillow cover set of 2,         price: 54.00,   cogs: 16.00,  weightKg: 0.90, category: home }
+  - { sku: HOME-FRAME-3PK,   name: Gallery frame 3-pack,                price: 39.00,   cogs: 11.00,  weightKg: 1.80, category: home }
+  - { sku: HOME-CANDLE-CDR,  name: Cedar soy candle 10 oz,              price: 28.00,   cogs: 7.00,   weightKg: 0.50, category: home }
+  # ---- Kitchen ----------------------------------------------------------------------------------------------------
+  - { sku: KIT-DUTCH-6QT,    name: Enamelled dutch oven 6 qt,           price: 119.00,  cogs: 41.00,  weightKg: 6.20, category: kitchen }
+  - { sku: KIT-KNIFE-8IN,    name: Forged chef knife 8 in,              price: 89.00,   cogs: 28.00,  weightKg: 0.50, category: blade, ageRestricted: true, minAge: 18 }
+  - { sku: KIT-KNIFE-SET,    name: Knife block set of 6,                price: 199.00,  cogs: 66.00,  weightKg: 3.20, category: blade, ageRestricted: true, minAge: 18 }
+  - { sku: KIT-MIXER-STD,    name: Stand mixer 5 qt,                    price: 349.00,  cogs: 150.00, weightKg: 10.80, category: kitchen }
+  - { sku: KIT-ESPRESSO,     name: Semi-automatic espresso maker,       price: 229.00,  cogs: 92.00,  weightKg: 5.40, category: kitchen }
+  - { sku: KIT-BOARD-WAL,    name: Walnut cutting board,                price: 64.00,   cogs: 20.00,  weightKg: 2.10, category: kitchen }
+  - { sku: KIT-TOWEL-4PK,    name: Kitchen towels 4-pack,               price: 24.00,   cogs: 6.00,   weightKg: 0.40, category: kitchen }
+  # ---- Outdoor ----------------------------------------------------------------------------------------------------
+  - { sku: OUT-GRILL-22,     name: Kettle charcoal grill 22 in,         price: 189.00,  cogs: 74.00,  weightKg: 16.50, category: outdoor, oversized: true }
+  - { sku: OUT-CHAIR-ADK,    name: Adirondack chair teak,               price: 139.00,  cogs: 52.00,  weightKg: 11.00, category: outdoor, oversized: true }
+  - { sku: OUT-COOLER-45,    name: Rotomoulded cooler 45 qt,            price: 249.00,  cogs: 98.00,  weightKg: 12.50, category: outdoor, oversized: true }
+  - { sku: OUT-FIREPIT,      name: Steel fire pit 30 in,                price: 159.00,  cogs: 58.00,  weightKg: 14.00, category: outdoor, oversized: true }
+  - { sku: OUT-LANTERN-LED,  name: Rechargeable LED camp lantern,       price: 29.00,   cogs: 8.00,   weightKg: 0.50, category: outdoor, lithium: true }
+  - { sku: OUT-HAMMOCK,      name: Double camping hammock,              price: 59.00,   cogs: 17.00,  weightKg: 1.30, category: outdoor }
+  # ---- Toys -------------------------------------------------------------------------------------------------------
+  - { sku: TOY-BLOCKS-100,   name: Wooden building blocks 100 pc,       price: 49.00,   cogs: 15.00,  weightKg: 2.40, category: toys }
+  - { sku: TOY-RC-TRUCK,     name: RC monster truck 1:16,               price: 79.00,   cogs: 30.00,  weightKg: 1.60, category: toys, lithium: true }
+  - { sku: TOY-PUZZLE-500,   name: 500-piece jigsaw puzzle,             price: 19.00,   cogs: 5.00,   weightKg: 0.70, category: toys }
+  - { sku: TOY-SCOOTER-KK,   name: Kids kick scooter,                   price: 89.00,   cogs: 34.00,  weightKg: 4.20, category: toys }
+  - { sku: TOY-PLUSH-FOX,    name: Plush fox 14 in,                     price: 24.00,   cogs: 6.00,   weightKg: 0.30, category: toys }
+  # ---- Cleaning (aerosols are hazmat class 2.1: ground only, hazmat-certified node, signature) ------------------------
+  - { sku: CLN-SPRAY-DISINF, name: Disinfectant spray aerosol 2-pack,   price: 14.00,   cogs: 4.00,   weightKg: 0.90, category: cleaning, hazmat: true, hazmatClass: "2.1 aerosol" }
+  - { sku: CLN-AIR-FRESH,    name: Air freshener aerosol,               price: 9.00,    cogs: 2.50,   weightKg: 0.40, category: cleaning, hazmat: true, hazmatClass: "2.1 aerosol" }
+  - { sku: CLN-DEGREASER,    name: Kitchen degreaser pump spray,        price: 11.00,   cogs: 3.00,   weightKg: 0.80, category: cleaning }
+  - { sku: CLN-MOP-SPIN,     name: Spin mop system,                     price: 44.00,   cogs: 14.00,  weightKg: 2.60, category: cleaning }
+  - { sku: CLN-VAC-STICK,    name: Cordless stick vacuum,               price: 199.00,  cogs: 78.00,  weightKg: 3.10, category: cleaning, lithium: true }
+  # ---- Wine (age-restricted, adult signature, state bans in rules/compliance.yaml) ----------------------------------
+  - { sku: WIN-RED-CAB,      name: Columbia Valley cabernet 750 ml,     price: 24.00,   cogs: 9.00,   weightKg: 1.40, category: alcohol, ageRestricted: true, minAge: 21 }
+  - { sku: WIN-WHT-SAUV,     name: Marlborough sauvignon blanc 750 ml,  price: 19.00,   cogs: 7.00,   weightKg: 1.40, category: alcohol, ageRestricted: true, minAge: 21 }
+  - { sku: WIN-SPARK-BRUT,   name: Sparkling brut 750 ml,               price: 29.00,   cogs: 11.00,  weightKg: 1.60, category: alcohol, ageRestricted: true, minAge: 21 }
+  # ---- Oversized furniture (drop-shipped by Great Falls Furniture Co.) ---------------------------------------------
+  - { sku: FURN-SOFA-3S,     name: Three-seat sofa oatmeal,             price: 1299.00, cogs: 540.00, weightKg: 68.00, category: furniture, oversized: true }
+  - { sku: FURN-DRESSER-6D,  name: Six-drawer dresser walnut,           price: 749.00,  cogs: 310.00, weightKg: 52.00, category: furniture, oversized: true }
+  - { sku: FURN-BOOKCASE-5,  name: Five-shelf bookcase oak,             price: 329.00,  cogs: 128.00, weightKg: 31.00, category: furniture, oversized: true }
+  # ---- Power tools (lithium packs; standalone batteries are ground-only) -------------------------------------------
+  - { sku: TOOL-DRILL-20V,   name: 20 V drill driver kit,               price: 129.00,  cogs: 48.00,  weightKg: 2.30, category: tools, lithium: true }
+  - { sku: TOOL-SAW-CIRC,    name: 20 V circular saw,                   price: 159.00,  cogs: 62.00,  weightKg: 3.60, category: tools, lithium: true }
+  - { sku: TOOL-BATT-20V,    name: 20 V 4 Ah battery pack (standalone), price: 69.00,   cogs: 26.00,  weightKg: 0.70, category: battery, lithium: true, hazmat: true, hazmatClass: "9 lithium battery" }
+  - { sku: TOOL-SET-HAND,    name: 65-piece hand tool set,              price: 59.00,   cogs: 22.00,  weightKg: 4.80, category: tools }
+  # ---- Gift cards -------------------------------------------------------------------------------------------------
+  - { sku: GC-DIGITAL-50,    name: Digital gift card $50,               price: 50.00,   cogs: 0.00,   weightKg: 0.00, category: gift_card, digital: true }
+  - { sku: GC-PHYS-100,      name: Physical gift card $100,             price: 100.00,  cogs: 1.00,   weightKg: 0.02, category: gift_card }

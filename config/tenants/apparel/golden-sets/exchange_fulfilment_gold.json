@@ -1,0 +1,479 @@
+{
+  "goldenSet": "exchange_fulfilment_gold",
+  "cases": [
+    {
+      "caseId": "exch_01",
+      "input": {
+        "exchange": {
+          "original_sku": "DRS-MIDI-BLK-S",
+          "new_sku": "DRS-MIDI-BLK-M",
+          "reason": "wrong_size",
+          "value_usd": 148.0,
+          "days_since_delivery": 3,
+          "nearest_store_km": 12,
+          "nearest_store_atp": 3,
+          "dc_atp": 0,
+          "network_atp": 3,
+          "same_price": true,
+          "customer_prefers_refund": false
+        },
+        "order": {
+          "channel": "web",
+          "destination_state": "CA"
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "returns_12m": 2,
+            "not_received_claims": 0,
+            "flags": []
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_from_store_same_day"
+      },
+      "notes": "A2: LA Melrose has the M"
+    },
+    {
+      "caseId": "exch_02",
+      "input": {
+        "exchange": {
+          "original_sku": "JNS-STR-IND-28",
+          "new_sku": "JNS-STR-IND-30",
+          "reason": "wrong_size",
+          "value_usd": 118.0,
+          "days_since_delivery": 5,
+          "nearest_store_km": 300,
+          "nearest_store_atp": 0,
+          "dc_atp": 20,
+          "network_atp": 24,
+          "same_price": true,
+          "customer_prefers_refund": false
+        },
+        "order": {
+          "channel": "web",
+          "destination_state": "OH"
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "returns_12m": 1,
+            "not_received_claims": 0,
+            "flags": []
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_from_dc"
+      }
+    },
+    {
+      "caseId": "exch_03",
+      "input": {
+        "exchange": {
+          "original_sku": "DRS-WRAP-NVY-M",
+          "new_sku": "DRS-WRAP-NVY-L",
+          "reason": "wrong_size",
+          "value_usd": 128.0,
+          "days_since_delivery": 4,
+          "nearest_store_km": 10,
+          "nearest_store_atp": 2,
+          "dc_atp": 30,
+          "network_atp": 36,
+          "same_price": true,
+          "customer_prefers_refund": false
+        },
+        "order": {
+          "channel": "web",
+          "destination_state": "CA"
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "returns_12m": 3,
+            "not_received_claims": 0,
+            "flags": [
+              "flagged_customer"
+            ]
+          }
+        }
+      },
+      "expected": {
+        "value": "hold_until_return_received"
+      },
+      "notes": "flagged_customer_holds rule"
+    },
+    {
+      "caseId": "exch_04",
+      "input": {
+        "exchange": {
+          "original_sku": "KNT-CRD-OAT-M",
+          "new_sku": "KNT-CRD-OAT-L",
+          "reason": "wrong_size",
+          "value_usd": 168.0,
+          "days_since_delivery": 6,
+          "nearest_store_km": 25,
+          "nearest_store_atp": 0,
+          "dc_atp": 0,
+          "network_atp": 0,
+          "same_price": true,
+          "customer_prefers_refund": false
+        },
+        "order": {
+          "channel": "web",
+          "destination_state": "CA"
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "returns_12m": 1,
+            "not_received_claims": 0,
+            "flags": []
+          }
+        }
+      },
+      "expected": {
+        "value": "refund_instead"
+      },
+      "notes": "nothing_to_exchange rule"
+    },
+    {
+      "caseId": "exch_05",
+      "input": {
+        "exchange": {
+          "original_sku": "JKT-TRCH-CAM-M",
+          "new_sku": "JKT-TRCH-CAM-L",
+          "reason": "wrong_size",
+          "value_usd": 298.0,
+          "days_since_delivery": 2,
+          "nearest_store_km": 8,
+          "nearest_store_atp": 2,
+          "dc_atp": 10,
+          "network_atp": 14,
+          "same_price": true,
+          "customer_prefers_refund": false
+        },
+        "order": {
+          "channel": "web",
+          "destination_state": "CA"
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "returns_12m": 6,
+            "not_received_claims": 0,
+            "flags": []
+          }
+        }
+      },
+      "expected": {
+        "value": "hold_until_return_received"
+      },
+      "notes": "high value and six returns"
+    },
+    {
+      "caseId": "exch_06",
+      "input": {
+        "exchange": {
+          "original_sku": "TEE-ORG-WHT-M",
+          "new_sku": "TEE-ORG-WHT-L",
+          "reason": "wrong_size",
+          "value_usd": 38.0,
+          "days_since_delivery": 4,
+          "nearest_store_km": 35,
+          "nearest_store_atp": 1,
+          "dc_atp": 90,
+          "network_atp": 95,
+          "same_price": true,
+          "customer_prefers_refund": false
+        },
+        "order": {
+          "channel": "web",
+          "destination_state": "CA"
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "returns_12m": 1,
+            "not_received_claims": 0,
+            "flags": []
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_from_store_same_day"
+      }
+    },
+    {
+      "caseId": "exch_07",
+      "input": {
+        "exchange": {
+          "original_sku": "SHO-SNK-WHT-38",
+          "new_sku": "SHO-SNK-WHT-39",
+          "reason": "wrong_size",
+          "value_usd": 158.0,
+          "days_since_delivery": 7,
+          "nearest_store_km": 60,
+          "nearest_store_atp": 2,
+          "dc_atp": 15,
+          "network_atp": 19,
+          "same_price": true,
+          "customer_prefers_refund": false
+        },
+        "order": {
+          "channel": "web",
+          "destination_state": "CA"
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "returns_12m": 2,
+            "not_received_claims": 0,
+            "flags": []
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_from_dc"
+      },
+      "notes": "store outside the same-day radius"
+    },
+    {
+      "caseId": "exch_08",
+      "input": {
+        "exchange": {
+          "original_sku": "DRS-MIDI-RST-S",
+          "new_sku": "DRS-MIDI-RST-M",
+          "reason": "wrong_size",
+          "value_usd": 148.0,
+          "days_since_delivery": 3,
+          "nearest_store_km": 15,
+          "nearest_store_atp": 1,
+          "dc_atp": 40,
+          "network_atp": 45,
+          "same_price": true,
+          "customer_prefers_refund": false
+        },
+        "order": {
+          "channel": "web",
+          "destination_state": "CA"
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "returns_12m": 2,
+            "not_received_claims": 1,
+            "flags": []
+          }
+        }
+      },
+      "expected": {
+        "value": "hold_until_return_received"
+      },
+      "notes": "flagged_customer_holds rule (one not-received claim)"
+    },
+    {
+      "caseId": "exch_09",
+      "input": {
+        "exchange": {
+          "original_sku": "DRS-WRAP-NVY-S",
+          "new_sku": "DRS-WRAP-NVY-M",
+          "reason": "changed_mind",
+          "value_usd": 128.0,
+          "days_since_delivery": 5,
+          "nearest_store_km": 10,
+          "nearest_store_atp": 2,
+          "dc_atp": 30,
+          "network_atp": 36,
+          "same_price": true,
+          "customer_prefers_refund": true
+        },
+        "order": {
+          "channel": "web",
+          "destination_state": "CA"
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "returns_12m": 1,
+            "not_received_claims": 0,
+            "flags": []
+          }
+        }
+      },
+      "expected": {
+        "value": "refund_instead"
+      },
+      "notes": "customer prefers a refund"
+    },
+    {
+      "caseId": "exch_10",
+      "input": {
+        "exchange": {
+          "original_sku": "JNS-WIDE-BLK-28",
+          "new_sku": "JNS-WIDE-BLK-30",
+          "reason": "wrong_size",
+          "value_usd": 128.0,
+          "days_since_delivery": 9,
+          "nearest_store_km": 500,
+          "nearest_store_atp": 0,
+          "dc_atp": 40,
+          "network_atp": 40,
+          "same_price": true,
+          "customer_prefers_refund": false
+        },
+        "order": {
+          "channel": "web",
+          "destination_state": "MN"
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "returns_12m": 3,
+            "not_received_claims": 0,
+            "flags": []
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_from_dc"
+      }
+    },
+    {
+      "caseId": "exch_11",
+      "input": {
+        "exchange": {
+          "original_sku": "JKT-BMB-ECR-M",
+          "new_sku": "JKT-BMB-ECR-M",
+          "reason": "wrong_size",
+          "value_usd": 325.0,
+          "days_since_delivery": 2,
+          "nearest_store_km": 15,
+          "nearest_store_atp": 1,
+          "dc_atp": 0,
+          "network_atp": 1,
+          "same_price": true,
+          "customer_prefers_refund": false
+        },
+        "order": {
+          "channel": "web",
+          "destination_state": "CA"
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "returns_12m": 0,
+            "not_received_claims": 0,
+            "flags": []
+          }
+        }
+      },
+      "expected": {
+        "value": "hold_until_return_received"
+      },
+      "notes": "limited drop, high value"
+    },
+    {
+      "caseId": "exch_12",
+      "input": {
+        "exchange": {
+          "original_sku": "JNS-STR-IND-30",
+          "new_sku": "JNS-STR-IND-28",
+          "reason": "wrong_size",
+          "value_usd": 118.0,
+          "days_since_delivery": 4,
+          "nearest_store_km": 20,
+          "nearest_store_atp": 4,
+          "dc_atp": 60,
+          "network_atp": 68,
+          "same_price": true,
+          "customer_prefers_refund": false
+        },
+        "order": {
+          "channel": "web",
+          "destination_state": "CA"
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "returns_12m": 7,
+            "not_received_claims": 0,
+            "flags": []
+          }
+        }
+      },
+      "expected": {
+        "value": "hold_until_return_received"
+      },
+      "notes": "seven returns this year"
+    },
+    {
+      "caseId": "exch_13",
+      "input": {
+        "exchange": {
+          "original_sku": "SHO-LOAF-TAN-38",
+          "new_sku": "SHO-LOAF-TAN-39",
+          "reason": "wrong_size",
+          "value_usd": 198.0,
+          "days_since_delivery": 3,
+          "nearest_store_km": 18,
+          "nearest_store_atp": 2,
+          "dc_atp": 25,
+          "network_atp": 31,
+          "same_price": true,
+          "customer_prefers_refund": false
+        },
+        "order": {
+          "channel": "web",
+          "destination_state": "CA"
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "returns_12m": 2,
+            "not_received_claims": 0,
+            "flags": []
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_from_store_same_day"
+      }
+    },
+    {
+      "caseId": "exch_14",
+      "input": {
+        "exchange": {
+          "original_sku": "DRS-MIDI-BLK-M",
+          "new_sku": "DRS-MIDI-RST-M",
+          "reason": "changed_mind",
+          "value_usd": 148.0,
+          "days_since_delivery": 6,
+          "nearest_store_km": 22,
+          "nearest_store_atp": 2,
+          "dc_atp": 35,
+          "network_atp": 41,
+          "same_price": true,
+          "customer_prefers_refund": false
+        },
+        "order": {
+          "channel": "web",
+          "destination_state": "CA"
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "returns_12m": 1,
+            "not_received_claims": 0,
+            "flags": []
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_from_store_same_day"
+      },
+      "notes": "colour swap, ordinary history"
+    }
+  ]
+}

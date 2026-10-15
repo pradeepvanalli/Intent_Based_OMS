@@ -1,0 +1,58 @@
+# Node on-time likelihood. Score per candidate node, composite-weighted with cost efficiency (FR-DEC-04), two-stage
+# top-K for long candidate lists (FR-DEC-05). Tier T1. Serialised stock picks slower than apparel: the DC with a late
+# cutoff near the air hub (DC-MEM) is usually the on-time choice; stores win only for nearby accessory orders.
+decision: sourcing_node_score
+version: 1
+owner: fulfilment-ops
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 3000
+default: rank_by_distance
+state:
+  include:
+    - order.destination_state
+    - order.ship_method
+    - order.line_count
+    - candidates[].id
+    - candidates[].type
+    - candidates[].backlog_units
+    - candidates[].reject_rate
+    - candidates[].staffing
+    - candidates[].minutes_to_cutoff
+    - candidates[].distance_km
+    - candidates[].cost_usd
+questions:
+  on_time:
+    type: score
+    instructions: Can this node pick, serial-scan and ship this order on time given its backlog, reject rate, staffing and cutoff?
+    feeds: sourcing_composite
+    criteria:
+      - Very unlikely to ship on time, backlog far beyond daily capacity or already past cutoff
+      - Unlikely to ship on time, heavy backlog or thin staffing for a serialised pick
+      - Even chance, moderate backlog and normal staffing
+      - Likely to ship on time, light backlog and healthy staffing well before cutoff
+      - Almost certain to ship on time, idle capacity hours before cutoff at a DC
+  cost_efficiency:
+    type: score
+    instructions: How cost efficient is shipping this order from this node, including oversized or signature surcharges?
+    feeds: sourcing_composite
+    criteria:
+      - Very expensive, cross-country freight or premium store handling
+      - Expensive, above network average cost for this destination
+      - Average cost for this destination
+      - Cheap, nearby node with standard handling
+      - Cheapest option available in the network
+composite:
+  weights:
+    on_time: 0.65
+    cost_efficiency: 0.35
+  outputKey: node_score
+topK:
+  scoreQuestion: on_time
+  k: 20
+  candidatesField: candidates
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }

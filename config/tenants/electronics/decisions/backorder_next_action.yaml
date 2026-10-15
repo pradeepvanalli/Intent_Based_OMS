@@ -1,0 +1,64 @@
+# Backorder next action. Invoked when a line's `backordered` SLA breaches (order_line.preorder P7D, order_line.standard_ship
+# P3D) and from the launch desk. Tier T1 choice: wait / substitute / cancel / split (+ unclear). The customer's own
+# words decide the easy cases by rule — "happy to wait, don't substitute" is a policy, not a judgement — and the model
+# weighs ETA, tier, intent and alternatives for the rest. `cancel` moves money (a refund) but is bounded by the order
+# value and reversible by re-ordering, so T1 with a 0.8 act band and a `wait` default that never costs anything.
+# Sandbox gates 0.6 / 0.5 (production 0.90 / 0.05).
+decision: backorder_next_action
+version: 1
+owner: fulfilment-ops
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: wait
+state:
+  include:
+    - line.sku
+    - line.category
+    - line.days_backordered
+    - line.expected_restock_days
+    - line.substitute_available
+    - line.substitute_sku
+    - order.channel
+    - order.intent
+    - order.notes
+    - order.other_lines_in_stock
+    - order.needed_by_days
+    - customer.tier
+    - network.atp_elsewhere
+rules:
+  - id: customer_declined_substitute
+    when: "has(input.order.notes) && input.order.notes.matches('(?i)(happy to wait|don.?t substitute|no substitut|exact model|only this model)')"
+    then: wait
+    reason: customer_asked_to_wait
+    priority: 10
+  - id: deadline_already_missed
+    when: "has(input.order.needed_by_days) && input.order.needed_by_days >= 0 && input.line.expected_restock_days > input.order.needed_by_days && has(input.order.notes) && input.order.notes.matches('(?i)(or (just )?cancel|otherwise cancel|cancel if|cancel it)')"
+    then: cancel
+    reason: eta_misses_customer_deadline
+    priority: 20
+  - id: stock_elsewhere
+    when: "input.network.atp_elsewhere > 0 && input.line.expected_restock_days > 2"
+    then: split
+    reason: resource_from_network_atp
+    priority: 30
+questions:
+  next_action:
+    type: choice
+    instructions: What should happen to this backordered line now that it has waited past its SLA?
+    feeds: backorder_playbook
+    criteria:
+      wait: Restock ETA is close or the customer said they would wait for this exact model, keep the line and notify the new ETA
+      substitute: A comparable model is in stock and the customer did not refuse substitution, offer it with the price difference handled
+      cancel: No credible ETA and no acceptable alternative, or the customer set a deadline the ETA misses, cancel the line and refund
+      split: Other lines of the order are in stock or the SKU is available at another node, ship what can ship now and keep this line waiting
+      unclear: Not enough information to decide, for example no ETA and no note from the customer
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+evaluation:
+  goldenSet: backorder_next_action_gold
+  minAccuracyInActBand: 0.6
+  maxCalibrationError: 0.5

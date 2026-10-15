@@ -1,0 +1,75 @@
+# Voltline Electronics — order types (FR-CAP-03). Each binds a header + line state model, a workflow and the decision
+# set it may invoke. The `sourcing:` blocks are also written to tenant_config `sourcing.order_type_constraints`.
+# `channelDefaults` is the fulfilment policy used when the buyer's intent is unclear.
+#
+# No BOPIS type: Voltline's stores ship (ship_from_store) but do not run pickup in this reference set; copy the demo's
+# `bopis` type and its two state models if you need it.
+orderTypes:
+  - name: standard_ship
+    description: Ship-to-home from any DC or store; adult signature above $500 comes from the compliance rules
+    headerStateModel: order.standard_ship
+    lineStateModel: order_line.standard_ship
+    workflowType: order.standard_ship
+    decisions: [fulfilment_intent, sourcing_node_score, split_acceptability, sla_breach_risk, exception_classify, address_risk, high_value_address_risk]
+    channelDefaults:
+      web: ship_as_available
+      marketplace: ship_complete
+      pos: ship_complete
+      agent: ship_complete
+      b2b: ship_complete
+    returnWindowDays: 30
+
+  - name: ship_from_store
+    description: Ship from the nearest store (accessories, phones); stores have no hazmat certification
+    headerStateModel: order.standard_ship
+    lineStateModel: order_line.standard_ship
+    workflowType: order.standard_ship
+    decisions: [fulfilment_intent, sourcing_node_score, sla_breach_risk, exception_classify, address_risk]
+    channelDefaults: { web: ship_as_available, marketplace: ship_complete }
+    sourcing: { nodeTypes: [store], capabilities: [sfs] }
+    returnWindowDays: 30
+
+  - name: pre_order
+    description: Launch pre-order; lines wait in `backordered` until wave stock lands, allocation by order time with loyalty protection
+    headerStateModel: order.standard_ship
+    lineStateModel: order_line.preorder
+    workflowType: order.standard_ship
+    decisions: [fulfilment_intent, sourcing_node_score, preorder_allocation, backorder_next_action, exception_classify]
+    channelDefaults: { web: ship_complete, marketplace: ship_complete, agent: ship_complete }
+    sourcing: { allowBackorder: true, includeInbound: false, nodeTypes: [dc] }   # wave stock ships from DCs only
+    returnWindowDays: 30
+
+  - name: backorder
+    description: Accepted without stock against a PO/ASN ETA; the SLA breach asks backorder_next_action (wait / substitute / cancel / split)
+    headerStateModel: order.standard_ship
+    lineStateModel: order_line.preorder
+    workflowType: order.standard_ship
+    decisions: [fulfilment_intent, backorder_next_action, sourcing_node_score, exception_classify]
+    channelDefaults: { web: ship_as_available, marketplace: ship_complete }
+    sourcing: { allowBackorder: true, includeInbound: false }
+    returnWindowDays: 30
+
+  - name: drop_ship
+    description: Monitors and TVs shipped by Lumen Display Co. under a 48 h vendor ship SLA
+    headerStateModel: order.standard_ship
+    lineStateModel: order_line.standard_ship
+    workflowType: order.standard_ship
+    decisions: [sla_breach_risk, exception_classify, address_risk]
+    channelDefaults: { web: ship_complete, marketplace: ship_complete, b2b: ship_complete }
+    sourcing: { nodeTypes: [vendor] }
+    returnWindowDays: 30
+
+  - name: bundle_ship_complete
+    description: Phone + case + charger bundles that must leave in one box; every channel defaults to ship_complete and splits are never offered
+    headerStateModel: order.standard_ship
+    lineStateModel: order_line.standard_ship
+    workflowType: order.standard_ship
+    decisions: [sourcing_node_score, sla_breach_risk, exception_classify, address_risk, high_value_address_risk]   # no fulfilment_intent / split_acceptability: the policy is fixed
+    channelDefaults:
+      web: ship_complete
+      marketplace: ship_complete
+      pos: ship_complete
+      agent: ship_complete
+      b2b: ship_complete
+    sourcing: { nodeTypes: [dc, store] }       # ship_complete on every channel is what enforces the single box
+    returnWindowDays: 30

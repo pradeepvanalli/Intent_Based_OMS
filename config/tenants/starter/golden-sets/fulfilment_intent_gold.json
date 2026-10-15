@@ -1,0 +1,283 @@
+{
+  "goldenSet": "fulfilment_intent_gold",
+  "cases": [
+    {
+      "caseId": "fi_01",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "Please ship everything together, I would rather wait than get separate boxes",
+          "intent_choices": []
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "split_acceptance_rate": 0.1
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_complete"
+      }
+    },
+    {
+      "caseId": "fi_02",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "Send each item as soon as it is ready, I do not mind separate shipments",
+          "intent_choices": []
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "split_acceptance_rate": 0.9
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_as_available"
+      }
+    },
+    {
+      "caseId": "fi_03",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "I need the running shoes urgently for a race on Saturday, the rest can come later",
+          "intent_choices": []
+        },
+        "customer": {
+          "tier": "bronze",
+          "history": {
+            "split_acceptance_rate": 0.6
+          }
+        }
+      },
+      "expected": {
+        "value": "earliest_partial"
+      }
+    },
+    {
+      "caseId": "fi_04",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "I will collect the whole order in store on my way home",
+          "intent_choices": []
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "split_acceptance_rate": 0.3
+          }
+        }
+      },
+      "expected": {
+        "value": "pickup_consolidated"
+      },
+      "notes": "Buyer mentions store collection"
+    },
+    {
+      "caseId": "fi_05",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "",
+          "intent_choices": [
+            "ship_complete"
+          ]
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "split_acceptance_rate": 0.2
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_complete"
+      },
+      "notes": "Explicit checkout choice"
+    },
+    {
+      "caseId": "fi_06",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "",
+          "intent_choices": [
+            "ship_as_available"
+          ]
+        },
+        "customer": {
+          "tier": "bronze",
+          "history": {
+            "split_acceptance_rate": 0.8
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_as_available"
+      },
+      "notes": "Explicit checkout choice"
+    },
+    {
+      "caseId": "fi_07",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "",
+          "intent_choices": []
+        },
+        "customer": {
+          "tier": "bronze",
+          "history": {
+            "split_acceptance_rate": 0.5
+          }
+        }
+      },
+      "expected": {
+        "value": "unclear"
+      },
+      "notes": "No signal at all"
+    },
+    {
+      "caseId": "fi_08",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "Thanks!",
+          "intent_choices": []
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "split_acceptance_rate": 0.5
+          }
+        }
+      },
+      "expected": {
+        "value": "unclear"
+      },
+      "notes": "Notes without intent"
+    },
+    {
+      "caseId": "fi_09",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "This is a gift for my mother, please make sure everything arrives together in one delivery",
+          "intent_choices": []
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "split_acceptance_rate": 0.1
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_complete"
+      }
+    },
+    {
+      "caseId": "fi_10",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "Ready items first please, each one separately is fine",
+          "intent_choices": []
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "split_acceptance_rate": 0.95
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_as_available"
+      }
+    },
+    {
+      "caseId": "fi_11",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "Only the charger is urgently needed before Friday, hold the rest",
+          "intent_choices": []
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "split_acceptance_rate": 0.4
+          }
+        }
+      },
+      "expected": {
+        "value": "earliest_partial"
+      }
+    },
+    {
+      "caseId": "fi_12",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "Prefer to collect in store, consolidated pickup please",
+          "intent_choices": []
+        },
+        "customer": {
+          "tier": "bronze",
+          "history": {
+            "split_acceptance_rate": 0.2
+          }
+        }
+      },
+      "expected": {
+        "value": "pickup_consolidated"
+      }
+    },
+    {
+      "caseId": "fi_13",
+      "input": {
+        "order": {
+          "channel": "app",
+          "notes": "",
+          "intent_choices": [
+            "pickup_consolidated"
+          ]
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "split_acceptance_rate": 0.3
+          }
+        }
+      },
+      "expected": {
+        "value": "pickup_consolidated"
+      },
+      "notes": "Explicit checkout choice"
+    },
+    {
+      "caseId": "fi_14",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "Deliver the whole order together in one delivery",
+          "intent_choices": []
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "split_acceptance_rate": 0.3
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_complete"
+      }
+    }
+  ]
+}

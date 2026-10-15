@@ -1,0 +1,23 @@
+# Maple & Main — negotiated parcel rate card (aggregator-style). zone = distance band in km; cost by weight band (kg);
+# transitDays nominal. Oversized items (grills, rugs, furniture) land in the 999 band, which is what makes a 14 kg fire
+# pit to Hawaii breach the margin floor (scenario R3). `pickup` is free and zero-day by construction in the planner.
+services:
+  - code: ground
+    zones:
+      - { maxKm: 300,  transitDays: 1, rates: { 0.5: 6.40, 2: 8.30, 5: 11.20, 10: 15.10, 20: 22.50, 999: 38.00 } }
+      - { maxKm: 1000, transitDays: 2, rates: { 0.5: 7.60, 2: 10.20, 5: 14.10, 10: 19.80, 20: 29.00, 999: 49.00 } }
+      - { maxKm: 2500, transitDays: 3, rates: { 0.5: 8.90, 2: 12.20, 5: 17.00, 10: 24.90, 20: 36.50, 999: 64.00 } }
+      - { maxKm: 5000, transitDays: 5, rates: { 0.5: 10.20, 2: 14.40, 5: 20.80, 10: 31.00, 20: 46.00, 999: 82.00 } }
+      - { maxKm: 99999, transitDays: 8, rates: { 0.5: 18.50, 2: 25.00, 5: 35.50, 10: 54.00, 20: 84.00, 999: 145.00 } }
+  - code: two_day
+    zones:
+      - { maxKm: 1000, transitDays: 2, rates: { 0.5: 11.40, 2: 15.00, 5: 20.60, 10: 29.00, 20: 43.50, 999: 76.00 } }
+      - { maxKm: 99999, transitDays: 2, rates: { 0.5: 14.50, 2: 19.70, 5: 28.00, 10: 40.50, 20: 61.00, 999: 104.00 } }
+  - code: next_day
+    zones:
+      - { maxKm: 99999, transitDays: 1, rates: { 0.5: 22.80, 2: 30.00, 5: 40.50, 10: 58.00, 20: 87.00, 999: 150.00 } }
+  - code: same_day
+    zones:
+      - { maxKm: 40, transitDays: 0, rates: { 0.5: 9.90, 2: 9.90, 5: 12.90, 10: 16.90, 20: 24.90, 999: 44.00 } }
+splitPenaltyUsd: 11.00
+onTimeByTransitDays: { 0: 0.87, 1: 0.95, 2: 0.94, 3: 0.92, 5: 0.90, 8: 0.84 }

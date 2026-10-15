@@ -1,0 +1,348 @@
+{
+  "goldenSet": "warranty_triage_gold",
+  "cases": [
+    {
+      "caseId": "wa_01",
+      "input": {
+        "return": {
+          "customer_reason_text": "left ear cuts out",
+          "reason_code": "defective",
+          "days_since_delivery": 12,
+          "item_condition": "like_new",
+          "box_opened": true,
+          "inspection_notes": "intermittent left channel reproduced on bench"
+        },
+        "item": {
+          "category": "audio",
+          "serial_matches_order": true
+        },
+        "shipment": {
+          "carrier_exception": false,
+          "oversized": false
+        }
+      },
+      "expected": {
+        "value": "defective"
+      }
+    },
+    {
+      "caseId": "wa_02",
+      "input": {
+        "return": {
+          "customer_reason_text": "changed my mind, box unopened",
+          "reason_code": "changed_mind",
+          "days_since_delivery": 3,
+          "item_condition": "new",
+          "box_opened": false,
+          "inspection_notes": ""
+        },
+        "item": {
+          "category": "phone",
+          "serial_matches_order": true
+        },
+        "shipment": {
+          "carrier_exception": false,
+          "oversized": false
+        }
+      },
+      "expected": {
+        "value": "buyer_remorse"
+      },
+      "notes": "Rule sealed_box_remorse"
+    },
+    {
+      "caseId": "wa_03",
+      "input": {
+        "return": {
+          "customer_reason_text": "screen cracked, box was crushed on arrival",
+          "reason_code": "damaged_in_transit",
+          "days_since_delivery": 2,
+          "item_condition": "damaged",
+          "box_opened": true,
+          "inspection_notes": ""
+        },
+        "item": {
+          "category": "tv",
+          "serial_matches_order": true
+        },
+        "shipment": {
+          "carrier_exception": true,
+          "oversized": true
+        }
+      },
+      "expected": {
+        "value": "transit_damage"
+      },
+      "notes": "Rule carrier_exception_on_file"
+    },
+    {
+      "caseId": "wa_04",
+      "input": {
+        "return": {
+          "customer_reason_text": "corner dented, outer box intact",
+          "reason_code": "damaged_in_transit",
+          "days_since_delivery": 4,
+          "item_condition": "damaged",
+          "box_opened": true,
+          "inspection_notes": ""
+        },
+        "item": {
+          "category": "monitor",
+          "serial_matches_order": true
+        },
+        "shipment": {
+          "carrier_exception": false,
+          "oversized": false
+        }
+      },
+      "expected": {
+        "value": "unclear"
+      },
+      "notes": "Damage without packaging damage: needs second opinion"
+    },
+    {
+      "caseId": "wa_05",
+      "input": {
+        "return": {
+          "customer_reason_text": "will not charge past 40 percent",
+          "reason_code": "defective",
+          "days_since_delivery": 18,
+          "item_condition": "like_new",
+          "box_opened": true,
+          "inspection_notes": "battery health 61 percent, charging IC fault"
+        },
+        "item": {
+          "category": "phone",
+          "serial_matches_order": true
+        },
+        "shipment": {
+          "carrier_exception": false,
+          "oversized": false
+        }
+      },
+      "expected": {
+        "value": "defective"
+      }
+    },
+    {
+      "caseId": "wa_06",
+      "input": {
+        "return": {
+          "customer_reason_text": "found it cheaper elsewhere",
+          "reason_code": "changed_mind",
+          "days_since_delivery": 6,
+          "item_condition": "like_new",
+          "box_opened": true,
+          "inspection_notes": ""
+        },
+        "item": {
+          "category": "laptop",
+          "serial_matches_order": true
+        },
+        "shipment": {
+          "carrier_exception": false,
+          "oversized": false
+        }
+      },
+      "expected": {
+        "value": "buyer_remorse"
+      }
+    },
+    {
+      "caseId": "wa_07",
+      "input": {
+        "return": {
+          "customer_reason_text": "dead pixels in the lower left corner",
+          "reason_code": "not_as_described",
+          "days_since_delivery": 9,
+          "item_condition": "like_new",
+          "box_opened": true,
+          "inspection_notes": "cluster of 6 dead pixels confirmed"
+        },
+        "item": {
+          "category": "monitor",
+          "serial_matches_order": true
+        },
+        "shipment": {
+          "carrier_exception": false,
+          "oversized": false
+        }
+      },
+      "expected": {
+        "value": "defective"
+      }
+    },
+    {
+      "caseId": "wa_08",
+      "input": {
+        "return": {
+          "customer_reason_text": "arrived with a cracked panel, the packaging was wet",
+          "reason_code": "damaged_in_transit",
+          "days_since_delivery": 1,
+          "item_condition": "damaged",
+          "box_opened": true,
+          "inspection_notes": ""
+        },
+        "item": {
+          "category": "tv",
+          "serial_matches_order": true
+        },
+        "shipment": {
+          "carrier_exception": false,
+          "oversized": true
+        }
+      },
+      "expected": {
+        "value": "transit_damage"
+      },
+      "notes": "No carrier exception on file but packaging and damage are consistent with transport"
+    },
+    {
+      "caseId": "wa_09",
+      "input": {
+        "return": {
+          "customer_reason_text": "bought the wrong storage size",
+          "reason_code": "changed_mind",
+          "days_since_delivery": 2,
+          "item_condition": "new",
+          "box_opened": true,
+          "inspection_notes": ""
+        },
+        "item": {
+          "category": "phone",
+          "serial_matches_order": true
+        },
+        "shipment": {
+          "carrier_exception": false,
+          "oversized": false
+        }
+      },
+      "expected": {
+        "value": "buyer_remorse"
+      }
+    },
+    {
+      "caseId": "wa_10",
+      "input": {
+        "return": {
+          "customer_reason_text": "",
+          "reason_code": "other",
+          "days_since_delivery": 7,
+          "item_condition": "like_new",
+          "box_opened": true,
+          "inspection_notes": ""
+        },
+        "item": {
+          "category": "audio",
+          "serial_matches_order": true
+        },
+        "shipment": {
+          "carrier_exception": false,
+          "oversized": false
+        }
+      },
+      "expected": {
+        "value": "unclear"
+      },
+      "notes": "No description, nothing found on the bench"
+    },
+    {
+      "caseId": "wa_11",
+      "input": {
+        "return": {
+          "customer_reason_text": "Bluetooth drops every few minutes",
+          "reason_code": "defective",
+          "days_since_delivery": 15,
+          "item_condition": "like_new",
+          "box_opened": true,
+          "inspection_notes": "firmware current, drop reproduced at 3 metres"
+        },
+        "item": {
+          "category": "audio",
+          "serial_matches_order": true
+        },
+        "shipment": {
+          "carrier_exception": false,
+          "oversized": false
+        }
+      },
+      "expected": {
+        "value": "defective"
+      }
+    },
+    {
+      "caseId": "wa_12",
+      "input": {
+        "return": {
+          "customer_reason_text": "my son opened it but we do not need it",
+          "reason_code": "changed_mind",
+          "days_since_delivery": 8,
+          "item_condition": "like_new",
+          "box_opened": true,
+          "inspection_notes": ""
+        },
+        "item": {
+          "category": "charger",
+          "serial_matches_order": true
+        },
+        "shipment": {
+          "carrier_exception": false,
+          "oversized": false
+        }
+      },
+      "expected": {
+        "value": "buyer_remorse"
+      }
+    },
+    {
+      "caseId": "wa_13",
+      "input": {
+        "return": {
+          "customer_reason_text": "box had a forklift hole, speaker grille crushed",
+          "reason_code": "damaged_in_transit",
+          "days_since_delivery": 1,
+          "item_condition": "damaged",
+          "box_opened": true,
+          "inspection_notes": ""
+        },
+        "item": {
+          "category": "audio",
+          "serial_matches_order": true
+        },
+        "shipment": {
+          "carrier_exception": true,
+          "oversized": false
+        }
+      },
+      "expected": {
+        "value": "transit_damage"
+      },
+      "notes": "Rule carrier_exception_on_file"
+    },
+    {
+      "caseId": "wa_14",
+      "input": {
+        "return": {
+          "customer_reason_text": "works fine but battery life is less than advertised",
+          "reason_code": "not_as_described",
+          "days_since_delivery": 20,
+          "item_condition": "like_new",
+          "box_opened": true,
+          "inspection_notes": "battery within spec"
+        },
+        "item": {
+          "category": "laptop",
+          "serial_matches_order": true
+        },
+        "shipment": {
+          "carrier_exception": false,
+          "oversized": false
+        }
+      },
+      "expected": {
+        "value": "unclear"
+      },
+      "notes": "Description and bench disagree"
+    }
+  ]
+}

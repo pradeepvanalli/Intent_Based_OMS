@@ -1,0 +1,82 @@
+# Lumen & Loom — apparel reference tenant. Runtime settings written to tenant_config (TenantConfigStore); business
+# users change them at runtime through PUT /api/v1/admin/config/{key}. The seeder and scripts/new-tenant.sh write a
+# key only when it is absent, so later edits survive restarts. Reference for every key: docs/CONFIGURATION.md §3.
+#
+# The first three keys are tenant metadata (name, vertical, description) shown in the tenant switcher and the README.
+name: Lumen & Loom
+vertical: Apparel / DTC fashion
+description: >-
+  Direct-to-consumer womenswear brand: dresses, denim, tees, outerwear, shoes and accessories sold online, in five
+  stores and to boutiques on net terms. One DC, one 3PL, a returns centre and a 30 % return rate driven by fit.
+
+# ---- Sourcing and promise -------------------------------------------------------------------------------------------
+sourcing.margin_floor: 0.18                 # fashion gross margins are high; a plan below 18 % contribution needs finance approval
+sourcing.max_split_packages: 2              # two boxes at most: a third box on a $150 basket wipes out the margin
+sourcing.split_penalty_usd: 9.50            # negotiated carrier cost of one extra parcel
+sourcing.candidate_limit: 50
+sourcing.channel_default_policy:            # when the buyer's intent is unclear
+  web: ship_as_available
+  marketplace: ship_complete
+  pos: ship_complete
+  agent: ship_complete
+  b2b: ship_complete                        # boutiques want one delivery with one packing list
+sourcing.weights: { cost: 0.35, time: 0.30, soft: 0.25, split: 0.10 }
+sourcing.pickup_radius_km: 40               # offer a store pickup alternative within this radius
+sourcing.backorder_lead_days: 21            # promise offset when a drop sells out and the next cut is three weeks away
+
+# ---- Inventory ------------------------------------------------------------------------------------------------------
+inventory.channel_buffer: 0.03              # withhold 3 % of network ATP from channel feeds (store shrink on apparel is real)
+inventory.include_inbound: false            # pre_order overrides this per order type (sourcing.includeInbound)
+
+# ---- Capture and customer service ----------------------------------------------------------------------------------
+capture.validation_steps: [schema, item_price_sanity, compliance, address, payment_status, agent_provenance]
+capture.price_tolerance: 0.25               # markdown SKUs carry their markdown price in catalog.yaml, so no warning fires
+cs.carrier_intercept_enabled: true          # CS may redirect a parcel after it ships (size exchanges often mean a new address)
+cs.carrier_intercept_fee_usd: 12.0
+appeasement.role_limits: { cs_rep: 25, ops_analyst: 50, finance_controller: 500 }
+notify.brand_name: Lumen & Loom
+
+# ---- Finance, tax, compliance --------------------------------------------------------------------------------------
+finance.payment_fee_rate: 0.027
+finance.payment_fee_fixed: 0.30
+finance.returns_reserve_rate: 0.12          # a 30 % return rate needs a real reserve, not the generic 5 %
+tax.default_rate: 0.0
+tax.rates: { PA: 0.06, NV: 0.0685, OH: 0.0575, NY: 0.04, CA: 0.0725, IL: 0.0625, FL: 0.06, TX: 0.0625, NJ: 0.06625, MA: 0.0625, WA: 0.065, GA: 0.04 }
+compliance.restricted_zips: []
+compliance.restricted_states: { fur: [CA] }  # merged into the fur rule in rules/compliance.yaml
+
+# ---- Guardrails and AI ---------------------------------------------------------------------------------------------
+guardrail.refund_velocity_usd_per_hour: 8000        # returns are a large share of the business; keep the cap realistic
+guardrail.appeasement_velocity_usd_per_hour: 1000
+guardrail.refund_velocity_usd_per_hour_per_actor: 1500
+ai.budget_usd_per_day: 75
+agent.default_max_order_value: 600
+agent.default_max_refund: 150
+
+# ---- Returns (the heart of the apparel story) ---------------------------------------------------------------------
+returns.window_days: 30                     # default; order types override (try_before_you_buy 14, wholesale 0)
+returns.window_days.try_before_you_buy: 14
+returns.window_days.wholesale: 0            # B2B: no returns through the consumer flow; the account manager handles claims
+returns.refundable_conditions: [new, like_new]       # worn or damaged apparel is not refunded after inspection
+returns.restocking_fee_pct: 0.0
+returns.refund_shipping: false
+returns.refund_requires_approval_above_usd: 400
+returns.return_shipping_cost_usd: 7.95      # prepaid label average (keep-it economics)
+returns.return_handling_cost_usd: 2.50      # receive, inspect, steam, re-bag at the Columbus returns centre
+returns.recovery_rate: 0.45                 # resale recovery of a new-condition return as a fraction of price
+returns.keep_it_enabled: true               # "keep it, we have refunded you" for low-value items
+returns.serial_returner_threshold: 8        # 30 % of apparel orders come back; six returns a year is a normal customer
+returns.not_received_claims_threshold: 2
+returns.flagged_customers: [cust-serial-88]
+returns.reason_taxonomy: [wrong_size, didnt_fit_as_expected, quality, changed_mind, wrong_item, not_as_described, arrived_late, not_received, bracketing, other]
+
+# ---- Orchestration, monitoring, platform ---------------------------------------------------------------------------
+orchestration.fulfilment_timeout: P4D
+orchestration.delivery_timeout: P12D
+orchestration.pickup_window: P7D            # stores hold a BOPIS order for a week
+alerts.dedupe_minutes: 15
+# alerts.slack_webhook / alerts.pagerduty_routing_key / alerts.email: set through the API, never commit real URLs
+
+# ---- Integration secrets: set through PUT /api/v1/admin/config/{key} on the running system, never in this file -----
+# webhooks.inbound_secret: <HMAC secret for /webhooks/wms|carrier|inventory>
+# shopify.webhook_secret: <Shopify signing secret for /webhooks/shopify>

@@ -1,0 +1,367 @@
+# Maple & Main General Store — sample orders the seeder captures on first start (docs/SAMPLE_ORDERS_FORMAT.md).
+# 37 orders, 3 returns, 2 exceptions. Keys are stable; channelOrderIds are unique; every sku / node / order type below
+# exists in this folder (the seeder refuses the file otherwise). Scenario map: README.md §3.
+#   D* delivered (return candidates)   S* shipped        R* released / in fulfilment   M* marketplace margin-floor breaches
+#   H* hazmat + oversized routing      W* compliance hold (wine, no age)   K* knives (verified) / backorder
+#   B* BOPIS   C* curbside   F* ship-from-store   L* same-day   V* drop-ship furniture   G* holiday-surge batch   X* declined card
+orders:
+  # ---- Delivered ----------------------------------------------------------------------------------------------------
+  - key: D01
+    channel: web
+    channelOrderId: MM-WEB-1001
+    orderType: standard_ship
+    shipMethod: ground
+    customer: { ref: cust-1001, name: Dana Whitfield, email: dana@example.com, phone: "+1 312 555 0101", tier: gold, age: 34, attributes: { split_acceptance_rate: 0.2, returns_12m: 0, orders_12m: 6 } }
+    lines:
+      - { id: "1", sku: HOME-THROW-GRY, qty: 1, unitPrice: 79.00 }
+      - { id: "2", sku: HOME-PILLOW-SET, qty: 1, unitPrice: 54.00 }
+      - { id: "3", sku: KIT-TOWEL-4PK, qty: 1, unitPrice: 24.00 }
+    shipTo: { line1: 2140 N Lincoln Ave, line2: Apt 3B, city: Chicago, state: IL, zip: "60614" }
+    notes: [ "Housewarming gift for my sister, please send everything together in one box." ]
+    intentChoices: [ship_complete]
+    lifecycle: { ship: true, deliver: true }
+  - key: D02
+    channel: web
+    channelOrderId: MM-WEB-1002
+    customer: { ref: cust-1002, name: Marcus Lee, email: marcus@example.com, tier: silver, age: 41, attributes: { split_acceptance_rate: 0.7, returns_12m: 1, orders_12m: 4 } }
+    lines:
+      - { id: "1", sku: KIT-DUTCH-6QT, qty: 1, unitPrice: 119.00 }
+    shipTo: { line1: 88 E Broad St, city: Columbus, state: OH, zip: "43215" }
+    lifecycle: { ship: true, deliver: true, deliveredDaysAgo: 45 }          # return comes 45 days after delivery: out of window
+  - key: D03
+    channel: web
+    channelOrderId: MM-WEB-1003
+    customer: { ref: cust-flag-301, name: Pat Ridley, email: pat.ridley@example.com, tier: standard, age: 29, attributes: { split_acceptance_rate: 0.5, returns_12m: 6, orders_12m: 8, not_received_claims: 2 } }
+    lines:
+      - { id: "1", sku: CLN-VAC-STICK, qty: 1, unitPrice: 199.00 }
+    shipTo: { line1: 3100 McKinney Ave, line2: Unit 412, city: Dallas, state: TX, zip: "75204" }
+    lifecycle: { ship: true, deliver: true }
+  - key: D04
+    channel: marketplace
+    channelOrderId: MM-MKT-2001
+    customer: { ref: cust-2001, name: Priya Natarajan, email: priya@example.com, tier: standard, age: 38, attributes: { split_acceptance_rate: 0.5, returns_12m: 1, orders_12m: 3 } }
+    lines:
+      - { id: "1", sku: TOY-BLOCKS-100, qty: 1, unitPrice: 49.00 }
+      - { id: "2", sku: TOY-PLUSH-FOX, qty: 2, unitPrice: 24.00 }
+    shipTo: { line1: 500 Boylston St, city: Boston, state: MA, zip: "02116" }
+    lifecycle: { ship: true, deliver: true }
+  - key: D05
+    channel: web
+    channelOrderId: MM-WEB-1005
+    customer: { ref: cust-1005, name: Olivia Brown, email: olivia@example.com, tier: gold, age: 45, attributes: { split_acceptance_rate: 0.9, returns_12m: 0, orders_12m: 11 } }
+    lines:
+      - { id: "1", sku: GC-DIGITAL-50, qty: 1, unitPrice: 50.00 }
+      - { id: "2", sku: HOME-CANDLE-CDR, qty: 2, unitPrice: 28.00 }
+    shipTo: { line1: 1080 Peachtree St NE, city: Atlanta, state: GA, zip: "30309" }
+    notes: [ "Birthday gift for my sister. Please include the gift card message: Happy 40th, Jo!" ]
+    lifecycle: { ship: true, deliver: true }
+  - key: D06
+    channel: pos
+    channelOrderId: MM-POS-3001
+    customer: { ref: cust-3001, name: Walk-in customer, tier: standard, attributes: { split_acceptance_rate: 0.5 } }
+    lines:
+      - { id: "1", sku: OUT-HAMMOCK, qty: 1, unitPrice: 59.00 }
+    shipTo: { line1: 4455 E Camelback Rd, city: Phoenix, state: AZ, zip: "85018" }
+    lifecycle: { ship: true, deliver: true }
+  # ---- Shipped, not delivered ------------------------------------------------------------------------------------------
+  - key: S01
+    channel: web
+    channelOrderId: MM-WEB-1007
+    customer: { ref: cust-1007, name: Sophia Martinez, email: sophia@example.com, tier: standard, age: 33, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 2 } }
+    lines:
+      - { id: "1", sku: KIT-MIXER-STD, qty: 1, unitPrice: 349.00 }
+    shipTo: { line1: 1700 S Pearl St, city: Denver, state: CO, zip: "80210" }
+    lifecycle: { ship: true }
+  - key: S02
+    channel: marketplace
+    channelOrderId: MM-MKT-2002
+    customer: { ref: cust-2002, name: Liam Johnson, email: liam@example.com, tier: standard, age: 52, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 1 } }
+    lines:
+      - { id: "1", sku: TOOL-SET-HAND, qty: 1, unitPrice: 59.00 }
+      - { id: "2", sku: CLN-DEGREASER, qty: 2, unitPrice: 11.00 }
+    shipTo: { line1: 400 Broad St, city: Seattle, state: WA, zip: "98109" }
+    lifecycle: { ship: true }
+  - key: S03
+    channel: web
+    channelOrderId: MM-WEB-1009
+    customer: { ref: cust-1009, name: Ava Wilson, email: ava@example.com, tier: gold, age: 36, attributes: { split_acceptance_rate: 0.8, returns_12m: 1, orders_12m: 7 } }
+    lines:
+      - { id: "1", sku: HOME-FRAME-3PK, qty: 2, unitPrice: 39.00 }
+      - { id: "2", sku: HOME-LAMP-ARC, qty: 1, unitPrice: 149.00 }
+    shipTo: { line1: 1200 Broadway, city: Nashville, state: TN, zip: "37203" }
+    intentChoices: [ship_as_available]
+    lifecycle: { partialShip: true }
+  # ---- Released / in fulfilment ---------------------------------------------------------------------------------------
+  - key: R01
+    channel: web
+    channelOrderId: MM-WEB-1011
+    customer: { ref: cust-1011, name: Mia Anderson, email: mia@example.com, tier: standard, age: 27, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 1 } }
+    lines:
+      - { id: "1", sku: KIT-BOARD-WAL, qty: 1, unitPrice: 64.00 }
+      - { id: "2", sku: KIT-TOWEL-4PK, qty: 2, unitPrice: 24.00 }
+    shipTo: { line1: 233 N Michigan Ave, city: Chicago, state: IL, zip: "60601" }     # apartment number missing: exception below
+  - key: R02
+    channel: web
+    channelOrderId: MM-WEB-1012
+    customer: { ref: cust-1012, name: James Taylor, email: james@example.com, tier: gold, age: 48, attributes: { split_acceptance_rate: 0.3, returns_12m: 0, orders_12m: 9 } }
+    lines:
+      - { id: "1", sku: OUT-GRILL-22, qty: 1, unitPrice: 189.00 }
+      - { id: "2", sku: OUT-LANTERN-LED, qty: 2, unitPrice: 29.00 }
+    shipTo: { line1: 1600 Larimer St, city: Denver, state: CO, zip: "80202" }
+    notes: [ "Camping trip next weekend, please ship everything together." ]
+    intentChoices: [ship_complete]
+  - key: R03
+    channel: web
+    channelOrderId: MM-WEB-1013
+    shipMethod: two_day
+    customer: { ref: cust-1014, name: Benjamin Moore, email: ben@example.com, tier: silver, age: 39, attributes: { split_acceptance_rate: 0.9, returns_12m: 0, orders_12m: 5 } }
+    lines:
+      - { id: "1", sku: TOOL-DRILL-20V, qty: 1, unitPrice: 129.00, attributes: { urgent: true } }
+      - { id: "2", sku: TOOL-SET-HAND, qty: 1, unitPrice: 59.00 }
+    shipTo: { line1: 1 Infinite Loop, city: Cupertino, state: CA, zip: "95014" }
+    notes: [ "I need the drill before Saturday; the tool set can come whenever." ]
+    intentChoices: [earliest_partial]
+  # ---- Marketplace orders that breach the 12 % margin floor (finance approval, scenario R3) --------------------------
+  - key: M01
+    channel: marketplace
+    channelOrderId: MM-MKT-2003
+    customer: { ref: cust-2003, name: Kai Nakamura, email: kai@example.com, tier: standard, age: 44, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 1 } }
+    lines:
+      - { id: "1", sku: OUT-FIREPIT, qty: 1, unitPrice: 159.00 }
+    shipTo: { line1: 1 Aloha Tower Dr, city: Honolulu, state: HI, zip: "96813" }
+  - key: M02
+    channel: marketplace
+    channelOrderId: MM-MKT-2004
+    customer: { ref: cust-2004, name: Owen Young, email: owen@example.com, tier: standard, age: 31, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 2 } }
+    lines:
+      - { id: "1", sku: CLN-MOP-SPIN, qty: 2, unitPrice: 44.00 }
+    shipTo: { line1: 632 W 6th Ave, city: Anchorage, state: AK, zip: "99501" }
+  # ---- Hazmat + oversized: ground only, hazmat-certified DC, signature (scenario R2) ----------------------------------
+  - key: H01
+    channel: web
+    channelOrderId: MM-WEB-1015
+    shipMethod: ground
+    customer: { ref: cust-1015, name: Grace Allen, email: grace@example.com, tier: standard, age: 50, attributes: { split_acceptance_rate: 0.6, returns_12m: 0, orders_12m: 3 } }
+    lines:
+      - { id: "1", sku: CLN-SPRAY-DISINF, qty: 2, unitPrice: 14.00 }
+      - { id: "2", sku: OUT-COOLER-45, qty: 1, unitPrice: 249.00 }
+    shipTo: { line1: 50 W Washington St, city: Indianapolis, state: IN, zip: "46204" }
+  # ---- Compliance hold: wine without age verification ----------------------------------------------------------------
+  - key: W01
+    channel: web
+    channelOrderId: MM-WEB-1016
+    customer: { ref: cust-1016, name: Daniel Hall, email: daniel@example.com, tier: standard, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 1 } }
+    lines:
+      - { id: "1", sku: WIN-RED-CAB, qty: 6, unitPrice: 24.00 }
+    shipTo: { line1: 5 Columbus Cir, city: New York, state: NY, zip: "10019" }
+  # ---- Knives to a verified adult; an espresso maker nobody has in stock ----------------------------------------------
+  - key: K01
+    channel: web
+    channelOrderId: MM-WEB-1017
+    customer: { ref: cust-1017, name: Charlotte Jackson, email: charlotte@example.com, tier: gold, age: 42, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 4 } }
+    lines:
+      - { id: "1", sku: KIT-KNIFE-SET, qty: 1, unitPrice: 199.00 }
+    shipTo: { line1: 1120 NW Couch St, city: Portland, state: OR, zip: "97209" }
+  - key: K02
+    channel: web
+    channelOrderId: MM-WEB-1018
+    orderType: backorder
+    customer: { ref: cust-1018, name: Lucas White, email: lucas@example.com, tier: standard, age: 35, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 2 } }
+    lines:
+      - { id: "1", sku: KIT-ESPRESSO, qty: 1, unitPrice: 229.00 }
+    shipTo: { line1: 301 Congress Ave, city: Austin, state: TX, zip: "78701" }
+  # ---- BOPIS ------------------------------------------------------------------------------------------------------------
+  - key: B01
+    channel: web
+    channelOrderId: MM-WEB-1019
+    orderType: bopis
+    customer: { ref: cust-1019, name: Evelyn Thompson, email: evelyn@example.com, tier: silver, age: 30, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 3 } }
+    lines:
+      - { id: "1", sku: HOME-LAMP-ARC, qty: 1, unitPrice: 149.00 }
+    pickupNodeId: ST-CHI
+    lifecycle: { storeReject: true }           # Chicago shows 2 on hand but cannot find the lamp: store_reject exception + reroute decision
+  - key: B02
+    channel: web
+    channelOrderId: MM-WEB-1020
+    orderType: bopis
+    customer: { ref: cust-1020, name: Alexander Lewis, email: alex@example.com, tier: standard, age: 37, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 2 } }
+    lines:
+      - { id: "1", sku: TOY-SCOOTER-KK, qty: 1, unitPrice: 89.00 }
+      - { id: "2", sku: TOY-PUZZLE-500, qty: 1, unitPrice: 19.00 }
+    pickupNodeId: ST-DAL
+    lifecycle: { bopisPickup: true }
+  - key: B03
+    channel: web
+    channelOrderId: MM-WEB-1021
+    orderType: bopis
+    customer: { ref: cust-1021, name: Harper Walker, email: harper@example.com, tier: gold, age: 46, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 8 } }
+    lines:
+      - { id: "1", sku: KIT-BOARD-WAL, qty: 1, unitPrice: 64.00 }
+    pickupNodeId: ST-SEA
+  # ---- Curbside (pickup variant; the car is waiting; scenario R5) ----------------------------------------------------
+  - key: C01
+    channel: web
+    channelOrderId: MM-WEB-1022
+    orderType: curbside
+    customer: { ref: cust-1022, name: Noah Davis, email: noah@example.com, phone: "+1 720 555 0144", tier: standard, age: 29, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 2 } }
+    lines:
+      - { id: "1", sku: HOME-CANDLE-CDR, qty: 2, unitPrice: 28.00 }
+      - { id: "2", sku: HOME-THROW-GRY, qty: 1, unitPrice: 79.00 }
+    pickupNodeId: ST-DEN
+    extensions: { pickupMode: curbside, vehicle: "Blue Subaru Outback", arrivalMinutes: 15 }
+    lifecycle: { bopisPickup: true }
+  - key: C02
+    channel: web
+    channelOrderId: MM-WEB-1023
+    orderType: curbside
+    customer: { ref: cust-1023, name: Emma Clark, email: emma@example.com, phone: "+1 206 555 0188", tier: silver, age: 33, attributes: { split_acceptance_rate: 0.5, returns_12m: 1, orders_12m: 5 } }
+    lines:
+      - { id: "1", sku: CLN-DEGREASER, qty: 2, unitPrice: 11.00 }
+      - { id: "2", sku: KIT-TOWEL-4PK, qty: 1, unitPrice: 24.00 }
+    pickupNodeId: ST-SEA
+    extensions: { pickupMode: curbside, vehicle: "White Ford Transit", arrivalMinutes: 25 }
+  # ---- Ship from store (scenario R1: Chicago rejects, the order reroutes to the next store with stock) ---------------
+  - key: F01
+    channel: web
+    channelOrderId: MM-WEB-1024
+    orderType: ship_from_store
+    customer: { ref: cust-1024, name: Amelia Harris, email: amelia@example.com, tier: gold, age: 40, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 6 } }
+    lines:
+      - { id: "1", sku: KIT-DUTCH-6QT, qty: 1, unitPrice: 119.00 }
+    shipTo: { line1: 3300 N Clark St, city: Chicago, state: IL, zip: "60657" }
+    lifecycle: { storeReject: true }
+  - key: F02
+    channel: web
+    channelOrderId: MM-WEB-1025
+    orderType: ship_from_store
+    customer: { ref: cust-1025, name: Henry Martin, email: henry@example.com, tier: standard, age: 55, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 1 } }
+    lines:
+      - { id: "1", sku: OUT-HAMMOCK, qty: 1, unitPrice: 59.00 }
+    shipTo: { line1: 7014 E Camelback Rd, city: Scottsdale, state: AZ, zip: "85251" }
+    lifecycle: { ship: true }
+  # ---- Same-day local ---------------------------------------------------------------------------------------------------
+  - key: L01
+    channel: web
+    channelOrderId: MM-WEB-1026
+    orderType: same_day_local
+    shipMethod: same_day
+    customer: { ref: cust-1026, name: Isla Robinson, email: isla@example.com, tier: standard, age: 26, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 2 } }
+    lines:
+      - { id: "1", sku: TOY-PLUSH-FOX, qty: 1, unitPrice: 24.00 }
+      - { id: "2", sku: TOY-PUZZLE-500, qty: 1, unitPrice: 19.00 }
+    shipTo: { line1: 4500 Fremont Ave N, city: Seattle, state: WA, zip: "98103" }
+  # ---- Drop-ship furniture (Great Falls Furniture Co.) -----------------------------------------------------------------
+  - key: V01
+    channel: web
+    channelOrderId: MM-WEB-1027
+    orderType: drop_ship
+    customer: { ref: cust-1027, name: Jack Wright, email: jack@example.com, tier: standard, age: 43, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 1 } }
+    lines:
+      - { id: "1", sku: FURN-SOFA-3S, qty: 1, unitPrice: 1299.00 }
+    shipTo: { line1: 200 S Tryon St, line2: Apt 1802, city: Charlotte, state: NC, zip: "28202" }
+  - key: V02
+    channel: web
+    channelOrderId: MM-WEB-1028
+    orderType: drop_ship
+    customer: { ref: cust-1028, name: Lily Scott, email: lily@example.com, tier: silver, age: 38, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 3 } }
+    lines:
+      - { id: "1", sku: FURN-BOOKCASE-5, qty: 1, unitPrice: 329.00 }
+    shipTo: { line1: 150 Fayetteville St, city: Raleigh, state: NC, zip: "27601" }
+    lifecycle: { ship: true }
+  # ---- Holiday-surge batch (scenario R4): eight web orders, same morning, all Denver metro, 10 units each ----------------
+  #      ST-DEN carries the toys but has a 60-unit daily capacity: the first orders source from the store, the rest
+  #      overflow to DC-RNO / DC-COL without anyone touching them.
+  - key: G01
+    channel: web
+    channelOrderId: MM-WEB-1101
+    placedAt: 2026-10-10T15:02:00Z
+    customer: { ref: cust-1101, name: Ruth Alvarez, email: ruth@example.com, tier: standard, age: 36, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 2 } }
+    lines:
+      - { id: "1", sku: TOY-PUZZLE-500, qty: 6, unitPrice: 19.00 }
+      - { id: "2", sku: TOY-PLUSH-FOX, qty: 4, unitPrice: 24.00 }
+    shipTo: { line1: 1430 Wynkoop St, city: Denver, state: CO, zip: "80202" }
+    notes: [ "Doorbuster weekend: classroom gifts for 10 kids." ]
+  - key: G02
+    channel: web
+    channelOrderId: MM-WEB-1102
+    placedAt: 2026-10-10T15:04:00Z
+    customer: { ref: cust-1102, name: Tom Becker, email: tom@example.com, tier: silver, age: 44, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 3 } }
+    lines:
+      - { id: "1", sku: TOY-PUZZLE-500, qty: 5, unitPrice: 19.00 }
+      - { id: "2", sku: TOY-PLUSH-FOX, qty: 5, unitPrice: 24.00 }
+    shipTo: { line1: 2800 E 3rd Ave, city: Denver, state: CO, zip: "80206" }
+  - key: G03
+    channel: web
+    channelOrderId: MM-WEB-1103
+    placedAt: 2026-10-10T15:07:00Z
+    customer: { ref: cust-1103, name: Nadia Osman, email: nadia@example.com, tier: standard, age: 31, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 1 } }
+    lines:
+      - { id: "1", sku: TOY-PUZZLE-500, qty: 6, unitPrice: 19.00 }
+      - { id: "2", sku: TOY-PLUSH-FOX, qty: 4, unitPrice: 24.00 }
+    shipTo: { line1: 1800 S University Blvd, city: Denver, state: CO, zip: "80210" }
+  - key: G04
+    channel: web
+    channelOrderId: MM-WEB-1104
+    placedAt: 2026-10-10T15:09:00Z
+    customer: { ref: cust-1104, name: Chris Dunn, email: chris@example.com, tier: standard, age: 52, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 2 } }
+    lines:
+      - { id: "1", sku: TOY-PUZZLE-500, qty: 6, unitPrice: 19.00 }
+      - { id: "2", sku: TOY-PLUSH-FOX, qty: 4, unitPrice: 24.00 }
+    shipTo: { line1: 1555 Sherman St, city: Denver, state: CO, zip: "80218" }
+  - key: G05
+    channel: web
+    channelOrderId: MM-WEB-1105
+    placedAt: 2026-10-10T15:12:00Z
+    customer: { ref: cust-1105, name: Ingrid Sol, email: ingrid@example.com, tier: gold, age: 47, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 7 } }
+    lines:
+      - { id: "1", sku: TOY-PUZZLE-500, qty: 5, unitPrice: 19.00 }
+      - { id: "2", sku: TOY-PLUSH-FOX, qty: 5, unitPrice: 24.00 }
+    shipTo: { line1: 6000 E Evans Ave, city: Denver, state: CO, zip: "80222" }
+  - key: G06
+    channel: web
+    channelOrderId: MM-WEB-1106
+    placedAt: 2026-10-10T15:15:00Z
+    customer: { ref: cust-1106, name: Victor Pham, email: victor@example.com, tier: standard, age: 29, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 1 } }
+    lines:
+      - { id: "1", sku: TOY-PUZZLE-500, qty: 6, unitPrice: 19.00 }
+      - { id: "2", sku: TOY-PLUSH-FOX, qty: 4, unitPrice: 24.00 }
+    shipTo: { line1: 9500 E Arapahoe Rd, city: Englewood, state: CO, zip: "80112" }
+  - key: G07
+    channel: web
+    channelOrderId: MM-WEB-1107
+    placedAt: 2026-10-10T15:18:00Z
+    customer: { ref: cust-1107, name: Hannah Reyes, email: hannah@example.com, tier: standard, age: 34, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 2 } }
+    lines:
+      - { id: "1", sku: TOY-PUZZLE-500, qty: 6, unitPrice: 19.00 }
+      - { id: "2", sku: TOY-PLUSH-FOX, qty: 4, unitPrice: 24.00 }
+    shipTo: { line1: 1200 W 120th Ave, city: Westminster, state: CO, zip: "80234" }
+  - key: G08
+    channel: web
+    channelOrderId: MM-WEB-1108
+    placedAt: 2026-10-10T15:21:00Z
+    customer: { ref: cust-1108, name: Omar Haddad, email: omar@example.com, tier: silver, age: 40, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 4 } }
+    lines:
+      - { id: "1", sku: TOY-PUZZLE-500, qty: 6, unitPrice: 19.00 }
+      - { id: "2", sku: TOY-PLUSH-FOX, qty: 4, unitPrice: 24.00 }
+    shipTo: { line1: 1777 Broadway, city: Boulder, state: CO, zip: "80302" }
+  # ---- Declined card ----------------------------------------------------------------------------------------------------
+  - key: X01
+    channel: web
+    channelOrderId: MM-WEB-1030
+    customer: { ref: cust-1030, name: Zoe King, email: zoe@example.com, tier: standard, age: 28, attributes: { split_acceptance_rate: 0.5, returns_12m: 0, orders_12m: 1 } }
+    lines:
+      - { id: "1", sku: TOOL-SAW-CIRC, qty: 1, unitPrice: 159.00 }
+    shipTo: { line1: 200 S Biscayne Blvd, city: Miami, state: FL, zip: "33131" }
+    tender: { type: card, token: tok_visa_decline, amount: 175.00 }
+
+returns:
+  # Instant refund: $24 towels, receipt present, first return this year -> trusted_customer fast lane (score 0).
+  - { order: D01, lineId: "3", qty: 1, reason: changed_mind, text: Bought two sets by mistake, receiptPresent: true }
+  # Out of window: delivered 45 days ago on a 30-day policy -> deny_out_of_window (L0 rule, no model call).
+  - { order: D02, lineId: "1", qty: 1, reason: defective, text: Enamel chipped on the lid }
+  # Flagged: cust-flag-301 is on returns.flagged_customers with two prior not-received claims -> score 4, risk review.
+  - { order: D03, lineId: "1", qty: 1, reason: not_received, text: Box arrived empty, receiptPresent: true }
+
+exceptions:
+  - { order: R01, source: cs, type: address, code: address_unverifiable, text: Customer called; the apartment number is missing from the delivery address }
+  - { order: S01, source: carrier, type: carrier_delay, code: carrier_delay, text: Carrier scan shows the stand mixer held at the Denver hub for 2 days }

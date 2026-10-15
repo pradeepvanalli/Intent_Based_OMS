@@ -1,0 +1,60 @@
+# Drop oversell action (apparel). A collection drop or an influencer post sells a SKU past its stock within minutes
+# (15 orders, 10 units). The oversold lines sit in `backordered`; the pre_order SLA (sla.yaml) and the drop_oversell
+# exception evaluate this decision per line. Tier T1: the options are bounded by policy (a cancel refunds, nothing
+# else moves money). Default is backorder_with_eta so a provider failure never cancels a sale.
+decision: drop_oversell_action
+version: 1
+owner: merchandising
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: backorder_with_eta
+state:
+  include:
+    - drop.sku
+    - drop.oversold_units
+    - drop.restock_planned
+    - drop.restock_eta_days
+    - drop.substitute_available
+    - drop.substitute_sku
+    - drop.demand_spike_source
+    - order.channel
+    - order.notes
+    - order.placed_minutes_after_drop
+    - order.value_usd
+    - customer.tier
+    - customer.history.orders_12m
+rules:
+  - id: restock_within_two_weeks
+    when: "input.drop.restock_planned == true && input.drop.restock_eta_days <= 14"
+    then: backorder_with_eta
+    reason: restock_within_two_weeks
+    priority: 10
+  - id: nothing_to_offer
+    when: "input.drop.restock_planned == false && input.drop.substitute_available == false"
+    then: waitlist
+    reason: no_restock_no_substitute
+    priority: 20
+questions:
+  action:
+    type: choice
+    instructions: What should happen to this oversold drop line?
+    feeds: oversell_playbook
+    criteria:
+      backorder_with_eta: A restock is planned and the shopper did not ask to cancel, keep the line and tell her the date
+      cancel_and_apologise: The shopper asked to cancel if not in stock, or the restock is months away and no substitute fits, cancel the line with a sincere note and a credit
+      substitute_colour: The same style is available in another colour and the note or history suggests she would accept it
+      waitlist: No restock is planned, keep her on the waitlist for a future cut and release the authorisation
+      unclear: Not enough information to decide
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+postChecks:
+  - "!(decision.value == 'substitute_colour' && input.drop.substitute_available == false)"
+  - "!(decision.value == 'backorder_with_eta' && input.drop.restock_planned == false)"
+evaluation:
+  goldenSet: drop_oversell_action_gold
+  minAccuracyInActBand: 0.90
+  maxCalibrationError: 0.05

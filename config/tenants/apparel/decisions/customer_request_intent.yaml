@@ -1,0 +1,39 @@
+# Customer request intent (FR-CS-03/05). Tier T1 choice feeding CS automation and the grounded reply draft. Apparel
+# adds `exchange` (size or colour swap, the most common request) and `policy_dispute` (a refused final-sale return,
+# a restocking question) so the draft can cite the policy facts of the order instead of improvising.
+decision: customer_request_intent
+version: 1
+owner: customer-service
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: other
+state:
+  include:
+    - request.channel
+    - request.text
+    - order.status
+    - order.order_type
+    - order.days_since_placed
+    - order.has_final_sale_lines
+questions:
+  intent:
+    type: choice
+    instructions: What is the customer asking for?
+    feeds: cs_automation
+    criteria:
+      cancel_order: Cancel the entire order before it ships
+      cancel_line: Cancel one item but keep the rest of the order
+      change_address: Change the delivery address or redirect a parcel
+      exchange: Swap an item for a different size or colour, keep the order otherwise
+      wismo: Where is my order, tracking status or delivery date question
+      return: Return an item already received for a refund
+      policy_dispute: Disagrees with a policy outcome such as a refused final-sale return, a restocking fee or a trial charge
+      other: A request that fits none of the categories, or not enough information
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+preChecks:
+  - "has(input.request) && has(input.request.text) && size(input.request.text) > 0"

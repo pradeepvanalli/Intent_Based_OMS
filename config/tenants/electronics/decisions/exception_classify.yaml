@@ -1,0 +1,45 @@
+# Exception type (FR-MON-03). Tier T0: classify at >= 0.5, otherwise "unclear" goes to the triage queue. Options mirror
+# exception-taxonomy.yaml, including the electronics-specific vendor_sla_breach and carrier_damage types.
+# Sandbox gates 0.6 / 0.5 (production 0.90 / 0.05).
+decision: exception_classify
+version: 1
+owner: control-tower
+tier: T0
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: unclear
+state:
+  include:
+    - exception.source
+    - exception.code
+    - exception.message
+    - order.channel
+    - order.status
+    - order.order_type
+questions:
+  type:
+    type: choice
+    instructions: What kind of exception is this?
+    feeds: playbook_routing
+    escapeOption: unclear
+    criteria:
+      address: Address problem such as invalid, unverifiable, undeliverable, PO box for a carrier that cannot deliver there
+      inventory_short: Inventory shortage such as short pick, stockout, oversold or a serial that could not be found
+      carrier_delay: Carrier delay, missed scan, lost in transit or late delivery without damage
+      carrier_damage: Carrier reports or the customer photographs a crushed, wet or cracked parcel, damaged in transit
+      payment: Payment problem such as authorization declined, expired, capture failure or chargeback notice
+      store_reject: Store or node rejected the release or could not fulfil after a floor walk
+      vendor_sla_breach: Drop-ship vendor has not confirmed shipment within the vendor SLA or pushed its ship date
+      system: System error, timeout, integration failure or bad data
+      other: A real exception that fits none of the categories
+      unclear: Not enough information to classify
+bands:
+  act: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+cache:
+  ttl: PT1H
+evaluation:
+  goldenSet: exception_classify_gold
+  minAccuracyInActBand: 0.6
+  maxCalibrationError: 0.5

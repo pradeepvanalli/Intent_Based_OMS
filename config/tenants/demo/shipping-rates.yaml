@@ -1,0 +1,21 @@
+# Carrier rate card (aggregator-style). zone = distance band in km; cost by weight band; transitDays nominal.
+services:
+  - code: ground
+    zones:
+      - { maxKm: 300,  transitDays: 1, rates: { 0.5: 6.20, 2: 8.10, 5: 10.90, 10: 14.50, 20: 21.00, 999: 34.00 } }
+      - { maxKm: 1000, transitDays: 2, rates: { 0.5: 7.40, 2: 9.90, 5: 13.60, 10: 18.90, 20: 27.50, 999: 44.00 } }
+      - { maxKm: 2500, transitDays: 3, rates: { 0.5: 8.60, 2: 11.80, 5: 16.40, 10: 23.90, 20: 35.00, 999: 58.00 } }
+      - { maxKm: 5000, transitDays: 5, rates: { 0.5: 9.90, 2: 13.90, 5: 19.90, 10: 29.90, 20: 44.00, 999: 72.00 } }
+      - { maxKm: 99999, transitDays: 8, rates: { 0.5: 18.00, 2: 24.00, 5: 34.00, 10: 52.00, 20: 80.00, 999: 130.00 } }
+  - code: two_day
+    zones:
+      - { maxKm: 1000, transitDays: 2, rates: { 0.5: 11.00, 2: 14.50, 5: 19.90, 10: 28.00, 20: 42.00, 999: 70.00 } }
+      - { maxKm: 99999, transitDays: 2, rates: { 0.5: 14.00, 2: 19.00, 5: 27.00, 10: 39.00, 20: 59.00, 999: 95.00 } }
+  - code: next_day
+    zones:
+      - { maxKm: 99999, transitDays: 1, rates: { 0.5: 22.00, 2: 29.00, 5: 39.00, 10: 56.00, 20: 84.00, 999: 140.00 } }
+  - code: same_day
+    zones:
+      - { maxKm: 40, transitDays: 0, rates: { 0.5: 9.90, 2: 9.90, 5: 12.90, 10: 16.90, 20: 24.90, 999: 39.00 } }
+splitPenaltyUsd: 12.00        # P2 evidence: one extra package adds roughly $10–$18 carrier cost
+onTimeByTransitDays: { 0: 0.88, 1: 0.95, 2: 0.94, 3: 0.92, 5: 0.90, 8: 0.85 }

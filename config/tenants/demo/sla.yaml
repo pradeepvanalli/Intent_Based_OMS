@@ -1,0 +1,16 @@
+# SLA definitions per state and order type (FR-MON-02). Also mirrored into state-model `sla:` blocks.
+slas:
+  - { orderType: standard_ship, entity: order_line, state: awaiting_sourcing, maxAge: PT30M, onBreach: playbook.resource }
+  - { orderType: standard_ship, entity: order_line, state: released,         maxAge: PT4H,  onBreach: playbook.store_backlog }
+  - { orderType: standard_ship, entity: order_line, state: picking,          maxAge: PT6H,  onBreach: playbook.store_backlog }
+  - { orderType: standard_ship, entity: order_line, state: packed,           maxAge: PT12H, onBreach: playbook.repromise }
+  - { orderType: standard_ship, entity: order_line, state: backordered,      maxAge: P3D,   onBreach: decision.backorder_next_action }
+  - { orderType: bopis,         entity: order_line, state: released,         maxAge: PT2H,  onBreach: playbook.store_backlog }
+  - { orderType: bopis,         entity: order_line, state: ready_for_pickup, maxAge: P5D,   onBreach: playbook.pickup_reminder }
+  - { orderType: "*",           entity: return,     state: awaiting_receipt, maxAge: P14D,  onBreach: playbook.return_not_received }
+expectedNextEventWithin:
+  released: PT4H
+  picking: PT6H
+  packed: PT12H
+  shipped: P7D
+  in_transit: P7D

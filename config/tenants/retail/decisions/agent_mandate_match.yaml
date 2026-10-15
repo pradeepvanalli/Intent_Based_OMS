@@ -1,0 +1,40 @@
+# Maple & Main (retail reference tenant) — decision `agent_mandate_match`. Same shape as the starter with production evaluation gates
+# (minAccuracyInActBand 0.90, maxCalibrationError 0.05). Review: owner, tier, bands, criteria wording, and add a
+# golden set under golden-sets/ before publishing through the normal approval path (see README.md §4). fallbackProvider stays
+# `heuristic` so the tenant works without AI keys; switch to `llm.structured` once an LLM key is configured.
+# Agent order within mandate (PRD section 9, FR-CAP-07, FR-AGT-05). Noul, tier T3: the model recommends, a person decides.
+decision: agent_mandate_match
+version: 1
+owner: agent-governance
+tier: T3
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: false
+state:
+  include:
+    - mandate.instruction_text
+    - mandate.spend_limit
+    - mandate.scope
+    - mandate.expires_at
+    - order.total
+    - order.items_summary
+    - order.ship_to_country
+    - agent.trust_tier
+rules:
+  - id: over_spend_limit
+    when: "input.order.total > input.mandate.spend_limit"
+    then: block
+    reason: over_mandate_spend_limit
+    priority: 10
+questions:
+  within_mandate:
+    type: noul
+    statement: This order matches the buyer's instruction text, scope and limits in the mandate.
+    feeds: agent_verification_hold
+    criteria:
+      "true": The items, quantities, destination and total are consistent with the instruction
+      "false": Something ordered is outside what the buyer asked for or allowed
+bands:
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }

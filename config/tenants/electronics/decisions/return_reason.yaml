@@ -1,0 +1,33 @@
+# Return reason normalisation. Tier T0 choice over the tenant taxonomy (tenant_config returns.reason_taxonomy); feeds
+# warranty triage, disposition and product-quality feedback to the vendor.
+decision: return_reason
+version: 1
+owner: returns-and-risk
+tier: T0
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: unclear
+state:
+  include:
+    - return.customer_reason_text
+    - return.reason_code
+    - return.item_condition
+    - item.category
+questions:
+  reason:
+    type: choice
+    instructions: Which taxonomy reason best describes why the customer is returning the item?
+    feeds: triage_and_product_feedback
+    criteria:
+      defective: Does not work, stopped working, fault such as audio cutting out, battery not charging, dead pixels or will not power on
+      damaged_in_transit: Arrived physically damaged, crushed box, cracked screen or dented housing on arrival
+      changed_mind: Changed mind, no longer needed, found cheaper, box unopened or barely used
+      wrong_item: Received the wrong model, colour, storage size or a different product
+      not_as_described: Item differs from the listing, missing advertised feature or accessory
+      arrived_late: Arrived too late to be useful, missed the occasion
+      not_received: Customer claims the parcel never arrived or the box was empty
+      unclear: Not enough information to tell
+bands:
+  act: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }

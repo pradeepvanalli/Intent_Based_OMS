@@ -1,0 +1,60 @@
+# Lumen & Loom catalogue: one SKU per style × colour × size. `cogs` drives the P&L and the margin floor, `weightKg`
+# the rate bands, `finalSale` the return policy (ReturnPolicy final_sale), `category` the compliance rules. The extra
+# attributes (style, colour, size, season, highValue, leather, containsDown, service, drop) are stored on the catalogue
+# item and copied onto order lines, where decisions such as bracketing_likelihood read them.
+products:
+  # ---- Dresses -------------------------------------------------------------------------------------------------------
+  - { sku: DRS-MIDI-BLK-XS, name: Midi wrap dress black XS,        price: 148.00, cogs: 42.00, weightKg: 0.45, category: dress, style: DRS-MIDI, colour: black, size: XS, season: current }
+  - { sku: DRS-MIDI-BLK-S,  name: Midi wrap dress black S,         price: 148.00, cogs: 42.00, weightKg: 0.45, category: dress, style: DRS-MIDI, colour: black, size: S,  season: current }
+  - { sku: DRS-MIDI-BLK-M,  name: Midi wrap dress black M,         price: 148.00, cogs: 42.00, weightKg: 0.45, category: dress, style: DRS-MIDI, colour: black, size: M,  season: current }
+  - { sku: DRS-MIDI-BLK-L,  name: Midi wrap dress black L,         price: 148.00, cogs: 42.00, weightKg: 0.45, category: dress, style: DRS-MIDI, colour: black, size: L,  season: current }
+  - { sku: DRS-MIDI-RST-S,  name: Midi wrap dress rust S,          price: 148.00, cogs: 42.00, weightKg: 0.45, category: dress, style: DRS-MIDI, colour: rust,  size: S,  season: current }
+  - { sku: DRS-MIDI-RST-M,  name: Midi wrap dress rust M,          price: 148.00, cogs: 42.00, weightKg: 0.45, category: dress, style: DRS-MIDI, colour: rust,  size: M,  season: current }
+  - { sku: DRS-WRAP-NVY-S,  name: Linen wrap dress navy S,         price: 128.00, cogs: 36.00, weightKg: 0.40, category: dress, style: DRS-WRAP, colour: navy,  size: S,  season: current }
+  - { sku: DRS-WRAP-NVY-M,  name: Linen wrap dress navy M,         price: 128.00, cogs: 36.00, weightKg: 0.40, category: dress, style: DRS-WRAP, colour: navy,  size: M,  season: current }
+  - { sku: DRS-WRAP-NVY-L,  name: Linen wrap dress navy L,         price: 128.00, cogs: 36.00, weightKg: 0.40, category: dress, style: DRS-WRAP, colour: navy,  size: L,  season: current }
+  - { sku: DRS-MAXI-FLR-M,  name: Floral maxi dress M (final sale, was 148), price: 59.00, cogs: 40.00, weightKg: 0.50, category: dress, style: DRS-MAXI, colour: floral, size: M, season: past, finalSale: true }
+  - { sku: DRS-SLIP-SAGE-M, name: Silk slip dress sage M (Drop 05 pre-order), price: 188.00, cogs: 58.00, weightKg: 0.30, category: dress, style: DRS-SLIP, colour: sage, size: M, season: next, drop: drop-05 }
+  # ---- Denim ---------------------------------------------------------------------------------------------------------
+  - { sku: JNS-STR-IND-26,  name: Straight-leg jeans indigo 26,    price: 118.00, cogs: 34.00, weightKg: 0.70, category: denim, style: JNS-STR,  colour: indigo, size: "26", season: current }
+  - { sku: JNS-STR-IND-28,  name: Straight-leg jeans indigo 28,    price: 118.00, cogs: 34.00, weightKg: 0.70, category: denim, style: JNS-STR,  colour: indigo, size: "28", season: current }
+  - { sku: JNS-STR-IND-30,  name: Straight-leg jeans indigo 30,    price: 118.00, cogs: 34.00, weightKg: 0.70, category: denim, style: JNS-STR,  colour: indigo, size: "30", season: current }
+  - { sku: JNS-STR-IND-32,  name: Straight-leg jeans indigo 32,    price: 118.00, cogs: 34.00, weightKg: 0.70, category: denim, style: JNS-STR,  colour: indigo, size: "32", season: current }
+  - { sku: JNS-WIDE-BLK-28, name: Wide-leg jeans black 28,         price: 128.00, cogs: 38.00, weightKg: 0.75, category: denim, style: JNS-WIDE, colour: black,  size: "28", season: current }
+  - { sku: JNS-WIDE-BLK-30, name: Wide-leg jeans black 30,         price: 128.00, cogs: 38.00, weightKg: 0.75, category: denim, style: JNS-WIDE, colour: black,  size: "30", season: current }
+  # ---- Tees ----------------------------------------------------------------------------------------------------------
+  - { sku: TEE-ORG-WHT-S,   name: Organic cotton tee white S,      price: 38.00,  cogs: 9.00,  weightKg: 0.20, category: tee, style: TEE-ORG, colour: white, size: S,  season: core }
+  - { sku: TEE-ORG-WHT-M,   name: Organic cotton tee white M,      price: 38.00,  cogs: 9.00,  weightKg: 0.20, category: tee, style: TEE-ORG, colour: white, size: M,  season: core }
+  - { sku: TEE-ORG-WHT-L,   name: Organic cotton tee white L,      price: 38.00,  cogs: 9.00,  weightKg: 0.20, category: tee, style: TEE-ORG, colour: white, size: L,  season: core }
+  - { sku: TEE-ORG-WHT-XL,  name: Organic cotton tee white XL,     price: 38.00,  cogs: 9.00,  weightKg: 0.20, category: tee, style: TEE-ORG, colour: white, size: XL, season: core }
+  - { sku: TEE-ORG-BLK-S,   name: Organic cotton tee black S,      price: 38.00,  cogs: 9.00,  weightKg: 0.20, category: tee, style: TEE-ORG, colour: black, size: S,  season: core }
+  - { sku: TEE-ORG-BLK-M,   name: Organic cotton tee black M,      price: 38.00,  cogs: 9.00,  weightKg: 0.20, category: tee, style: TEE-ORG, colour: black, size: M,  season: core }
+  - { sku: TEE-ORG-BLK-L,   name: Organic cotton tee black L,      price: 38.00,  cogs: 9.00,  weightKg: 0.20, category: tee, style: TEE-ORG, colour: black, size: L,  season: core }
+  # ---- Outerwear -----------------------------------------------------------------------------------------------------
+  - { sku: JKT-TRCH-CAM-S,  name: Cotton trench coat camel S,      price: 298.00, cogs: 95.00, weightKg: 1.10, category: outerwear, style: JKT-TRCH, colour: camel, size: S, season: current, highValue: true }
+  - { sku: JKT-TRCH-CAM-M,  name: Cotton trench coat camel M,      price: 298.00, cogs: 95.00, weightKg: 1.10, category: outerwear, style: JKT-TRCH, colour: camel, size: M, season: current, highValue: true }
+  - { sku: JKT-TRCH-CAM-L,  name: Cotton trench coat camel L,      price: 298.00, cogs: 95.00, weightKg: 1.10, category: outerwear, style: JKT-TRCH, colour: camel, size: L, season: current, highValue: true }
+  - { sku: JKT-PUF-OLV-M,   name: Recycled-down puffer olive M,    price: 248.00, cogs: 82.00, weightKg: 0.90, category: outerwear, style: JKT-PUF, colour: olive, size: M, season: current, containsDown: true }
+  - { sku: JKT-PUF-OLV-L,   name: Recycled-down puffer olive L,    price: 248.00, cogs: 82.00, weightKg: 0.90, category: outerwear, style: JKT-PUF, colour: olive, size: L, season: current, containsDown: true }
+  - { sku: JKT-BMB-ECR-M,   name: Limited bomber jacket ecru M (Drop 04), price: 325.00, cogs: 110.00, weightKg: 0.80, category: outerwear, style: JKT-BMB, colour: ecru, size: M, season: current, highValue: true, drop: drop-04 }
+  # ---- Knitwear ------------------------------------------------------------------------------------------------------
+  - { sku: KNT-CRD-OAT-S,   name: Merino cardigan oat S,           price: 168.00, cogs: 52.00, weightKg: 0.50, category: knitwear, style: KNT-CRD, colour: oat, size: S, season: current }
+  - { sku: KNT-CRD-OAT-M,   name: Merino cardigan oat M,           price: 168.00, cogs: 52.00, weightKg: 0.50, category: knitwear, style: KNT-CRD, colour: oat, size: M, season: current }
+  - { sku: KNT-CRD-OAT-L,   name: Merino cardigan oat L,           price: 168.00, cogs: 52.00, weightKg: 0.50, category: knitwear, style: KNT-CRD, colour: oat, size: L, season: current }
+  - { sku: KNT-SWT-GRN-L,   name: Mohair sweater green L (final sale, was 158), price: 49.00, cogs: 45.00, weightKg: 0.45, category: knitwear, style: KNT-SWT, colour: green, size: L, season: past, finalSale: true }
+  # ---- Shoes ---------------------------------------------------------------------------------------------------------
+  - { sku: SHO-LOAF-TAN-37, name: Leather loafer tan 37,           price: 198.00, cogs: 68.00, weightKg: 0.90, category: shoes, style: SHO-LOAF, colour: tan, size: "37", season: core, leather: true }
+  - { sku: SHO-LOAF-TAN-38, name: Leather loafer tan 38,           price: 198.00, cogs: 68.00, weightKg: 0.90, category: shoes, style: SHO-LOAF, colour: tan, size: "38", season: core, leather: true }
+  - { sku: SHO-LOAF-TAN-39, name: Leather loafer tan 39,           price: 198.00, cogs: 68.00, weightKg: 0.90, category: shoes, style: SHO-LOAF, colour: tan, size: "39", season: core, leather: true }
+  - { sku: SHO-LOAF-TAN-40, name: Leather loafer tan 40,           price: 198.00, cogs: 68.00, weightKg: 0.90, category: shoes, style: SHO-LOAF, colour: tan, size: "40", season: core, leather: true }
+  - { sku: SHO-SNK-WHT-38,  name: Canvas sneaker white 38,         price: 158.00, cogs: 55.00, weightKg: 0.80, category: shoes, style: SHO-SNK, colour: white, size: "38", season: core }
+  - { sku: SHO-SNK-WHT-39,  name: Canvas sneaker white 39,         price: 158.00, cogs: 55.00, weightKg: 0.80, category: shoes, style: SHO-SNK, colour: white, size: "39", season: core }
+  - { sku: SHO-SND-GLD-38,  name: Metallic sandal gold 38 (final sale, was 128), price: 39.00, cogs: 30.00, weightKg: 0.50, category: shoes, style: SHO-SND, colour: gold, size: "38", season: past, finalSale: true }
+  # ---- Accessories ---------------------------------------------------------------------------------------------------
+  - { sku: ACC-BELT-BLK,    name: Leather belt black,              price: 68.00,  cogs: 18.00, weightKg: 0.25, category: accessories, style: ACC-BELT, colour: black, size: OS, season: core, leather: true }
+  - { sku: ACC-SCRF-SLK,    name: Silk scarf botanical print,      price: 88.00,  cogs: 22.00, weightKg: 0.10, category: accessories, style: ACC-SCRF, colour: print, size: OS, season: current }
+  - { sku: ACC-TOTE-CNV,    name: Canvas tote natural,             price: 58.00,  cogs: 15.00, weightKg: 0.40, category: accessories, style: ACC-TOTE, colour: natural, size: OS, season: core }
+  - { sku: ACC-SOCK-ORG,    name: Organic cotton socks,            price: 21.00,  cogs: 2.50,  weightKg: 0.08, category: accessories, style: ACC-SOCK, colour: ecru, size: OS, season: core }
+  - { sku: ACC-BEAN-WOOL,   name: Wool beanie charcoal,            price: 42.00,  cogs: 12.00, weightKg: 0.12, category: accessories, style: ACC-BEAN, colour: charcoal, size: OS, season: current }
+  # ---- Services ------------------------------------------------------------------------------------------------------
+  - { sku: SVC-GIFT-WRAP,   name: Gift wrapping with handwritten card, price: 6.00, cogs: 1.50, weightKg: 0.05, category: service, style: SVC-GIFT, colour: n/a, size: OS, season: core, service: true }

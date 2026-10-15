@@ -1,0 +1,7 @@
+subject: {{brand}}: reminder to send back your return {{rma}}
+---
+Hi {{customer_name}},
+
+Your return {{rma}} for order {{order_number}} is still waiting for the package. Please drop it off by {{return_by}} using the label we sent.
+
+{{brand}}

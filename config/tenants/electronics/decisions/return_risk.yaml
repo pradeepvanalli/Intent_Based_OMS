@@ -1,0 +1,86 @@
+# Return abuse risk (FR-RET-02/03). Score 0-4 plus reason-code Nouls, tier T2. L0 policy rules win first: out-of-window
+# and final-sale (open-box refurbished) denials never reach the model; a defective claim on a serialised item from a
+# clean customer is a fast lane because the diagnostic bench, not the refund, decides what it costs us.
+# Sandbox gates 0.6 / 0.5 (production 0.90 / 0.05).
+decision: return_risk
+version: 1
+owner: returns-and-risk
+tier: T2
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: on_inspection
+mainQuestion: abuse_risk
+state:
+  include:
+    - return.reason
+    - return.days_since_delivery
+    - return.receipt
+    - return.item_condition
+    - return.value_usd
+    - order.channel
+    - customer.history.returns_12m
+    - customer.history.not_received_claims
+    - customer.history.flags
+    - policy.window_days
+rules:
+  - id: out_of_window
+    when: "input.return.days_since_delivery > input.policy.window_days"
+    then: deny_out_of_window
+    reason: out_of_window
+    priority: 10
+  - id: final_sale
+    when: "input.order.final_sale == true"
+    then: deny_final_sale
+    reason: final_sale
+    priority: 20
+  - id: flagged_customer
+    when: "'flagged_customer' in input.customer.history.flags || input.customer.history.not_received_claims >= 2"
+    then: 4
+    reason: flagged_or_repeated_not_received_claims
+    priority: 30
+  - id: trusted_customer_defect
+    when: "input.return.receipt == true && input.return.reason == 'defective' && input.customer.history.returns_12m <= 1 && input.customer.history.not_received_claims == 0"
+    then: 0
+    reason: trusted_customer_warranty_fast_lane
+    priority: 40
+  - id: trusted_customer_low_value
+    when: "input.return.receipt == true && input.customer.history.returns_12m <= 1 && input.customer.history.not_received_claims == 0 && input.return.value_usd <= 250"
+    then: 0
+    reason: trusted_customer_fast_lane
+    priority: 41
+questions:
+  abuse_risk:
+    type: score
+    instructions: How high is the abuse risk of this return given history, item value, channel and receipt?
+    feeds: refund_timing
+    criteria:
+      - No abuse signals, first return this year, receipt present, serial matches the order
+      - Low risk, occasional returns within policy, receipt present, resalable or genuinely defective
+      - Moderate risk, frequent returns recently, receipt missing or a high-value device with a vague reason
+      - High risk, repeated not received claims, serial mismatch or value mismatch against the refund
+      - Severe risk, serial returner flagged with multiple not received claims and a swapped or mismatched device
+  many_not_received_claims:
+    type: noul
+    statement: The customer has made repeated not received claims recently.
+    reasonCode: true
+  serial_returner:
+    type: noul
+    statement: The customer is a serial returner.
+    reasonCode: true
+  high_value_mismatch:
+    type: noul
+    statement: The returned item value or serial does not match the order, a mismatch.
+    reasonCode: true
+  receipt_missing:
+    type: noul
+    statement: The receipt is missing for this return.
+    reasonCode: true
+bands:
+  act: { confidence_gte: 0.9 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+evaluation:
+  goldenSet: return_risk_gold
+  minAccuracyInActBand: 0.6
+  maxCalibrationError: 0.5

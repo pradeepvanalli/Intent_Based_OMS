@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>ai.intentoms</groupId>
+    <artifactId>oms-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+  <artifactId>oms-app</artifactId>
+  <name>oms-app</name>
+  <description>Runnable Intent OMS service (modular monolith) serving API, MCP/UCP endpoints and the UI</description>
+  <dependencies>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-platform</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-statemachine</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-workflow</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-decision</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-inventory</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-finance</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-order</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-sourcing</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-monitoring</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-returns</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-agent</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-simulation</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-analytics</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-orchestration</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-copilot</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-integrations</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-testing</artifactId><scope>test</scope></dependency>
+  </dependencies>
+  <build>
+    <finalName>intent-oms</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <configuration><mainClass>ai.intentoms.IntentOmsApplication</mainClass></configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

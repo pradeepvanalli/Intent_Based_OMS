@@ -1,0 +1,7 @@
+subject: {{brand}}: order {{order_number}} will ship from a different location
+---
+Hi {{customer_name}},
+
+To get your order {{order_number}} to you on time it will now ship from {{new_node}}. Estimated delivery: {{promise_date}}.
+
+{{brand}}

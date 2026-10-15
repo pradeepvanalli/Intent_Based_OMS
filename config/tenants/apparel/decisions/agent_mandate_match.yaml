@@ -1,0 +1,37 @@
+# Agent order within mandate (FR-CAP-07, FR-AGT-05). Noul, tier T3: the model recommends, a person decides. Shopping
+# agents and the brand's stylist assistant place orders under a signed mandate (budget, scope, expiry).
+decision: agent_mandate_match
+version: 1
+owner: agent-governance
+tier: T3
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: false
+state:
+  include:
+    - mandate.instruction_text
+    - mandate.spend_limit
+    - mandate.scope
+    - mandate.expires_at
+    - order.total
+    - order.items_summary
+    - order.ship_to_country
+    - agent.trust_tier
+rules:
+  - id: over_spend_limit
+    when: "input.order.total > input.mandate.spend_limit"
+    then: block
+    reason: over_mandate_spend_limit
+    priority: 10
+questions:
+  within_mandate:
+    type: noul
+    statement: This order matches the buyer's instruction text, scope and limits in the mandate.
+    feeds: agent_verification_hold
+    criteria:
+      "true": The styles, sizes, quantities, destination and total are consistent with what the buyer asked for
+      "false": Something ordered is outside what the buyer asked for or allowed, for example a second size she did not mention
+bands:
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }

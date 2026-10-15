@@ -1,0 +1,51 @@
+order_id,placed_at,sku,qty,unit_price,city,state,zip,country,ship_method,note,customer_tier,shipping_paid,email
+G-2001,2025-09-26T13:13:00Z,TEE-BLK-M,2,28.00,Seattle,WA,98101,US,ground,,standard,0.00,buyer1@example.com
+G-2001,2025-09-26T13:13:00Z,VIT-D3,1,19.00,Seattle,WA,98101,US,ground,,standard,0.00,buyer1@example.com
+G-2001,2025-09-26T13:13:00Z,PLANTER-CER-L,1,42.00,Seattle,WA,98101,US,ground,,standard,0.00,buyer1@example.com
+G-2002,2025-09-29T23:38:39Z,TEE-WHT-L,1,28.00,New York,NY,10001,US,next_day,,standard,6.00,buyer2@example.com
+G-2003,2025-09-10T11:37:06Z,SUNGL-RND,1,95.00,Seattle,WA,98101,US,ground,,silver,0.00,buyer3@example.com
+G-2004,2025-09-17T07:24:16Z,TEE-BLK-M,2,28.00,Charlotte,NC,28202,US,ground,"Ring the bell twice, dog is friendly",gold,0.00,buyer4@example.com
+G-2004,2025-09-17T07:24:16Z,JEAN-IND-32,2,128.00,Charlotte,NC,28202,US,ground,"Ring the bell twice, dog is friendly",gold,0.00,buyer4@example.com
+G-2005,2025-09-03T02:26:15Z,MUG-CER,1,18.00,New York,NY,10001,US,ground,,standard,6.00,buyer5@example.com
+G-2006,2025-09-25T12:06:58Z,FINAL-SALE,1,12.00,Los Angeles,CA,90012,US,two_day,,silver,0.00,buyer6@example.com
+G-2006,2025-09-25T12:06:58Z,BOOT-LTH-9,2,220.00,Los Angeles,CA,90012,US,two_day,,silver,0.00,buyer6@example.com
+G-2006,2025-09-25T12:06:58Z,RUG-5X8,1,320.00,Los Angeles,CA,90012,US,two_day,,silver,0.00,buyer6@example.com
+G-2007,2025-09-13T22:50:07Z,SKIN-SRM,1,58.00,New York,NY,10001,US,ground,,gold,6.00,buyer7@example.com
+G-2008,2025-09-08T10:22:08Z,PUZZ-1000,1,22.00,Dallas,TX,75201,US,ground,,gold,0.00,buyer8@example.com
+G-2008,2025-09-08T10:22:08Z,HOOD-GRY-M,1,68.00,Dallas,TX,75201,US,ground,,gold,0.00,buyer8@example.com
+G-2009,2025-09-24T04:06:12Z,HEAD-BT,1,199.00,Boston,MA,02116,US,two_day,"This is a gift for my sister, please no receipt in the box",gold,0.00,buyer9@example.com
+G-2009,2025-09-24T04:06:12Z,BOTL-INS,2,35.00,Boston,MA,02116,US,two_day,"This is a gift for my sister, please no receipt in the box",gold,0.00,buyer9@example.com
+G-2010,2025-09-05T18:34:20Z,PWRBNK-20K,1,59.00,Atlanta,GA,30303,US,ground,,standard,0.00,buyer10@example.com
+G-2010,2025-09-05T18:34:20Z,HOOD-GRY-M,1,68.00,Atlanta,GA,30303,US,ground,,standard,0.00,buyer10@example.com
+G-2011,2025-09-13T03:03:44Z,WATCH-GPS,2,349.00,Chicago,IL,60611,US,ground,,standard,0.00,buyer11@example.com
+G-2011,2025-09-13T03:03:44Z,CANDLE-SET-3,2,54.00,Chicago,IL,60611,US,ground,,standard,0.00,buyer11@example.com
+G-2011,2025-09-13T03:03:44Z,JKT-DWN-L,1,260.00,Chicago,IL,60611,US,ground,,standard,0.00,buyer11@example.com
+G-2012,2025-09-04T17:59:57Z,LAMP-DSK,1,65.00,Boston,MA,02116,US,two_day,"One box please, I don't want to track several parcels",standard,0.00,buyer12@example.com
+G-2012,2025-09-04T17:59:57Z,SKIN-SRM,1,58.00,Boston,MA,02116,US,two_day,"One box please, I don't want to track several parcels",standard,0.00,buyer12@example.com
+G-2013,2025-09-23T09:42:43Z,LAMP-DSK,1,65.00,Seattle,WA,98101,US,next_day,,gold,6.00,buyer13@example.com
+G-2014,2025-09-09T03:25:25Z,KNIFE-CHEF,1,95.00,New York,NY,10001,US,ground,,standard,0.00,buyer14@example.com
+G-2015,2025-09-20T22:19:41Z,SNK-RUN-10,1,145.00,Houston,TX,77002,US,ground,,silver,0.00,buyer15@example.com
+G-2015,2025-09-20T22:19:41Z,MUG-CER,1,18.00,Houston,TX,77002,US,ground,,silver,0.00,buyer15@example.com
+G-2016,2025-09-20T10:19:43Z,SUN-SPF50,1,24.00,Brooklyn,NY,11201,US,ground,,gold,6.00,buyer16@example.com
+G-2017,2025-09-15T00:06:18Z,JEAN-IND-32,1,128.00,Dallas,TX,75201,US,ground,,gold,0.00,buyer17@example.com
+G-2017,2025-09-15T00:06:18Z,CNDL-SOY,1,34.00,Dallas,TX,75201,US,ground,,gold,0.00,buyer17@example.com
+G-2018,2025-09-30T04:30:01Z,LAMP-DSK,1,65.00,Brooklyn,NY,11201,US,ground,,silver,0.00,buyer18@example.com
+G-2018,2025-09-30T04:30:01Z,SUN-SPF50,1,24.00,Brooklyn,NY,11201,US,ground,,silver,0.00,buyer18@example.com
+G-2019,2025-09-25T06:56:45Z,BEANIE-GRN,1,26.00,Sacramento,CA,95814,US,ground,,standard,6.00,buyer19@example.com
+G-2020,2025-09-30T14:19:20Z,PLANTER-CER-L,1,42.00,Jersey City,NJ,07302,US,next_day,,standard,6.00,buyer20@example.com
+G-2021,2025-09-10T06:36:56Z,MUG-CER,1,18.00,New York,NY,10001,US,ground,,standard,6.00,buyer21@example.com
+G-2022,2025-09-26T03:49:36Z,SOCK-3PK,2,36.00,San Antonio,TX,78205,US,ground,,silver,0.00,buyer22@example.com
+G-2022,2025-09-26T03:49:36Z,SUN-SPF50,1,24.00,San Antonio,TX,78205,US,ground,,silver,0.00,buyer22@example.com
+G-2023,2025-09-03T22:40:17Z,JEAN-IND-32,1,128.00,New York,NY,10001,US,two_day,,silver,0.00,buyer23@example.com
+G-2024,2025-09-22T14:07:57Z,CNDL-SOY,1,34.00,San Diego,CA,92101,US,ground,,gold,6.00,buyer24@example.com
+G-2025,2025-09-25T09:23:17Z,SOCK-3PK,1,36.00,Phoenix,AZ,85004,US,two_day,,standard,6.00,buyer25@example.com
+G-2026,2025-09-10T19:31:29Z,HEAD-BT,2,199.00,San Diego,CA,92101,US,two_day,,silver,0.00,buyer26@example.com
+G-2027,2025-09-27T15:47:38Z,TEE-WHT-L,2,28.00,Oakland,CA,94612,US,two_day,,standard,6.00,buyer27@example.com
+G-2028,2025-09-28T16:22:23Z,HOOD-GRY-M,2,68.00,New York,NY,10001,US,next_day,,standard,0.00,buyer28@example.com
+G-2029,2025-09-02T22:14:25Z,WATCH-GPS,1,349.00,Oakland,CA,94612,US,ground,,standard,0.00,buyer29@example.com
+G-2029,2025-09-02T22:14:25Z,FINAL-SALE,1,12.00,Oakland,CA,94612,US,ground,,standard,0.00,buyer29@example.com
+G-2030,2025-09-08T02:57:57Z,PAN-CI-12,2,48.00,Jersey City,NJ,07302,US,ground,,gold,0.00,buyer30@example.com
+G-2031,2025-09-09T17:06:41Z,BLND-PRO,2,179.00,Los Angeles,CA,90012,US,next_day,,standard,0.00,buyer31@example.com
+G-2032,2025-09-29T16:39:45Z,CAP-NVY,1,32.00,Salt Lake City,UT,84101,US,ground,,standard,6.00,buyer32@example.com
+G-2033,2025-09-25T20:30:01Z,BOTL-INS,2,35.00,Brooklyn,NY,11201,US,ground,,silver,6.00,buyer33@example.com
+G-2034,2025-09-18T14:34:17Z,LAMP-DSK,1,65.00,Denver,CO,80202,US,ground,,standard,6.00,buyer34@example.com

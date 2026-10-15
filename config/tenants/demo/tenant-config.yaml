@@ -1,0 +1,42 @@
+# Seeded into tenant_config for the demo tenant (TenantConfigStore). Business users change these at runtime.
+# The three keys below describe the tenant to people (login page, seed log) and are NOT written to tenant_config.
+name: Intent OMS demo
+vertical: Omnichannel demo
+description: The original demo tenant behind scripts/demo.sh and the seven use-case scripts (apparel, home, electronics and a few compliance edge cases).
+sourcing.margin_floor: 0.12
+sourcing.max_split_packages: 3
+sourcing.split_penalty_usd: 12.0
+sourcing.candidate_limit: 100
+sourcing.channel_default_policy: { web: ship_as_available, marketplace: ship_complete, pos: ship_complete, agent: ship_complete, b2b: ship_complete }
+inventory.channel_buffer: 0.02
+inventory.include_inbound: false
+finance.payment_fee_rate: 0.029
+finance.returns_reserve_rate: 0.05
+tax.default_rate: 0.0
+tax.rates: { CA: 0.0725, NY: 0.04, NJ: 0.06625, TX: 0.0625, IL: 0.0625, WA: 0.065, FL: 0.06, GA: 0.04, NV: 0.0685 }
+guardrail.refund_velocity_usd_per_hour: 5000
+guardrail.appeasement_velocity_usd_per_hour: 1000
+ai.budget_usd_per_day: 50
+returns.window_days: 30
+returns.restocking_fee_pct: 0.0
+appeasement.role_limits: { cs_rep: 20, ops_analyst: 50, finance_controller: 500 }
+agent.default_max_order_value: 500
+agent.default_max_refund: 100
+capture.validation_steps: [schema, item_price_sanity, compliance, address, payment_status, agent_provenance]
+alerts.dedupe_minutes: 15
+orchestration.fulfilment_timeout: P5D
+orchestration.delivery_timeout: P14D
+orchestration.pickup_window: P5D
+returns.flagged_customers: [cust-fraud-7, cust-serial-42]
+# webhooks.inbound_secret: <set to require X-Webhook-Signature (HMAC-SHA256 of the raw body) on /webhooks/**>
+returns.keep_it_enabled: true
+# Agentic Control Tower (docs/UC_AGENTIC_CONTROL_TOWER.md): off by default platform-wide; the demo tenant turns it
+# on with conservative guardrails so the live demo can show both the autonomous-action path and the escalation path.
+autonomy.enabled: true
+autonomy.kill_switch: false
+autonomy.max_actions_per_day: 25
+autonomy.max_usd_impact_per_action: 150.00
+autonomy.allowed_actions: [re_source, re_promise, retry_payment, release_hold, notify_customer]
+autonomy.stuck_after_minutes: 180
+autonomy.risk_score_threshold: 3
+autonomy.margin_approval_stale_minutes: 120

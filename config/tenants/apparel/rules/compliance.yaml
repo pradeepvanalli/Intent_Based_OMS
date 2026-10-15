@@ -1,0 +1,100 @@
+# Lumen & Loom — L0 compliance rules (FR-FIN-03, FR-CAP-05, GR-01). Loaded by ComplianceRuleLoader; each `when` is a
+# CEL boolean over three roots:
+#   line   : line_id, sku, qty, attributes (raw map) and every catalogue attribute flattened (category, leather,
+#            contains_down, high_value, final_sale, oversized ...); hazmat / age_restricted / export_controlled /
+#            lithium_battery default to false, category to ""
+#   order  : destination {state, zip, zip5, country, address_type, is_po_box}, customer {age_verified, age},
+#            ship_method (lower-cased), ship_method_is_air, line_count
+#   tenant : tenant_config snapshot (dots -> underscores) plus compliance_restricted_zips and
+#            compliance_restricted_states (map category -> states), both defaulted to empty
+# An apparel brand has no hazmat, alcohol or lithium, so the rules are about materials law, destinations and the
+# fraud patterns of limited drops. scope: line (default) | order. action: block | hold | require_signature.
+rules:
+  - id: fur_banned_states
+    name: Fur products may not ship to states that ban fur sales
+    scope: line
+    when: >-
+      line.category == "fur"
+      && (order.destination.state in ["CA"]
+          || (has(tenant.compliance_restricted_states.fur) && order.destination.state in tenant.compliance_restricted_states.fur))
+    action: block
+    reason_code: FUR_STATE_BAN
+    severity: error
+    message: "{sku} contains fur and cannot be sold into {state}"
+    priority: 10
+
+  - id: exotic_skin_restricted
+    name: Exotic skins may not ship to California
+    scope: line
+    when: line.category == "exotic_leather" && order.destination.country == "US" && order.destination.state == "CA"
+    action: block
+    reason_code: EXOTIC_SKIN_RESTRICTED
+    severity: error
+    message: "{sku} is made of a restricted exotic skin and cannot ship to {state}"
+    priority: 11
+
+  - id: international_customs_review
+    name: International orders need a customs review before release
+    scope: order
+    when: order.destination.country != "US" && order.destination.country != "CA"
+    action: hold
+    reason_code: INTERNATIONAL_REVIEW
+    severity: error
+    message: "Destination {country} is outside the US and Canada; customs paperwork and duties must be confirmed before release"
+    priority: 20
+
+  - id: down_products_canada_declaration
+    name: Down-filled garments to Canada need the fill declaration on the invoice
+    scope: line
+    # only down-filled SKUs carry `containsDown` in catalog.yaml (same raw camelCase key, not one of CatalogItem's
+    # always-flattened snake_case fields); has() guards every other line, which has no such key at all.
+    when: has(line.containsDown) && line.containsDown == true && order.destination.country == "CA"
+    action: hold
+    reason_code: DOWN_FILL_DECLARATION
+    severity: warning
+    message: "{sku} is down-filled; attach the fill-power and origin declaration for Canadian customs"
+    priority: 21
+
+  - id: drop_to_freight_forwarder
+    name: Limited drops do not ship to freight forwarders
+    scope: line
+    when: has(line.drop) && line.drop != "" && order.destination.address_type == "freight_forwarder"
+    action: block
+    reason_code: DROP_RESELLER_ADDRESS
+    severity: error
+    message: "{sku} is a limited drop and cannot ship to a freight-forwarder address"
+    priority: 30
+
+  - id: high_value_signature
+    name: High-value garments require a signature on delivery
+    scope: line
+    # catalog.yaml sets `highValue: true` only on the garments that need it; has() guards every other line, which
+    # otherwise has no `highValue` key at all and would fail evaluation (RULE_ERROR -> a hold on every order).
+    when: has(line.highValue) && line.highValue == true && order.destination.country == "US"
+    action: require_signature
+    reason_code: HIGH_VALUE_SIGNATURE
+    severity: warning
+    message: "{sku} is a high-value item; signature required on delivery"
+    priority: 40
+
+  - id: no_po_box_for_oversized
+    name: Oversized cartons may not ship to PO boxes
+    scope: line
+    when: line.oversized == true && order.destination.is_po_box
+    action: block
+    reason_code: OVERSIZED_PO_BOX
+    severity: error
+    message: "{sku} ships as an oversized carton and cannot be delivered to a PO box"
+    priority: 50
+
+  - id: restricted_zip
+    name: Destination ZIP is on the tenant's restricted list
+    scope: order
+    when: >-
+      size(tenant.compliance_restricted_zips) > 0
+      && tenant.compliance_restricted_zips.exists(z, order.destination.zip5 == string(z) || order.destination.zip.startsWith(string(z)))
+    action: hold
+    reason_code: ZIP_RESTRICTED
+    severity: error
+    message: "Destination ZIP {zip} is restricted for this tenant; manual review required"
+    priority: 60

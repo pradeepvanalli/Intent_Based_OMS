@@ -1,0 +1,296 @@
+{
+  "goldenSet": "fulfilment_intent_gold",
+  "cases": [
+    {
+      "caseId": "fu_01",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "Please ship the laptop and the sleeve together, I would rather wait than get two boxes",
+          "intent_choices": [],
+          "order_type": "standard_ship"
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "split_acceptance_rate": 0.1
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_complete"
+      }
+    },
+    {
+      "caseId": "fu_02",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "Send each item as soon as it is ready, separate shipments are fine",
+          "intent_choices": [],
+          "order_type": "standard_ship"
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "split_acceptance_rate": 0.9
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_as_available"
+      }
+    },
+    {
+      "caseId": "fu_03",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "I need the charger before my flight on Thursday, the headphones can come later",
+          "intent_choices": [],
+          "order_type": "standard_ship"
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "split_acceptance_rate": 0.6
+          }
+        }
+      },
+      "expected": {
+        "value": "earliest_partial"
+      }
+    },
+    {
+      "caseId": "fu_04",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "I will pick the whole order up at the San Jose store",
+          "intent_choices": [],
+          "order_type": "standard_ship"
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "split_acceptance_rate": 0.3
+          }
+        }
+      },
+      "expected": {
+        "value": "pickup_consolidated"
+      },
+      "notes": "Buyer mentions store collection"
+    },
+    {
+      "caseId": "fu_05",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "",
+          "intent_choices": [
+            "ship_complete"
+          ],
+          "order_type": "standard_ship"
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "split_acceptance_rate": 0.2
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_complete"
+      },
+      "notes": "Explicit checkout choice"
+    },
+    {
+      "caseId": "fu_06",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "",
+          "intent_choices": [
+            "ship_as_available"
+          ],
+          "order_type": "standard_ship"
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "split_acceptance_rate": 0.8
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_as_available"
+      },
+      "notes": "Explicit checkout choice"
+    },
+    {
+      "caseId": "fu_07",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "",
+          "intent_choices": [],
+          "order_type": "standard_ship"
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "split_acceptance_rate": 0.5
+          }
+        }
+      },
+      "expected": {
+        "value": "unclear"
+      },
+      "notes": "No signal at all"
+    },
+    {
+      "caseId": "fu_08",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "Thanks, excited for the new phone!",
+          "intent_choices": [],
+          "order_type": "standard_ship"
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "split_acceptance_rate": 0.5
+          }
+        }
+      },
+      "expected": {
+        "value": "unclear"
+      },
+      "notes": "Notes without intent"
+    },
+    {
+      "caseId": "fu_09",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "Birthday present for my daughter, everything must arrive together in one box",
+          "intent_choices": [],
+          "order_type": "standard_ship"
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "split_acceptance_rate": 0.1
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_complete"
+      }
+    },
+    {
+      "caseId": "fu_10",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "Ready items first please, I do not mind several deliveries",
+          "intent_choices": [],
+          "order_type": "standard_ship"
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "split_acceptance_rate": 0.95
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_as_available"
+      }
+    },
+    {
+      "caseId": "fu_11",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "Only the USB-C cable is urgent, hold the monitor until it is in stock",
+          "intent_choices": [],
+          "order_type": "standard_ship"
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "split_acceptance_rate": 0.4
+          }
+        }
+      },
+      "expected": {
+        "value": "earliest_partial"
+      }
+    },
+    {
+      "caseId": "fu_12",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "Prefer to collect everything in store on Saturday",
+          "intent_choices": [],
+          "order_type": "standard_ship"
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "split_acceptance_rate": 0.2
+          }
+        }
+      },
+      "expected": {
+        "value": "pickup_consolidated"
+      }
+    },
+    {
+      "caseId": "fu_13",
+      "input": {
+        "order": {
+          "channel": "marketplace",
+          "notes": "",
+          "intent_choices": [],
+          "order_type": "standard_ship"
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "split_acceptance_rate": 0.5
+          }
+        }
+      },
+      "expected": {
+        "value": "unclear"
+      },
+      "notes": "Marketplace order with no note: channel default (ship_complete) applies"
+    },
+    {
+      "caseId": "fu_14",
+      "input": {
+        "order": {
+          "channel": "web",
+          "notes": "Phone, case and charger are a set for my dad, one delivery please",
+          "intent_choices": [],
+          "order_type": "bundle_ship_complete"
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "split_acceptance_rate": 0.3
+          }
+        }
+      },
+      "expected": {
+        "value": "ship_complete"
+      },
+      "notes": "Bundle type: L0 rule bundle_always_complete"
+    }
+  ]
+}

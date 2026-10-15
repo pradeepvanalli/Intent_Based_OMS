@@ -1,0 +1,38 @@
+# Agent order within mandate (FR-CAP-07, FR-AGT-05). Noul, tier T3: the model recommends, a person decides. The
+# marketplace listing bot and the concierge assistant both buy on behalf of customers; a laptop that the buyer never
+# mentioned is the classic mismatch.
+decision: agent_mandate_match
+version: 1
+owner: agent-governance
+tier: T3
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: false
+state:
+  include:
+    - mandate.instruction_text
+    - mandate.spend_limit
+    - mandate.scope
+    - mandate.expires_at
+    - order.total
+    - order.items_summary
+    - order.ship_to_country
+    - agent.trust_tier
+rules:
+  - id: over_spend_limit
+    when: "input.order.total > input.mandate.spend_limit"
+    then: block
+    reason: over_mandate_spend_limit
+    priority: 10
+questions:
+  within_mandate:
+    type: noul
+    statement: This order matches the buyer's instruction text, scope and limits in the mandate.
+    feeds: agent_verification_hold
+    criteria:
+      "true": The items, quantities, destination and total are consistent with the instruction, including the device model and storage size
+      "false": Something ordered is outside what the buyer asked for or allowed, such as a different model, an unrequested warranty or a second device
+bands:
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }

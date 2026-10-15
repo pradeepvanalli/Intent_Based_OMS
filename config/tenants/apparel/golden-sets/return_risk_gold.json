@@ -1,0 +1,416 @@
+{
+  "goldenSet": "return_risk_gold",
+  "cases": [
+    {
+      "caseId": "retu_01",
+      "input": {
+        "return": {
+          "reason": "wrong_size",
+          "days_since_delivery": 6,
+          "receipt": true,
+          "item_condition": "unknown",
+          "value_usd": 148.0,
+          "line_count": 1
+        },
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "final_sale": false,
+          "return_channel": "web"
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 3,
+            "not_received_claims": 0,
+            "refunded_12m": 3,
+            "flags": []
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 0
+      },
+      "notes": "size_return_fast_lane rule"
+    },
+    {
+      "caseId": "retu_02",
+      "input": {
+        "return": {
+          "reason": "changed_mind",
+          "days_since_delivery": 4,
+          "receipt": true,
+          "item_condition": "unknown",
+          "value_usd": 88.0,
+          "line_count": 1
+        },
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "final_sale": false,
+          "return_channel": "web"
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 0,
+            "not_received_claims": 0,
+            "refunded_12m": 0,
+            "flags": []
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 0
+      },
+      "notes": "trusted_customer rule"
+    },
+    {
+      "caseId": "retu_03",
+      "input": {
+        "return": {
+          "reason": "changed_mind",
+          "days_since_delivery": 9,
+          "receipt": true,
+          "item_condition": "unknown",
+          "value_usd": 298.0,
+          "line_count": 1
+        },
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "final_sale": false,
+          "return_channel": "web"
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 4,
+            "not_received_claims": 0,
+            "refunded_12m": 4,
+            "flags": []
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 1
+      },
+      "notes": "ordinary but frequent, above the fast-lane value"
+    },
+    {
+      "caseId": "retu_04",
+      "input": {
+        "return": {
+          "reason": "quality",
+          "days_since_delivery": 15,
+          "receipt": false,
+          "item_condition": "unknown",
+          "value_usd": 168.0,
+          "line_count": 1
+        },
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "final_sale": false,
+          "return_channel": "web"
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 6,
+            "not_received_claims": 0,
+            "refunded_12m": 6,
+            "flags": []
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 2
+      },
+      "notes": "receipt missing, many returns"
+    },
+    {
+      "caseId": "retu_05",
+      "input": {
+        "return": {
+          "reason": "not_received",
+          "days_since_delivery": 10,
+          "receipt": true,
+          "item_condition": "unknown",
+          "value_usd": 325.0,
+          "line_count": 1
+        },
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "final_sale": false,
+          "return_channel": "web"
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 7,
+            "not_received_claims": 2,
+            "refunded_12m": 7,
+            "flags": [
+              "repeated_not_received_claims"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 4
+      },
+      "notes": "flagged_customer rule (2 claims)"
+    },
+    {
+      "caseId": "retu_06",
+      "input": {
+        "return": {
+          "reason": "changed_mind",
+          "days_since_delivery": 5,
+          "receipt": true,
+          "item_condition": "unknown",
+          "value_usd": 59.0,
+          "line_count": 1
+        },
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "final_sale": true,
+          "return_channel": "web"
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 0,
+            "not_received_claims": 0,
+            "refunded_12m": 0,
+            "flags": []
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": "deny_final_sale"
+      },
+      "notes": "final-sale markdown"
+    },
+    {
+      "caseId": "retu_07",
+      "input": {
+        "return": {
+          "reason": "wrong_size",
+          "days_since_delivery": 41,
+          "receipt": true,
+          "item_condition": "unknown",
+          "value_usd": 128.0,
+          "line_count": 1
+        },
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "final_sale": false,
+          "return_channel": "web"
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 1,
+            "not_received_claims": 0,
+            "refunded_12m": 1,
+            "flags": []
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": "deny_out_of_window"
+      }
+    },
+    {
+      "caseId": "retu_08",
+      "input": {
+        "return": {
+          "reason": "didnt_fit_as_expected",
+          "days_since_delivery": 3,
+          "receipt": true,
+          "item_condition": "unknown",
+          "value_usd": 148.0,
+          "line_count": 1
+        },
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "final_sale": false,
+          "return_channel": "web"
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 2,
+            "not_received_claims": 0,
+            "refunded_12m": 2,
+            "flags": [
+              "flagged_customer"
+            ]
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 4
+      },
+      "notes": "risk team flag"
+    },
+    {
+      "caseId": "retu_09",
+      "input": {
+        "return": {
+          "reason": "didnt_fit_as_expected",
+          "days_since_delivery": 12,
+          "receipt": true,
+          "item_condition": "unknown",
+          "value_usd": 128.0,
+          "line_count": 1
+        },
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "final_sale": false,
+          "return_channel": "web"
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 5,
+            "not_received_claims": 0,
+            "refunded_12m": 5,
+            "flags": []
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 0
+      },
+      "notes": "fast lane: five returns is normal for apparel"
+    },
+    {
+      "caseId": "retu_10",
+      "input": {
+        "return": {
+          "reason": "quality",
+          "days_since_delivery": 20,
+          "receipt": true,
+          "item_condition": "unknown",
+          "value_usd": 168.0,
+          "line_count": 1
+        },
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "final_sale": false,
+          "return_channel": "web"
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 2,
+            "not_received_claims": 0,
+            "refunded_12m": 2,
+            "flags": []
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 1
+      },
+      "notes": "seam opened after one wash, ordinary customer"
+    },
+    {
+      "caseId": "retu_11",
+      "input": {
+        "return": {
+          "reason": "not_received",
+          "days_since_delivery": 8,
+          "receipt": false,
+          "item_condition": "unknown",
+          "value_usd": 325.0,
+          "line_count": 1
+        },
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "final_sale": false,
+          "return_channel": "web"
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 3,
+            "not_received_claims": 1,
+            "refunded_12m": 3,
+            "flags": []
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 3
+      },
+      "notes": "one earlier claim, no receipt, drop item"
+    },
+    {
+      "caseId": "retu_12",
+      "input": {
+        "return": {
+          "reason": "wrong_size",
+          "days_since_delivery": 7,
+          "receipt": true,
+          "item_condition": "unknown",
+          "value_usd": 148.0,
+          "line_count": 1
+        },
+        "order": {
+          "channel": "web",
+          "order_type": "standard_ship",
+          "final_sale": false,
+          "return_channel": "web"
+        },
+        "customer": {
+          "history": {
+            "returns_12m": 7,
+            "not_received_claims": 0,
+            "refunded_12m": 7,
+            "flags": []
+          }
+        },
+        "policy": {
+          "window_days": 30
+        }
+      },
+      "expected": {
+        "value": 1
+      },
+      "notes": "above the fast-lane count but ordinary"
+    }
+  ]
+}

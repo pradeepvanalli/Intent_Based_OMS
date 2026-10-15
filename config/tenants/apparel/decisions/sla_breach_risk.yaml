@@ -1,0 +1,38 @@
+# SLA breach risk (FR-MON-02). Score 0–4 per open order, tier T1; feeds proactive re-promise. Store nodes with
+# Saturday staffing gaps and the 3PL's reject rate are the main drivers in this network.
+decision: sla_breach_risk
+version: 1
+owner: control-tower
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: 1
+state:
+  include:
+    - order.state
+    - order.order_type
+    - order.hours_in_state
+    - order.promise_hours_remaining
+    - order.ship_method
+    - node.type
+    - node.backlog_units
+    - node.reject_rate
+    - node.staffing
+    - node.minutes_to_cutoff
+    - carrier.on_time_rate_7d
+questions:
+  breach_risk:
+    type: score
+    instructions: How likely is this order to miss its delivery promise?
+    feeds: proactive_repromise
+    criteria:
+      - Very unlikely to breach, well ahead of promise with a healthy node and carrier
+      - Unlikely to breach, on track with minor slack
+      - Even chance, slack is thin or the node is backlogged
+      - Likely to breach, already late in state, store understaffed or carrier degraded
+      - Almost certain to breach, past cutoff or stuck with no movement
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }

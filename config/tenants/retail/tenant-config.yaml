@@ -1,0 +1,78 @@
+# Maple & Main General Store — runtime settings written to tenant_config (TenantConfigStore). Business users change
+# these at runtime through PUT /api/v1/admin/config/{key}; the seeder writes a key only when it is absent, so later
+# edits are never overwritten. Full reference: docs/CONFIGURATION.md §3; business story: README.md in this folder.
+
+# ---- Tenant presentation (not runtime settings; shown on the login page, skipped by the seeder) ----------------------
+name: Maple & Main General Store
+vertical: General retail
+description: >-
+  Midwest general-merchandise retailer: two DCs, six stores with pickup / curbside / ship-from-store, one drop-ship
+  furniture vendor. Scenarios: store-reject reroute, hazmat + oversized routing, marketplace margin floor, holiday
+  surge capacity, curbside promise.
+
+# ---- Sourcing and promise -------------------------------------------------------------------------------------------
+sourcing.margin_floor: 0.12                 # 12 % contribution-margin floor: below it finance approves (GR-01, scenario R3)
+sourcing.max_split_packages: 2              # general merchandise: at most two boxes before we ask the customer
+sourcing.split_penalty_usd: 11.0            # negotiated: one extra carton costs us about $11
+sourcing.candidate_limit: 50
+sourcing.channel_default_policy:            # fulfilment policy when intent is unclear, per channel
+  web: ship_as_available
+  marketplace: ship_complete              # marketplaces penalise partial shipments
+  pos: ship_complete
+  agent: ship_complete
+  b2b: ship_complete
+sourcing.weights: { cost: 0.45, time: 0.25, soft: 0.2, split: 0.1 }   # cost-led: thin general-merchandise margins
+sourcing.pickup_radius_km: 40               # offer the nearest store as a pickup alternative within 40 km
+sourcing.backorder_lead_days: 10
+sourcing.reject_penalty: 0.4                # store rejection policy: a reject costs the node+SKU 0.4 for the next sourcing rounds
+
+# ---- Inventory ------------------------------------------------------------------------------------------------------
+inventory.channel_buffer: 0.03              # keep 3 % of network ATP back from channel feeds (stores count stock by eye)
+inventory.include_inbound: false
+
+# ---- Pickup, curbside and store operations (read by the curbside_eta_promise / store_reject_reroute rules via README) --
+orchestration.pickup_window: P4D            # BOPIS / curbside orders not collected within 4 days are cancelled and voided
+orchestration.fulfilment_timeout: P5D
+orchestration.delivery_timeout: P14D
+pickup.curbside_promise_minutes: 20         # "ready in 20 minutes" promise shown at checkout for curbside
+pickup.curbside_window_minutes: 90          # how long a staged curbside order waits before the pickup reminder fires
+store.reject_policy: reroute_nearest_store  # what the store_reject_reroute decision defaults to when confidence is low
+store.holiday_surge_capacity_factor: 1.0    # multiply store dailyCapacity (nodes.yaml) at peak; 1.0 = planned capacity
+
+# ---- Capture and customer service ----------------------------------------------------------------------------------
+capture.validation_steps: [schema, item_price_sanity, compliance, address, payment_status, agent_provenance]
+capture.price_tolerance: 0.20
+cs.carrier_intercept_enabled: true
+cs.carrier_intercept_fee_usd: 14.0
+appeasement.role_limits: { cs_rep: 15, ops_analyst: 40, finance_controller: 400 }
+
+# ---- Finance, tax, compliance --------------------------------------------------------------------------------------
+finance.payment_fee_rate: 0.027
+finance.payment_fee_fixed: 0.30
+finance.returns_reserve_rate: 0.06          # general merchandise returns run a little higher than apparel
+tax.default_rate: 0.0
+tax.rates: { OH: 0.0575, NV: 0.0685, IL: 0.0625, TX: 0.0625, GA: 0.04, CO: 0.029, WA: 0.065, AZ: 0.056, CA: 0.0725, NY: 0.04, HI: 0.04, AK: 0.0 }
+compliance.restricted_states: { alcohol: [UT, MS, AL, KY, OK, DE, RI, AR] }   # merged into rules/compliance.yaml alcohol rule
+
+# ---- Guardrails and AI ---------------------------------------------------------------------------------------------
+guardrail.refund_velocity_usd_per_hour: 4000
+guardrail.appeasement_velocity_usd_per_hour: 800
+ai.budget_usd_per_day: 40
+agent.default_max_order_value: 800
+agent.default_max_refund: 150
+
+# ---- Returns --------------------------------------------------------------------------------------------------------
+returns.window_days: 30                     # 30-day window (scenario: the out-of-window return is denied by an L0 rule)
+returns.restocking_fee_pct: 0.10            # 10 % on damaged returns only
+returns.restocking_fee_conditions: [damaged]
+returns.refund_requires_approval_above_usd: 400
+returns.return_shipping_cost_usd: 7.90      # keep-it economics: label + handling vs recovery
+returns.return_handling_cost_usd: 2.50
+returns.recovery_rate: 0.35
+returns.keep_it_enabled: true
+returns.keep_it_max_value_usd: 12           # keep-it threshold: items worth $12 or less are never worth shipping back (return_risk rule cheap_item_keep_it)
+returns.flagged_customers: [cust-flag-301]  # loss-prevention flags surface as flagged_customer in the return_risk decision
+
+# ---- Orchestration, monitoring, platform ---------------------------------------------------------------------------
+alerts.dedupe_minutes: 15
+# webhooks.inbound_secret: <set through the API to require X-Webhook-Signature on /webhooks/**>

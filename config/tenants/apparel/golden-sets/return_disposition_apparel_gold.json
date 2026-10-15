@@ -1,0 +1,350 @@
+{
+  "goldenSet": "return_disposition_apparel_gold",
+  "cases": [
+    {
+      "caseId": "retu_01",
+      "input": {
+        "return": {
+          "reason": "wrong_size",
+          "item_condition": "new",
+          "inspection_notes": "tags attached, unworn",
+          "days_since_delivery": 8
+        },
+        "item": {
+          "sku": "JNS-STR-IND-30",
+          "category": "denim",
+          "season": "current",
+          "final_sale": false,
+          "cost_usd": 34.0,
+          "resale_value_usd": 53.1,
+          "repairable": true,
+          "hygiene_sensitive": false
+        }
+      },
+      "expected": {
+        "value": "restock"
+      },
+      "notes": "new_current_season rule"
+    },
+    {
+      "caseId": "retu_02",
+      "input": {
+        "return": {
+          "reason": "changed_mind",
+          "item_condition": "new",
+          "inspection_notes": "tags attached",
+          "days_since_delivery": 8
+        },
+        "item": {
+          "sku": "DRS-MAXI-FLR-M",
+          "category": "dress",
+          "season": "past",
+          "final_sale": true,
+          "cost_usd": 40.0,
+          "resale_value_usd": 26.55,
+          "repairable": true,
+          "hygiene_sensitive": false
+        }
+      },
+      "expected": {
+        "value": "outlet"
+      },
+      "notes": "new_past_season rule"
+    },
+    {
+      "caseId": "retu_03",
+      "input": {
+        "return": {
+          "reason": "quality",
+          "item_condition": "damaged",
+          "inspection_notes": "dye bled across the front panel, not repairable",
+          "days_since_delivery": 8
+        },
+        "item": {
+          "sku": "DRS-WRAP-NVY-M",
+          "category": "dress",
+          "season": "current",
+          "final_sale": false,
+          "cost_usd": 36.0,
+          "resale_value_usd": 0.0,
+          "repairable": false,
+          "hygiene_sensitive": false
+        }
+      },
+      "expected": {
+        "value": "recycle"
+      },
+      "notes": "unrepairable_damage rule"
+    },
+    {
+      "caseId": "retu_04",
+      "input": {
+        "return": {
+          "reason": "quality",
+          "item_condition": "damaged",
+          "inspection_notes": "side seam opened 4 cm, repair bench can close it",
+          "days_since_delivery": 8
+        },
+        "item": {
+          "sku": "KNT-CRD-OAT-M",
+          "category": "knitwear",
+          "season": "current",
+          "final_sale": false,
+          "cost_usd": 52.0,
+          "resale_value_usd": 30.2,
+          "repairable": true,
+          "hygiene_sensitive": false
+        }
+      },
+      "expected": {
+        "value": "outlet"
+      },
+      "notes": "repaired garments sell through the outlet"
+    },
+    {
+      "caseId": "retu_05",
+      "input": {
+        "return": {
+          "reason": "changed_mind",
+          "item_condition": "like_new",
+          "inspection_notes": "worn once, faint deodorant mark under the arm",
+          "days_since_delivery": 8
+        },
+        "item": {
+          "sku": "DRS-MIDI-BLK-M",
+          "category": "dress",
+          "season": "current",
+          "final_sale": false,
+          "cost_usd": 42.0,
+          "resale_value_usd": 49.95,
+          "repairable": true,
+          "hygiene_sensitive": false
+        }
+      },
+      "expected": {
+        "value": "outlet"
+      }
+    },
+    {
+      "caseId": "retu_06",
+      "input": {
+        "return": {
+          "reason": "quality",
+          "item_condition": "like_new",
+          "inspection_notes": "washed, pilling all over, no defect",
+          "days_since_delivery": 8
+        },
+        "item": {
+          "sku": "KNT-CRD-OAT-S",
+          "category": "knitwear",
+          "season": "current",
+          "final_sale": false,
+          "cost_usd": 52.0,
+          "resale_value_usd": 56.7,
+          "repairable": true,
+          "hygiene_sensitive": false
+        }
+      },
+      "expected": {
+        "value": "donate"
+      }
+    },
+    {
+      "caseId": "retu_07",
+      "input": {
+        "return": {
+          "reason": "changed_mind",
+          "item_condition": "like_new",
+          "inspection_notes": "pack opened, one pair worn",
+          "days_since_delivery": 8
+        },
+        "item": {
+          "sku": "ACC-SOCK-ORG",
+          "category": "accessories",
+          "season": "core",
+          "final_sale": false,
+          "cost_usd": 2.5,
+          "resale_value_usd": 3.04,
+          "repairable": false,
+          "hygiene_sensitive": true
+        }
+      },
+      "expected": {
+        "value": "donate"
+      },
+      "notes": "hygiene-sensitive, not new"
+    },
+    {
+      "caseId": "retu_08",
+      "input": {
+        "return": {
+          "reason": "changed_mind",
+          "item_condition": "new",
+          "inspection_notes": "unworn, in the original bag",
+          "days_since_delivery": 8
+        },
+        "item": {
+          "sku": "TEE-ORG-WHT-M",
+          "category": "tee",
+          "season": "core",
+          "final_sale": false,
+          "cost_usd": 9.0,
+          "resale_value_usd": 17.1,
+          "repairable": true,
+          "hygiene_sensitive": false
+        }
+      },
+      "expected": {
+        "value": "restock"
+      },
+      "notes": "new_current_season rule"
+    },
+    {
+      "caseId": "retu_09",
+      "input": {
+        "return": {
+          "reason": "quality",
+          "item_condition": "damaged",
+          "inspection_notes": "zip pull torn off, fabric ripped around the zip",
+          "days_since_delivery": 8
+        },
+        "item": {
+          "sku": "JKT-PUF-OLV-M",
+          "category": "outerwear",
+          "season": "current",
+          "final_sale": false,
+          "cost_usd": 82.0,
+          "resale_value_usd": 0.0,
+          "repairable": false,
+          "hygiene_sensitive": false
+        }
+      },
+      "expected": {
+        "value": "recycle"
+      },
+      "notes": "unrepairable_damage rule"
+    },
+    {
+      "caseId": "retu_10",
+      "input": {
+        "return": {
+          "reason": "didnt_fit_as_expected",
+          "item_condition": "like_new",
+          "inspection_notes": "worn outdoors once, scuffed sole",
+          "days_since_delivery": 8
+        },
+        "item": {
+          "sku": "SHO-LOAF-TAN-38",
+          "category": "shoes",
+          "season": "core",
+          "final_sale": false,
+          "cost_usd": 68.0,
+          "resale_value_usd": 66.8,
+          "repairable": true,
+          "hygiene_sensitive": false
+        }
+      },
+      "expected": {
+        "value": "outlet"
+      }
+    },
+    {
+      "caseId": "retu_11",
+      "input": {
+        "return": {
+          "reason": "quality",
+          "item_condition": "damaged",
+          "inspection_notes": "broken zip, replaceable",
+          "days_since_delivery": 8
+        },
+        "item": {
+          "sku": "JKT-TRCH-CAM-M",
+          "category": "outerwear",
+          "season": "current",
+          "final_sale": false,
+          "cost_usd": 95.0,
+          "resale_value_usd": 100.6,
+          "repairable": true,
+          "hygiene_sensitive": false
+        }
+      },
+      "expected": {
+        "value": "outlet"
+      }
+    },
+    {
+      "caseId": "retu_12",
+      "input": {
+        "return": {
+          "reason": "wrong_item",
+          "item_condition": "new",
+          "inspection_notes": "wrong colour shipped, tags attached",
+          "days_since_delivery": 8
+        },
+        "item": {
+          "sku": "DRS-MIDI-RST-S",
+          "category": "dress",
+          "season": "current",
+          "final_sale": false,
+          "cost_usd": 42.0,
+          "resale_value_usd": 66.6,
+          "repairable": true,
+          "hygiene_sensitive": false
+        }
+      },
+      "expected": {
+        "value": "restock"
+      },
+      "notes": "new_current_season rule"
+    },
+    {
+      "caseId": "retu_13",
+      "input": {
+        "return": {
+          "reason": "changed_mind",
+          "item_condition": "like_new",
+          "inspection_notes": "tried on, tags removed, otherwise perfect",
+          "days_since_delivery": 8
+        },
+        "item": {
+          "sku": "KNT-SWT-GRN-L",
+          "category": "knitwear",
+          "season": "past",
+          "final_sale": true,
+          "cost_usd": 45.0,
+          "resale_value_usd": 16.5,
+          "repairable": true,
+          "hygiene_sensitive": false
+        }
+      },
+      "expected": {
+        "value": "outlet"
+      }
+    },
+    {
+      "caseId": "retu_14",
+      "input": {
+        "return": {
+          "reason": "wrong_size",
+          "item_condition": "like_new",
+          "inspection_notes": "tags still attached, tried on only",
+          "days_since_delivery": 8
+        },
+        "item": {
+          "sku": "DRS-WRAP-NVY-S",
+          "category": "dress",
+          "season": "current",
+          "final_sale": false,
+          "cost_usd": 36.0,
+          "resale_value_usd": 43.2,
+          "repairable": true,
+          "hygiene_sensitive": false
+        }
+      },
+      "expected": {
+        "value": "restock"
+      },
+      "notes": "tags attached: effectively new"
+    }
+  ]
+}

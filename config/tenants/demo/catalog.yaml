@@ -1,0 +1,42 @@
+# Demo SKU catalogue: unit cost (COGS), weight, flags that drive compliance and sourcing.
+products:
+  - { sku: TEE-BLK-M,   name: Organic cotton tee black M,      price: 28.00,  cogs: 7.50,   weightKg: 0.25 }
+  - { sku: TEE-WHT-L,   name: Organic cotton tee white L,      price: 28.00,  cogs: 7.50,   weightKg: 0.25 }
+  - { sku: HOOD-GRY-M,  name: Fleece hoodie grey M,            price: 68.00,  cogs: 21.00,  weightKg: 0.70 }
+  - { sku: JEAN-IND-32, name: Selvedge denim indigo 32,        price: 128.00, cogs: 38.00,  weightKg: 0.80 }
+  - { sku: SNK-RUN-10,  name: Trail runner sneaker 10,         price: 145.00, cogs: 52.00,  weightKg: 1.10 }
+  - { sku: BOOT-LTH-9,  name: Leather chelsea boot 9,          price: 220.00, cogs: 84.00,  weightKg: 1.50 }
+  - { sku: JKT-DWN-L,   name: Down puffer jacket L,            price: 260.00, cogs: 95.00,  weightKg: 1.20 }
+  - { sku: BAG-TOTE,    name: Canvas tote,                     price: 45.00,  cogs: 12.00,  weightKg: 0.40 }
+  - { sku: CAP-NVY,     name: Wool cap navy,                   price: 32.00,  cogs: 9.00,   weightKg: 0.15 }
+  - { sku: SOCK-3PK,    name: Merino socks 3-pack,             price: 36.00,  cogs: 10.00,  weightKg: 0.20 }
+  - { sku: CNDL-SOY,    name: Soy candle 8oz,                  price: 34.00,  cogs: 8.00,   weightKg: 0.45 }
+  - { sku: PERF-50ML,   name: Eau de parfum 50 ml,             price: 120.00, cogs: 22.00,  weightKg: 0.30, hazmat: true, hazmatClass: "3 flammable liquid" }
+  - { sku: AERO-DEO,    name: Aerosol deodorant,               price: 14.00,  cogs: 3.50,   weightKg: 0.20, hazmat: true, hazmatClass: "2.1 aerosol" }
+  - { sku: WINE-RED,    name: Napa red wine 750 ml,            price: 42.00,  cogs: 16.00,  weightKg: 1.40, ageRestricted: true, category: alcohol }
+  - { sku: KNIFE-CHEF,  name: Chef knife 8in,                  price: 95.00,  cogs: 30.00,  weightKg: 0.50, ageRestricted: true, category: blade }
+  - { sku: PWRBNK-20K,  name: "20,000 mAh power bank",         price: 59.00,  cogs: 19.00,  weightKg: 0.45, hazmat: true, hazmatClass: "9 lithium battery", lithium: true }
+  - { sku: HEAD-BT,     name: Bluetooth headphones,            price: 199.00, cogs: 70.00,  weightKg: 0.35, lithium: true }
+  - { sku: WATCH-GPS,   name: GPS sports watch,                price: 349.00, cogs: 140.00, weightKg: 0.20, lithium: true, exportControlled: false }
+  - { sku: DRONE-MINI,  name: Mini camera drone,               price: 499.00, cogs: 210.00, weightKg: 0.90, lithium: true, exportControlled: true }
+  - { sku: BLND-PRO,    name: Pro blender,                     price: 179.00, cogs: 62.00,  weightKg: 4.20 }
+  - { sku: COFF-MKR,    name: Drip coffee maker,               price: 89.00,  cogs: 31.00,  weightKg: 2.80 }
+  - { sku: MUG-CER,     name: Ceramic mug,                     price: 18.00,  cogs: 4.00,   weightKg: 0.40 }
+  - { sku: PAN-CI-12,   name: Cast iron pan 12in,              price: 48.00,  cogs: 15.00,  weightKg: 3.60 }
+  - { sku: LAMP-DSK,    name: LED desk lamp,                   price: 65.00,  cogs: 20.00,  weightKg: 1.30 }
+  - { sku: RUG-5X8,     name: Wool rug 5x8,                    price: 320.00, cogs: 110.00, weightKg: 9.50, oversized: true }
+  - { sku: CHAIR-OFF,   name: Ergonomic office chair,          price: 420.00, cogs: 160.00, weightKg: 18.00, oversized: true }
+  - { sku: YOGA-MAT,    name: Yoga mat,                        price: 40.00,  cogs: 11.00,  weightKg: 1.00 }
+  - { sku: DUMB-10KG,   name: Dumbbell 10 kg pair,             price: 70.00,  cogs: 28.00,  weightKg: 20.00, oversized: true }
+  - { sku: BOTL-INS,    name: Insulated bottle,                price: 35.00,  cogs: 9.00,   weightKg: 0.40 }
+  - { sku: TENT-2P,     name: 2-person tent,                   price: 240.00, cogs: 90.00,  weightKg: 2.60 }
+  - { sku: BOOK-COOK,   name: Cookbook hardcover,              price: 35.00,  cogs: 9.00,   weightKg: 0.90 }
+  - { sku: PUZZ-1000,   name: 1000-piece puzzle,               price: 22.00,  cogs: 6.00,   weightKg: 0.80 }
+  - { sku: TOY-BLOCK,   name: Wooden block set,                price: 45.00,  cogs: 14.00,  weightKg: 1.20 }
+  - { sku: GIFT-CARD,   name: Gift card (digital),             price: 50.00,  cogs: 0.00,   weightKg: 0.00, digital: true }
+  - { sku: SKIN-SRM,    name: Vitamin C serum,                 price: 58.00,  cogs: 12.00,  weightKg: 0.12 }
+  - { sku: SUN-SPF50,   name: Sunscreen SPF50,                 price: 24.00,  cogs: 6.00,   weightKg: 0.20 }
+  - { sku: VIT-D3,      name: Vitamin D3 supplement,           price: 19.00,  cogs: 4.50,   weightKg: 0.15, restrictedStates: [] }
+  - { sku: CBD-OIL,     name: CBD tincture,                    price: 65.00,  cogs: 18.00,  weightKg: 0.15, restrictedStates: [ID, IA, SD] }
+  - { sku: PLANT-FIC,   name: Fiddle leaf fig (live plant),    price: 85.00,  cogs: 30.00,  weightKg: 5.00, restrictedStates: [HI, AK, CA] }
+  - { sku: FINAL-SALE,  name: Clearance scarf (final sale),    price: 12.00,  cogs: 5.00,   weightKg: 0.15, finalSale: true }

@@ -1,0 +1,305 @@
+{
+  "goldenSet": "curbside_eta_promise_gold",
+  "cases": [
+    {
+      "caseId": "cep_01",
+      "input": {
+        "store": {
+          "backlog_units": 2,
+          "staffing": 0.95,
+          "pick_rate": 0.94,
+          "minutes_to_cutoff": 240,
+          "open": true
+        },
+        "order": {
+          "units": 3,
+          "line_count": 2,
+          "has_oversized": false,
+          "promise_minutes": 20
+        },
+        "customer": {
+          "arrival_minutes": 15
+        }
+      },
+      "expected": {
+        "value": 4
+      },
+      "notes": "Idle Denver store, three small items, customer 15 minutes out"
+    },
+    {
+      "caseId": "cep_02",
+      "input": {
+        "store": {
+          "backlog_units": 0,
+          "staffing": 1.0,
+          "pick_rate": 0.95,
+          "minutes_to_cutoff": 300,
+          "open": false
+        },
+        "order": {
+          "units": 2,
+          "line_count": 1,
+          "has_oversized": false,
+          "promise_minutes": 20
+        },
+        "customer": {
+          "arrival_minutes": 10
+        }
+      },
+      "expected": {
+        "value": 0
+      },
+      "notes": "Store closed"
+    },
+    {
+      "caseId": "cep_03",
+      "input": {
+        "store": {
+          "backlog_units": 40,
+          "staffing": 0.5,
+          "pick_rate": 0.86,
+          "minutes_to_cutoff": 30,
+          "open": true
+        },
+        "order": {
+          "units": 12,
+          "line_count": 4,
+          "has_oversized": true,
+          "promise_minutes": 20
+        },
+        "customer": {
+          "arrival_minutes": 5
+        }
+      },
+      "expected": {
+        "value": 0
+      },
+      "notes": "Chicago at close with a backlog, one associate, oversized grill, car already outside"
+    },
+    {
+      "caseId": "cep_04",
+      "input": {
+        "store": {
+          "backlog_units": 14,
+          "staffing": 0.8,
+          "pick_rate": 0.9,
+          "minutes_to_cutoff": 180,
+          "open": true
+        },
+        "order": {
+          "units": 6,
+          "line_count": 3,
+          "has_oversized": false,
+          "promise_minutes": 20
+        },
+        "customer": {
+          "arrival_minutes": 25
+        }
+      },
+      "expected": {
+        "value": 2
+      },
+      "notes": "Moderate backlog, normal staffing, half a dozen units"
+    },
+    {
+      "caseId": "cep_05",
+      "input": {
+        "store": {
+          "backlog_units": 6,
+          "staffing": 0.9,
+          "pick_rate": 0.93,
+          "minutes_to_cutoff": 200,
+          "open": true
+        },
+        "order": {
+          "units": 4,
+          "line_count": 2,
+          "has_oversized": false,
+          "promise_minutes": 20
+        },
+        "customer": {
+          "arrival_minutes": 30
+        }
+      },
+      "expected": {
+        "value": 3
+      },
+      "notes": "Light backlog, well staffed, customer half an hour away"
+    },
+    {
+      "caseId": "cep_06",
+      "input": {
+        "store": {
+          "backlog_units": 25,
+          "staffing": 0.65,
+          "pick_rate": 0.88,
+          "minutes_to_cutoff": 60,
+          "open": true
+        },
+        "order": {
+          "units": 2,
+          "line_count": 1,
+          "has_oversized": false,
+          "promise_minutes": 20
+        },
+        "customer": {
+          "arrival_minutes": 8
+        }
+      },
+      "expected": {
+        "value": 1
+      },
+      "notes": "Backlog of 25 with thin staffing; customer arrives in 8 minutes"
+    },
+    {
+      "caseId": "cep_07",
+      "input": {
+        "store": {
+          "backlog_units": 3,
+          "staffing": 0.85,
+          "pick_rate": 0.92,
+          "minutes_to_cutoff": 240,
+          "open": true
+        },
+        "order": {
+          "units": 1,
+          "line_count": 1,
+          "has_oversized": true,
+          "promise_minutes": 20
+        },
+        "customer": {
+          "arrival_minutes": 20
+        }
+      },
+      "expected": {
+        "value": 2
+      },
+      "notes": "Idle store but an oversized rug needs two associates"
+    },
+    {
+      "caseId": "cep_08",
+      "input": {
+        "store": {
+          "backlog_units": 0,
+          "staffing": 1.0,
+          "pick_rate": 0.95,
+          "minutes_to_cutoff": 400,
+          "open": true
+        },
+        "order": {
+          "units": 2,
+          "line_count": 2,
+          "has_oversized": false,
+          "promise_minutes": 20
+        },
+        "customer": {
+          "arrival_minutes": 40
+        }
+      },
+      "expected": {
+        "value": 4
+      },
+      "notes": "Empty queue, customer 40 minutes out"
+    },
+    {
+      "caseId": "cep_09",
+      "input": {
+        "store": {
+          "backlog_units": 18,
+          "staffing": 0.7,
+          "pick_rate": 0.9,
+          "minutes_to_cutoff": 120,
+          "open": true
+        },
+        "order": {
+          "units": 9,
+          "line_count": 5,
+          "has_oversized": false,
+          "promise_minutes": 20
+        },
+        "customer": {
+          "arrival_minutes": 12
+        }
+      },
+      "expected": {
+        "value": 1
+      },
+      "notes": "Nine units and a backlog; unlikely in 20 minutes"
+    },
+    {
+      "caseId": "cep_10",
+      "input": {
+        "store": {
+          "backlog_units": 10,
+          "staffing": 0.9,
+          "pick_rate": 0.93,
+          "minutes_to_cutoff": 150,
+          "open": true
+        },
+        "order": {
+          "units": 5,
+          "line_count": 3,
+          "has_oversized": false,
+          "promise_minutes": 30
+        },
+        "customer": {
+          "arrival_minutes": 30
+        }
+      },
+      "expected": {
+        "value": 3
+      },
+      "notes": "Longer promise window (30 min) makes a mid-size order likely"
+    },
+    {
+      "caseId": "cep_11",
+      "input": {
+        "store": {
+          "backlog_units": 60,
+          "staffing": 0.6,
+          "pick_rate": 0.84,
+          "minutes_to_cutoff": 45,
+          "open": true
+        },
+        "order": {
+          "units": 3,
+          "line_count": 2,
+          "has_oversized": false,
+          "promise_minutes": 20
+        },
+        "customer": {
+          "arrival_minutes": 10
+        }
+      },
+      "expected": {
+        "value": 0
+      },
+      "notes": "Holiday-surge backlog of 60 units: will not make it"
+    },
+    {
+      "caseId": "cep_12",
+      "input": {
+        "store": {
+          "backlog_units": 8,
+          "staffing": 0.95,
+          "pick_rate": 0.94,
+          "minutes_to_cutoff": 200,
+          "open": true
+        },
+        "order": {
+          "units": 14,
+          "line_count": 6,
+          "has_oversized": false,
+          "promise_minutes": 20
+        },
+        "customer": {
+          "arrival_minutes": 20
+        }
+      },
+      "expected": {
+        "value": 2
+      },
+      "notes": "Well staffed but a 14-unit basket is a two-trolley job"
+    }
+  ]
+}

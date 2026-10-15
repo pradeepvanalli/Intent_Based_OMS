@@ -1,0 +1,9 @@
+subject: {{brand}}: an update on order {{order_number}}
+---
+Hi {{customer_name}},
+
+Your order {{order_number}} is running later than planned. The new estimated delivery date is {{new_promise_date}} (previously {{old_promise_date}}).
+Reason: {{reason}}
+
+We are sorry for the delay.
+{{brand}}

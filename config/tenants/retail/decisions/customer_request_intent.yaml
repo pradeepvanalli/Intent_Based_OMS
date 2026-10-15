@@ -1,0 +1,38 @@
+# Maple & Main (retail reference tenant) — decision `customer_request_intent`. Same shape as the starter with production evaluation gates
+# (minAccuracyInActBand 0.90, maxCalibrationError 0.05). Review: owner, tier, bands, criteria wording, and add a
+# golden set under golden-sets/ before publishing through the normal approval path (see README.md §4). fallbackProvider stays
+# `heuristic` so the tenant works without AI keys; switch to `llm.structured` once an LLM key is configured.
+# Customer request intent (PRD section 9, FR-CS-03). Tier T1 choice feeding CS automation.
+decision: customer_request_intent
+version: 1
+owner: customer-service
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: other
+state:
+  include:
+    - request.channel
+    - request.text
+    - order.status
+    - order.days_since_placed
+questions:
+  intent:
+    type: choice
+    instructions: What is the customer asking for?
+    feeds: cs_automation
+    criteria:
+      cancel_order: Cancel the entire order before it ships
+      cancel_line: Cancel one item but keep the rest of the order
+      change_address: Change the delivery address or shipping destination
+      change_item: Swap an item for a different size, colour or product
+      wismo: Where is my order, tracking status or delivery date question
+      return: Return or refund an item already received
+      other: A request that fits none of the categories, or not enough information
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+preChecks:
+  - "has(input.request) && has(input.request.text) && size(input.request.text) > 0"

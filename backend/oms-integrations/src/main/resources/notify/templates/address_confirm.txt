@@ -1,0 +1,10 @@
+subject: {{brand}}: please confirm the address for order {{order_number}}
+---
+Hi {{customer_name}},
+
+We could not verify the shipping address on order {{order_number}}:
+{{address}}
+
+Please confirm or correct it within {{confirm_within}} so we can ship without delay.
+
+{{brand}}

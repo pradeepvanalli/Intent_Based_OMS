@@ -1,0 +1,88 @@
+# Voltline Electronics — runtime settings written to tenant_config (TenantConfigStore). Business users change these at
+# runtime through PUT /api/v1/admin/config/{key}; the seeder writes a key only when it is absent, so later edits are never
+# overwritten. Full key reference: docs/CONFIGURATION.md §3. Comments explain the electronics-specific choices.
+
+# ---- Tenant metadata (read by the loader as metadata, not as runtime keys) -----------------------------------------
+name: Voltline Electronics
+vertical: Consumer electronics
+description: >-
+  Reference implementation for a high-AOV consumer-electronics seller: serialised items, lithium-battery compliance,
+  adult signature above $500, freight-forwarder address risk, launch-day pre-order allocation, backorders with ETA,
+  ship-together bundles, vendor drop-ship with a vendor SLA, warranty RMA triage and disposition, trade-in credit and a
+  marketplace channel. Network: two DCs, four ship-from-store locations, one drop-ship vendor, one refurbishment centre.
+
+# ---- Sourcing and promise -------------------------------------------------------------------------------------------
+sourcing.margin_floor: 0.08                 # electronics run thin; 8 % contribution margin before finance must approve (GR-01)
+sourcing.max_split_packages: 2              # a phone order never travels in more than two boxes
+sourcing.split_penalty_usd: 14.0            # measured cost of one extra package incl. the signature surcharge
+sourcing.candidate_limit: 100
+sourcing.channel_default_policy:            # fulfilment policy when intent is unclear, per channel
+  web: ship_as_available
+  marketplace: ship_complete                # marketplace SLAs count one shipment per order
+  pos: ship_complete
+  agent: ship_complete
+  b2b: ship_complete
+sourcing.weights: { cost: 0.35, time: 0.30, soft: 0.25, split: 0.10 }   # promise accuracy matters more than for apparel
+sourcing.backorder_lead_days: 10            # promise offset when nothing is in stock and no PO/ASN ETA is known
+sourcing.reject_penalty: 0.3
+
+# ---- Inventory ------------------------------------------------------------------------------------------------------
+inventory.channel_buffer: 0.03              # 3 % of network ATP withheld from channel feeds (serialised stock has no slack)
+inventory.include_inbound: false            # pre-order wave 2 (ASN) is NOT promised until it is on hand
+
+# ---- Capture and customer service ----------------------------------------------------------------------------------
+capture.validation_steps: [schema, item_price_sanity, compliance, address, payment_status, agent_provenance]
+capture.price_tolerance: 0.15               # tighter than apparel: a $1,099 phone sold at $900 is a feed error
+cs.carrier_intercept_enabled: true          # address change after shipment is offered as a carrier intercept
+cs.carrier_intercept_fee_usd: 18.0
+appeasement.role_limits: { cs_rep: 25, ops_analyst: 75, finance_controller: 500 }
+
+# ---- Finance, tax, compliance --------------------------------------------------------------------------------------
+finance.payment_fee_rate: 0.026             # negotiated blended card rate on a high AOV
+finance.payment_fee_fixed: 0.30
+finance.returns_reserve_rate: 0.04
+tax.default_rate: 0.0
+tax.rates: { TN: 0.07, NV: 0.0685, TX: 0.0625, IL: 0.0625, NJ: 0.06625, CA: 0.0725, KY: 0.06, NY: 0.04, WA: 0.065, FL: 0.06, GA: 0.04, CO: 0.029, AZ: 0.056, MA: 0.0625, PA: 0.06 }
+compliance.restricted_zips: []              # add ZIP prefixes you will not ship to (rule restricted_zip holds the order)
+compliance.restricted_states: {}            # per-category state bans merged into rules/compliance.yaml
+
+# ---- Guardrails and AI ---------------------------------------------------------------------------------------------
+guardrail.refund_velocity_usd_per_hour: 25000       # one returned TV is $1,799; the cap must fit the AOV (GR-05)
+guardrail.appeasement_velocity_usd_per_hour: 1500
+guardrail.refund_velocity_usd_per_hour_per_actor: 6000
+ai.budget_usd_per_day: 75
+agent.injection_threshold: 0.7
+agent.default_max_order_value: 1500         # agents without limits may not place a laptop order
+agent.default_max_refund: 300
+
+# ---- Returns (warranty RMA) ----------------------------------------------------------------------------------------
+returns.window_days: 30                     # default; refurbished items are 14 days (see order type returnWindowDays)
+returns.restocking_fee_pct: 0.15            # 15 % on opened / damaged electronics, never on defective or transit damage
+returns.restocking_fee_conditions: [damaged, missing_parts]
+returns.refundable_conditions: [new, like_new, damaged, missing_parts]
+returns.refund_requires_approval_above_usd: 1000    # laptops and TVs always pass a finance approver
+returns.refund_shipping: false
+returns.return_shipping_cost_usd: 11.5      # keep-it economics: insured return label for electronics
+returns.return_handling_cost_usd: 6.0       # diagnostic bench time at the refurbishment centre
+returns.recovery_rate: 0.55                 # certified-refurbished resale recovers more than apparel liquidation
+returns.keep_it_enabled: true               # cables and cases: cheaper to let the customer keep them
+returns.flagged_customers: []
+returns.serial_returner_threshold: 4
+returns.not_received_claims_threshold: 2
+returns.reason_taxonomy: [defective, damaged_in_transit, changed_mind, wrong_item, not_as_described, arrived_late, not_received, other]
+
+# ---- Launch / pre-order policy (tenant-defined keys; read by the launch-allocation inputs in scripts/reference) ----
+preorder.wave_size: 10                      # units on hand for wave 1 of the Nova X2 launch
+preorder.protected_tiers: [gold]            # loyalty tiers whose late pre-orders still get allocation protection
+preorder.protected_units: 2                 # units of wave 1 reserved for protected tiers
+preorder.next_wave_eta_days: 14             # ASN ETA used for waitlist promises
+drop_ship.vendor_ship_sla_hours: 48         # vendor must confirm shipment within 48 h of release (sla.yaml mirrors this)
+
+# ---- Orchestration, monitoring, platform ---------------------------------------------------------------------------
+orchestration.fulfilment_timeout: P7D       # drop-ship vendors are slower than our DCs
+orchestration.delivery_timeout: P14D
+orchestration.pickup_window: P5D
+alerts.dedupe_minutes: 15
+notify.brand_name: Voltline Electronics
+notify.default_channel: email
+# alerts.slack_webhook / alerts.pagerduty_routing_key / webhooks.inbound_secret: set through the API, never here.

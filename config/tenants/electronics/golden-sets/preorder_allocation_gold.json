@@ -1,0 +1,481 @@
+{
+  "goldenSet": "preorder_allocation_gold",
+  "cases": [
+    {
+      "caseId": "pr_01",
+      "input": {
+        "order": {
+          "launch_rank": 1,
+          "qty": 1,
+          "minutes_after_launch": 0,
+          "channel": "web",
+          "payment_status": "authorized",
+          "notes": ""
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "preorders_cancelled_12m": 0
+          },
+          "orders_in_launch": 1
+        },
+        "allocation": {
+          "wave_units": 10,
+          "wave_units_remaining": 10,
+          "protected_units_remaining": 2,
+          "protected_tiers": [
+            "gold"
+          ],
+          "next_wave_eta_days": 14
+        }
+      },
+      "expected": {
+        "value": "allocate_now"
+      },
+      "notes": "Rule in_wave: first order of the launch"
+    },
+    {
+      "caseId": "pr_02",
+      "input": {
+        "order": {
+          "launch_rank": 10,
+          "qty": 1,
+          "minutes_after_launch": 6,
+          "channel": "web",
+          "payment_status": "authorized",
+          "notes": ""
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "orders_12m": 3,
+            "preorders_cancelled_12m": 0
+          },
+          "orders_in_launch": 1
+        },
+        "allocation": {
+          "wave_units": 10,
+          "wave_units_remaining": 1,
+          "protected_units_remaining": 2,
+          "protected_tiers": [
+            "gold"
+          ],
+          "next_wave_eta_days": 14
+        }
+      },
+      "expected": {
+        "value": "allocate_now"
+      },
+      "notes": "Rule in_wave: last unit of wave 1 by order time"
+    },
+    {
+      "caseId": "pr_03",
+      "input": {
+        "order": {
+          "launch_rank": 11,
+          "qty": 1,
+          "minutes_after_launch": 7,
+          "channel": "web",
+          "payment_status": "authorized",
+          "notes": ""
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "preorders_cancelled_12m": 0
+          },
+          "orders_in_launch": 1
+        },
+        "allocation": {
+          "wave_units": 10,
+          "wave_units_remaining": 0,
+          "protected_units_remaining": 2,
+          "protected_tiers": [
+            "gold"
+          ],
+          "next_wave_eta_days": 14
+        }
+      },
+      "expected": {
+        "value": "waitlist"
+      },
+      "notes": "Eleventh order, standard tier, wave gone"
+    },
+    {
+      "caseId": "pr_04",
+      "input": {
+        "order": {
+          "launch_rank": 12,
+          "qty": 1,
+          "minutes_after_launch": 14,
+          "channel": "web",
+          "payment_status": "authorized",
+          "notes": ""
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "orders_12m": 9,
+            "preorders_cancelled_12m": 0
+          },
+          "orders_in_launch": 1
+        },
+        "allocation": {
+          "wave_units": 10,
+          "wave_units_remaining": 0,
+          "protected_units_remaining": 2,
+          "protected_tiers": [
+            "gold"
+          ],
+          "next_wave_eta_days": 14
+        }
+      },
+      "expected": {
+        "value": "allocate_now"
+      },
+      "notes": "Rule loyalty_protection: gold member ordered 14 minutes after launch"
+    },
+    {
+      "caseId": "pr_05",
+      "input": {
+        "order": {
+          "launch_rank": 13,
+          "qty": 1,
+          "minutes_after_launch": 20,
+          "channel": "web",
+          "payment_status": "authorized",
+          "notes": ""
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "orders_12m": 5,
+            "preorders_cancelled_12m": 0
+          },
+          "orders_in_launch": 1
+        },
+        "allocation": {
+          "wave_units": 10,
+          "wave_units_remaining": 0,
+          "protected_units_remaining": 0,
+          "protected_tiers": [
+            "gold"
+          ],
+          "next_wave_eta_days": 14
+        }
+      },
+      "expected": {
+        "value": "allocate_next_wave"
+      },
+      "notes": "Gold but protected units exhausted: guaranteed next wave"
+    },
+    {
+      "caseId": "pr_06",
+      "input": {
+        "order": {
+          "launch_rank": 4,
+          "qty": 1,
+          "minutes_after_launch": 2,
+          "channel": "web",
+          "payment_status": "declined",
+          "notes": ""
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "preorders_cancelled_12m": 0
+          },
+          "orders_in_launch": 1
+        },
+        "allocation": {
+          "wave_units": 10,
+          "wave_units_remaining": 7,
+          "protected_units_remaining": 2,
+          "protected_tiers": [
+            "gold"
+          ],
+          "next_wave_eta_days": 14
+        }
+      },
+      "expected": {
+        "value": "cancel"
+      },
+      "notes": "Rule payment_declined"
+    },
+    {
+      "caseId": "pr_07",
+      "input": {
+        "order": {
+          "launch_rank": 11,
+          "qty": 1,
+          "minutes_after_launch": 8,
+          "channel": "web",
+          "payment_status": "authorized",
+          "notes": ""
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "preorders_cancelled_12m": 0
+          },
+          "orders_in_launch": 1
+        },
+        "allocation": {
+          "wave_units": 10,
+          "wave_units_remaining": 1,
+          "protected_units_remaining": 2,
+          "protected_tiers": [
+            "gold"
+          ],
+          "next_wave_eta_days": 14
+        }
+      },
+      "expected": {
+        "value": "allocate_now"
+      },
+      "notes": "Order 3 cancelled so one unit is free again"
+    },
+    {
+      "caseId": "pr_08",
+      "input": {
+        "order": {
+          "launch_rank": 15,
+          "qty": 1,
+          "minutes_after_launch": 30,
+          "channel": "web",
+          "payment_status": "authorized",
+          "notes": ""
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "orders_12m": 3,
+            "preorders_cancelled_12m": 0
+          },
+          "orders_in_launch": 1
+        },
+        "allocation": {
+          "wave_units": 10,
+          "wave_units_remaining": 0,
+          "protected_units_remaining": 1,
+          "protected_tiers": [
+            "gold"
+          ],
+          "next_wave_eta_days": 14
+        }
+      },
+      "expected": {
+        "value": "waitlist"
+      },
+      "notes": "Silver is not a protected tier"
+    },
+    {
+      "caseId": "pr_09",
+      "input": {
+        "order": {
+          "launch_rank": 11,
+          "qty": 2,
+          "minutes_after_launch": 9,
+          "channel": "web",
+          "payment_status": "authorized",
+          "notes": ""
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "preorders_cancelled_12m": 0
+          },
+          "orders_in_launch": 1
+        },
+        "allocation": {
+          "wave_units": 10,
+          "wave_units_remaining": 1,
+          "protected_units_remaining": 2,
+          "protected_tiers": [
+            "gold"
+          ],
+          "next_wave_eta_days": 14
+        }
+      },
+      "expected": {
+        "value": "waitlist"
+      },
+      "notes": "Two units wanted, one left: whole order waits"
+    },
+    {
+      "caseId": "pr_10",
+      "input": {
+        "order": {
+          "launch_rank": 9,
+          "qty": 2,
+          "minutes_after_launch": 5,
+          "channel": "web",
+          "payment_status": "authorized",
+          "notes": ""
+        },
+        "customer": {
+          "tier": "silver",
+          "history": {
+            "orders_12m": 3,
+            "preorders_cancelled_12m": 0
+          },
+          "orders_in_launch": 1
+        },
+        "allocation": {
+          "wave_units": 10,
+          "wave_units_remaining": 1,
+          "protected_units_remaining": 2,
+          "protected_tiers": [
+            "gold"
+          ],
+          "next_wave_eta_days": 14
+        }
+      },
+      "expected": {
+        "value": "allocate_next_wave"
+      },
+      "notes": "Inside the wave by rank but short one unit: guarantee the next wave"
+    },
+    {
+      "caseId": "pr_11",
+      "input": {
+        "order": {
+          "launch_rank": 5,
+          "qty": 1,
+          "minutes_after_launch": 3,
+          "channel": "web",
+          "payment_status": "pending",
+          "notes": ""
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "preorders_cancelled_12m": 0
+          },
+          "orders_in_launch": 1
+        },
+        "allocation": {
+          "wave_units": 10,
+          "wave_units_remaining": 6,
+          "protected_units_remaining": 2,
+          "protected_tiers": [
+            "gold"
+          ],
+          "next_wave_eta_days": 14
+        }
+      },
+      "expected": {
+        "value": "unclear"
+      },
+      "notes": "Payment still pending at launch"
+    },
+    {
+      "caseId": "pr_12",
+      "input": {
+        "order": {
+          "launch_rank": 11,
+          "qty": 1,
+          "minutes_after_launch": 12,
+          "channel": "web",
+          "payment_status": "authorized",
+          "notes": ""
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "orders_12m": 3,
+            "preorders_cancelled_12m": 0
+          },
+          "orders_in_launch": 2
+        },
+        "allocation": {
+          "wave_units": 10,
+          "wave_units_remaining": 0,
+          "protected_units_remaining": 2,
+          "protected_tiers": [
+            "gold"
+          ],
+          "next_wave_eta_days": 14
+        }
+      },
+      "expected": {
+        "value": "waitlist"
+      },
+      "notes": "Gold member's second order in the launch is not protected"
+    },
+    {
+      "caseId": "pr_13",
+      "input": {
+        "order": {
+          "launch_rank": 30,
+          "qty": 1,
+          "minutes_after_launch": 55,
+          "channel": "marketplace",
+          "payment_status": "authorized",
+          "notes": ""
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "preorders_cancelled_12m": 0
+          },
+          "orders_in_launch": 1
+        },
+        "allocation": {
+          "wave_units": 10,
+          "wave_units_remaining": 0,
+          "protected_units_remaining": 0,
+          "protected_tiers": [
+            "gold"
+          ],
+          "next_wave_eta_days": 14
+        }
+      },
+      "expected": {
+        "value": "waitlist"
+      },
+      "notes": "Marketplace order late in the queue"
+    },
+    {
+      "caseId": "pr_14",
+      "input": {
+        "order": {
+          "launch_rank": 12,
+          "qty": 1,
+          "minutes_after_launch": 16,
+          "channel": "web",
+          "payment_status": "authorized",
+          "notes": ""
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "orders_12m": 11,
+            "preorders_cancelled_12m": 0
+          },
+          "orders_in_launch": 1
+        },
+        "allocation": {
+          "wave_units": 10,
+          "wave_units_remaining": 0,
+          "protected_units_remaining": 1,
+          "protected_tiers": [
+            "gold"
+          ],
+          "next_wave_eta_days": 14
+        }
+      },
+      "expected": {
+        "value": "allocate_now"
+      },
+      "notes": "Rule loyalty_protection with the last protected unit"
+    }
+  ]
+}

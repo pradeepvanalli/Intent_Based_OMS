@@ -1,0 +1,947 @@
+{
+  "goldenSet": "bracketing_likelihood_gold",
+  "cases": [
+    {
+      "caseId": "brac_01",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "notes": "Ordering the 28 and the 30, will return the one that doesn't fit.",
+          "line_count": 2,
+          "lines": [
+            {
+              "style": "JNS-STR",
+              "size": "28",
+              "colour": "indigo",
+              "qty": 1
+            },
+            {
+              "style": "JNS-STR",
+              "size": "30",
+              "colour": "indigo",
+              "qty": 1
+            }
+          ],
+          "same_style_adjacent_size_pairs": 1,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "returns_12m": 1,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 4
+      },
+      "notes": "explicit_return_note rule"
+    },
+    {
+      "caseId": "brac_02",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "notes": "",
+          "line_count": 2,
+          "lines": [
+            {
+              "style": "JNS-STR",
+              "size": "28",
+              "colour": "indigo",
+              "qty": 1
+            },
+            {
+              "style": "JNS-STR",
+              "size": "30",
+              "colour": "indigo",
+              "qty": 1
+            }
+          ],
+          "same_style_adjacent_size_pairs": 1,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "returns_12m": 1,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 2
+      },
+      "notes": "adjacent sizes, no note, no history"
+    },
+    {
+      "caseId": "brac_03",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "notes": "",
+          "line_count": 1,
+          "lines": [
+            {
+              "style": "JNS-STR",
+              "size": "28",
+              "colour": "indigo",
+              "qty": 1
+            }
+          ],
+          "same_style_adjacent_size_pairs": 0,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "returns_12m": 1,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 0
+      },
+      "notes": "single_line rule"
+    },
+    {
+      "caseId": "brac_04",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "notes": "",
+          "line_count": 2,
+          "lines": [
+            {
+              "style": "JNS-STR",
+              "size": "28",
+              "colour": "indigo",
+              "qty": 1
+            },
+            {
+              "style": "TEE-ORG",
+              "size": "M",
+              "colour": "white",
+              "qty": 1
+            }
+          ],
+          "same_style_adjacent_size_pairs": 0,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "returns_12m": 1,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 0
+      },
+      "notes": "no_repeated_style rule"
+    },
+    {
+      "caseId": "brac_05",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "notes": "",
+          "line_count": 3,
+          "lines": [
+            {
+              "style": "DRS-WRAP",
+              "size": "S",
+              "colour": "navy",
+              "qty": 1
+            },
+            {
+              "style": "DRS-WRAP",
+              "size": "M",
+              "colour": "navy",
+              "qty": 1
+            },
+            {
+              "style": "DRS-WRAP",
+              "size": "L",
+              "colour": "navy",
+              "qty": 1
+            }
+          ],
+          "same_style_adjacent_size_pairs": 2,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "returns_12m": 1,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 4
+      },
+      "notes": "three_sizes_same_style rule"
+    },
+    {
+      "caseId": "brac_06",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "notes": "",
+          "line_count": 2,
+          "lines": [
+            {
+              "style": "DRS-MIDI",
+              "size": "S",
+              "colour": "black",
+              "qty": 1
+            },
+            {
+              "style": "DRS-MIDI",
+              "size": "S",
+              "colour": "rust",
+              "qty": 1
+            }
+          ],
+          "same_style_adjacent_size_pairs": 0,
+          "same_style_same_size_colour_pairs": 1
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "returns_12m": 1,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 1
+      },
+      "notes": "two colours of one size"
+    },
+    {
+      "caseId": "brac_07",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "notes": "",
+          "line_count": 2,
+          "lines": [
+            {
+              "style": "DRS-WRAP",
+              "size": "S",
+              "colour": "navy",
+              "qty": 1
+            },
+            {
+              "style": "DRS-WRAP",
+              "size": "M",
+              "colour": "navy",
+              "qty": 1
+            }
+          ],
+          "same_style_adjacent_size_pairs": 1,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 6,
+            "returns_12m": 3,
+            "bracketing_returns_12m": 2
+          }
+        }
+      },
+      "expected": {
+        "value": 3
+      },
+      "notes": "customer returned one size of a pair before"
+    },
+    {
+      "caseId": "brac_08",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "notes": "Not sure about sizing, I'm between a 28 and a 30.",
+          "line_count": 2,
+          "lines": [
+            {
+              "style": "JNS-STR",
+              "size": "28",
+              "colour": "indigo",
+              "qty": 1
+            },
+            {
+              "style": "JNS-STR",
+              "size": "30",
+              "colour": "indigo",
+              "qty": 1
+            }
+          ],
+          "same_style_adjacent_size_pairs": 1,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "returns_12m": 1,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 3
+      },
+      "notes": "fit uncertainty in note"
+    },
+    {
+      "caseId": "brac_09",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "notes": "Please send both, I'll keep whichever fits better.",
+          "line_count": 2,
+          "lines": [
+            {
+              "style": "DRS-WRAP",
+              "size": "M",
+              "colour": "navy",
+              "qty": 1
+            },
+            {
+              "style": "DRS-WRAP",
+              "size": "L",
+              "colour": "navy",
+              "qty": 1
+            }
+          ],
+          "same_style_adjacent_size_pairs": 1,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "returns_12m": 1,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 4
+      },
+      "notes": "explicit_return_note rule (keep ... whichever)"
+    },
+    {
+      "caseId": "brac_10",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "notes": "",
+          "line_count": 1,
+          "lines": [
+            {
+              "style": "TEE-ORG",
+              "size": "M",
+              "colour": "black",
+              "qty": 2
+            }
+          ],
+          "same_style_adjacent_size_pairs": 0,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "returns_12m": 1,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 0
+      },
+      "notes": "plain multiple of one SKU"
+    },
+    {
+      "caseId": "brac_11",
+      "input": {
+        "order": {
+          "order_type": "try_before_you_buy",
+          "channel": "web",
+          "notes": "",
+          "line_count": 2,
+          "lines": [
+            {
+              "style": "DRS-MIDI",
+              "size": "S",
+              "colour": "rust",
+              "qty": 1
+            },
+            {
+              "style": "DRS-MIDI",
+              "size": "M",
+              "colour": "rust",
+              "qty": 1
+            }
+          ],
+          "same_style_adjacent_size_pairs": 1,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "returns_12m": 2,
+            "bracketing_returns_12m": 1
+          }
+        }
+      },
+      "expected": {
+        "value": 3
+      },
+      "notes": "try-before-you-buy with a bracketing history"
+    },
+    {
+      "caseId": "brac_12",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "notes": "",
+          "line_count": 2,
+          "lines": [
+            {
+              "style": "DRS-MIDI",
+              "size": "S",
+              "colour": "black",
+              "qty": 1
+            },
+            {
+              "style": "DRS-MIDI",
+              "size": "M",
+              "colour": "rust",
+              "qty": 1
+            }
+          ],
+          "same_style_adjacent_size_pairs": 1,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "returns_12m": 1,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 2
+      },
+      "notes": "adjacent sizes in different colours"
+    },
+    {
+      "caseId": "brac_13",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "notes": "Gift for my sister, send everything together.",
+          "line_count": 2,
+          "lines": [
+            {
+              "style": "DRS-WRAP",
+              "size": "M",
+              "colour": "navy",
+              "qty": 1
+            },
+            {
+              "style": "ACC-SCRF",
+              "size": "OS",
+              "colour": "print",
+              "qty": 1
+            }
+          ],
+          "same_style_adjacent_size_pairs": 0,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "returns_12m": 1,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 0
+      },
+      "notes": "gift note, no repeated style"
+    },
+    {
+      "caseId": "brac_14",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "notes": "I'll send back the one that doesn't fit.",
+          "line_count": 2,
+          "lines": [
+            {
+              "style": "SHO-LOAF",
+              "size": "38",
+              "colour": "tan",
+              "qty": 1
+            },
+            {
+              "style": "SHO-LOAF",
+              "size": "39",
+              "colour": "tan",
+              "qty": 1
+            }
+          ],
+          "same_style_adjacent_size_pairs": 1,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "returns_12m": 1,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 4
+      },
+      "notes": "explicit_return_note rule"
+    },
+    {
+      "caseId": "brac_15",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "notes": "Can't decide between the colours, will return one.",
+          "line_count": 2,
+          "lines": [
+            {
+              "style": "DRS-MIDI",
+              "size": "S",
+              "colour": "black",
+              "qty": 1
+            },
+            {
+              "style": "DRS-MIDI",
+              "size": "S",
+              "colour": "rust",
+              "qty": 1
+            }
+          ],
+          "same_style_adjacent_size_pairs": 0,
+          "same_style_same_size_colour_pairs": 1
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "returns_12m": 1,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 4
+      },
+      "notes": "explicit_return_note rule on a colour pair"
+    },
+    {
+      "caseId": "brac_16",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "notes": "",
+          "line_count": 2,
+          "lines": [
+            {
+              "style": "JNS-STR",
+              "size": "26",
+              "colour": "indigo",
+              "qty": 1
+            },
+            {
+              "style": "JNS-STR",
+              "size": "28",
+              "colour": "indigo",
+              "qty": 1
+            }
+          ],
+          "same_style_adjacent_size_pairs": 1,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 0,
+            "returns_12m": 0,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 2
+      },
+      "notes": "first-time customer"
+    },
+    {
+      "caseId": "brac_17",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "notes": "The 30 is for my daughter, the 28 is mine.",
+          "line_count": 2,
+          "lines": [
+            {
+              "style": "JNS-STR",
+              "size": "28",
+              "colour": "indigo",
+              "qty": 1
+            },
+            {
+              "style": "JNS-STR",
+              "size": "30",
+              "colour": "indigo",
+              "qty": 1
+            }
+          ],
+          "same_style_adjacent_size_pairs": 1,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "returns_12m": 1,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 1
+      },
+      "notes": "second wearer explains the pair"
+    },
+    {
+      "caseId": "brac_18",
+      "input": {
+        "order": {
+          "order_type": "wholesale",
+          "channel": "b2b",
+          "notes": "Autumn restock.",
+          "line_count": 3,
+          "lines": [
+            {
+              "style": "TEE-ORG",
+              "size": "S",
+              "colour": "white",
+              "qty": 6
+            },
+            {
+              "style": "TEE-ORG",
+              "size": "M",
+              "colour": "white",
+              "qty": 6
+            },
+            {
+              "style": "TEE-ORG",
+              "size": "L",
+              "colour": "white",
+              "qty": 6
+            }
+          ],
+          "same_style_adjacent_size_pairs": 2,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "returns_12m": 1,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 0
+      },
+      "notes": "wholesale size run is not bracketing"
+    },
+    {
+      "caseId": "brac_19",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "marketplace",
+          "notes": "",
+          "line_count": 2,
+          "lines": [
+            {
+              "style": "DRS-WRAP",
+              "size": "S",
+              "colour": "navy",
+              "qty": 1
+            },
+            {
+              "style": "DRS-WRAP",
+              "size": "M",
+              "colour": "navy",
+              "qty": 1
+            }
+          ],
+          "same_style_adjacent_size_pairs": 1,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "returns_12m": 1,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 2
+      },
+      "notes": "marketplace, adjacent sizes, no note"
+    },
+    {
+      "caseId": "brac_20",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "notes": "Does this style run small?",
+          "line_count": 2,
+          "lines": [
+            {
+              "style": "JNS-STR",
+              "size": "28",
+              "colour": "indigo",
+              "qty": 1
+            },
+            {
+              "style": "JNS-STR",
+              "size": "30",
+              "colour": "indigo",
+              "qty": 1
+            }
+          ],
+          "same_style_adjacent_size_pairs": 1,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "returns_12m": 1,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 3
+      },
+      "notes": "fit question in note"
+    },
+    {
+      "caseId": "brac_21",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "notes": "",
+          "line_count": 3,
+          "lines": [
+            {
+              "style": "DRS-MIDI",
+              "size": "M",
+              "colour": "black",
+              "qty": 1
+            },
+            {
+              "style": "ACC-BELT",
+              "size": "OS",
+              "colour": "black",
+              "qty": 1
+            },
+            {
+              "style": "ACC-SOCK",
+              "size": "OS",
+              "colour": "ecru",
+              "qty": 3
+            }
+          ],
+          "same_style_adjacent_size_pairs": 0,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "returns_12m": 1,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 0
+      },
+      "notes": "accessories, no repeated style"
+    },
+    {
+      "caseId": "brac_22",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "notes": "",
+          "line_count": 2,
+          "lines": [
+            {
+              "style": "SHO-LOAF",
+              "size": "38",
+              "colour": "tan",
+              "qty": 1
+            },
+            {
+              "style": "SHO-LOAF",
+              "size": "39",
+              "colour": "tan",
+              "qty": 1
+            }
+          ],
+          "same_style_adjacent_size_pairs": 1,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "returns_12m": 1,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 2
+      },
+      "notes": "shoes in adjacent sizes"
+    },
+    {
+      "caseId": "brac_23",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "notes": "Will return the pair that doesn't fit.",
+          "line_count": 2,
+          "lines": [
+            {
+              "style": "SHO-LOAF",
+              "size": "38",
+              "colour": "tan",
+              "qty": 1
+            },
+            {
+              "style": "SHO-LOAF",
+              "size": "39",
+              "colour": "tan",
+              "qty": 1
+            }
+          ],
+          "same_style_adjacent_size_pairs": 1,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "standard",
+          "history": {
+            "orders_12m": 3,
+            "returns_12m": 1,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 4
+      },
+      "notes": "explicit_return_note rule"
+    },
+    {
+      "caseId": "brac_24",
+      "input": {
+        "order": {
+          "order_type": "standard_ship",
+          "channel": "web",
+          "notes": "",
+          "line_count": 2,
+          "lines": [
+            {
+              "style": "DRS-WRAP",
+              "size": "S",
+              "colour": "navy",
+              "qty": 1
+            },
+            {
+              "style": "DRS-WRAP",
+              "size": "M",
+              "colour": "navy",
+              "qty": 1
+            }
+          ],
+          "same_style_adjacent_size_pairs": 1,
+          "same_style_same_size_colour_pairs": 0
+        },
+        "customer": {
+          "tier": "gold",
+          "history": {
+            "orders_12m": 9,
+            "returns_12m": 0,
+            "bracketing_returns_12m": 0
+          }
+        }
+      },
+      "expected": {
+        "value": 2
+      },
+      "notes": "gold customer, clean history, adjacent sizes"
+    }
+  ]
+}

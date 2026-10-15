@@ -1,0 +1,187 @@
+# Intent OMS GraphQL API (FR-CAP-01: ingest orders through REST and GraphQL; FR-CS-02 modifications; FR-SRC-05 promise;
+# FR-INV-01 network ATP; FR-RET-01 returns). Shapes mirror the REST JSON of /api/v1/orders, /api/v1/promise,
+# /api/v1/inventory/network and /api/v1/returns so clients can switch transport without re-mapping.
+# Endpoint: POST /graphql (authenticated like REST; X-Tenant-Id / token tenant). Errors carry extensions.code = problem code.
+
+scalar DateTime   # ISO-8601 instant, e.g. "2026-10-06T12:00:00Z"
+scalar Date       # ISO-8601 local date, e.g. "2026-10-09"
+scalar Decimal    # arbitrary-precision decimal serialised as a string-safe number
+scalar JSON       # free-form JSON object or value (extensions, attributes, explain)
+
+type Query {
+  "One order by OMS id (order.read)."
+  order(id: ID!): Order
+  "One order by its channel reference, e.g. channel \"shopify\" + the Shopify order id (order.read)."
+  orderByChannelRef(channel: String!, channelOrderId: String!): Order
+  "Order list with the same filters as GET /api/v1/orders (order.read)."
+  orders(filter: OrderFilter, offset: Int = 0, limit: Int = 50): OrderPage!
+  "Delivery promise for a cart (promise.read); deterministic, cached, no model call (FR-SRC-05)."
+  promise(input: PromiseInput!): Promise!
+  "Network available-to-promise per sku (inventory.read)."
+  inventory(skus: [String!]!): [NetworkAtp!]!
+  "Returns opened against an order (order.read)."
+  returns(orderId: ID!): [ReturnSummary!]!
+}
+
+type Mutation {
+  "Capture an order (order.create). Idempotent on (channel, channelOrderId) and on idempotencyKey; replayed=true on a replay (FR-CAP-04)."
+  captureOrder(input: CaptureOrderInput!, idempotencyKey: String): CaptureResult!
+  "Apply a customer-service change (order.modify; cancellations need order.cancel) (FR-CS-02)."
+  modifyOrder(orderId: ID!, modification: ModificationInput!, reason: String!): Order!
+  "Cancel the whole order (order.cancel)."
+  cancelOrder(orderId: ID!, reason: String!): Order!
+  "Open a return (return.create) (FR-RET-01)."
+  createReturn(input: ReturnInput!): ReturnRecord!
+}
+
+# ---- Order -----------------------------------------------------------------------------------------------------------
+
+type Money { amount: Decimal!, currency: String! }
+
+type Order {
+  id: ID!
+  channel: String!
+  channelOrderId: String!
+  orderType: String!
+  customerRef: String
+  customer: Customer
+  lines: [OrderLine!]!
+  addresses: [Address!]!
+  charges: [Charge!]!
+  tenders: [Tender!]!
+  notes: [Note!]!
+  fulfilmentGroups: [FulfilmentGroup!]!
+  intent: IntentProfile
+  provenance: AgentProvenance
+  totals: Totals
+  "Contribution margin snapshot (FR-FIN-04). Internal only: null for agent principals."
+  margin: MarginSnapshot
+  status: String
+  shipMethod: String
+  currency: String!
+  extensions: JSON
+  placedAt: DateTime
+  capturedAt: DateTime
+  updatedAt: DateTime
+  version: Int!
+  "Header quantity-by-state from the state machine (FR-SM-02)."
+  header: EntityStatus
+  "Line quantity-by-state from the state machine (FR-SM-02); one batched lookup."
+  lineStatuses: [EntityStatus!]!
+  shipments: [Shipment!]!
+  returns: [ReturnSummary!]!
+}
+
+type Customer { ref: String, name: String, email: String, phone: String, tier: String, ageVerified: Boolean!, history: JSON }
+
+type OrderLine {
+  lineId: ID!
+  sku: String!
+  description: String
+  qty: Int!
+  unitPrice: Money!
+  discount: Money
+  tax: Money
+  fulfilmentGroupId: String
+  status: String
+  attributes: JSON
+  "Quantity buckets of this line (FR-SM-02), batched per order."
+  quantities: [QuantityBucket!]!
+}
+
+type Address {
+  type: String!, name: String, line1: String, line2: String, city: String, state: String, zip: String, country: String, phone: String
+  addressType: String, verified: Boolean!, lat: Float, lon: Float
+}
+type Charge { type: String!, code: String, amount: Money!, description: String }
+type Tender { type: String!, token: String, amount: Money, status: String, paymentId: String, details: JSON }
+type Note { source: String, author: String, text: String, at: DateTime, customerVisible: Boolean!, injectionRisk: Float }
+type Allocation { lineId: ID!, sku: String!, qty: Int! }
+type FulfilmentGroup {
+  id: ID!, nodeId: String!, policy: String, allocations: [Allocation!]!, promiseDate: Date, onTimeProbability: Float, shipMethod: String
+  estimatedCost: Money, status: String, sourcingPlanId: String, decisionRecordId: String, explain: JSON
+}
+type IntentProfile { policy: String!, confidence: Float!, source: String, explicitChoices: [String!]!, decisionRecordId: String, splitOk: Boolean, isGift: Boolean }
+type AgentProvenance { agentId: String!, protocol: String, mandateId: String, spendLimit: Money, instructionText: String, buyerRef: String, withinMandate: Boolean, mandateDecisionRecordId: String }
+type Totals { merchandise: Money, discounts: Money, shipping: Money, tax: Money, duties: Money, fees: Money, grandTotal: Money }
+type MarginSnapshot { revenue: Decimal, contributionMargin: Decimal, marginRatio: Float!, floor: Float!, belowFloor: Boolean!, approvalPresent: Boolean!, approvalTaskId: String, computedAt: DateTime }
+type QuantityBucket { state: String!, qty: Int!, since: DateTime }
+type EntityStatus { entityType: String!, entityId: ID!, modelId: String!, modelVersion: Int!, state: String!, quantities: [QuantityBucket!]!, attributes: JSON }
+type ShipmentLine { lineId: ID!, qty: Int! }
+type Shipment { id: ID!, nodeId: String, carrier: String, service: String, tracking: String, status: String, lines: [ShipmentLine!]!, shippedAt: DateTime, deliveredAt: DateTime, eta: DateTime }
+
+type OrderSummary {
+  id: ID!, channel: String!, channelOrderId: String!, orderType: String!, customerRef: String, status: String, grandTotal: Decimal, currency: String
+  intentPolicy: String, agentOrder: Boolean!, primaryNodeId: String, marginRatio: Float, placedAt: DateTime, updatedAt: DateTime, lineCount: Int!
+}
+type OrderPage { items: [OrderSummary!]!, total: Int!, offset: Int!, limit: Int! }
+type CaptureResult { order: Order!, replayed: Boolean! }
+
+# ---- Promise / inventory ---------------------------------------------------------------------------------------------
+
+type PromiseOption { shipMethod: String, date: Date, onTimeProbability: Float!, fromNodeId: String, costDelta: Money }
+type Promise { date: Date, onTimeProbability: Float!, fromNodeId: String, shipMethod: String, fromCache: Boolean!, latencyMs: Int!, alternatives: [PromiseOption!]! }
+type NetworkAtp { sku: String!, available: Int! }
+
+# ---- Returns ----------------------------------------------------------------------------------------------------------
+
+type ReturnSummary { rma: ID!, orderId: ID!, status: String!, createdAt: DateTime, channel: String, customerRef: String, lineCount: Int!, refundAmount: Money, riskScore: Float, riskLevel: String, refundTiming: String, disposition: String, updatedAt: DateTime }
+type ReturnLine { lineId: ID!, sku: String, description: String, qty: Int!, unitPrice: Money, tax: Money, reason: String, customerReasonText: String, condition: String, disposition: String }
+type ReasonCode { code: String!, probability: Float }
+type Eligibility { eligible: Boolean!, reasons: [String!]!, windowDays: Int, daysSinceDelivery: Int, finalSale: Boolean! }
+type RefundView { amount: Money, restockingFee: Money, taxRefunded: Money, shippingRefunded: Money, method: String, status: String, approvalTaskId: String, holdReason: String, approvedBy: String, issuedAt: DateTime }
+type KeepIt { recommended: Boolean!, offered: Boolean!, reason: String, returnCost: Money, recovery: Money }
+type ReturnRecord {
+  rma: ID!, orderId: ID!, channelOrderId: String, orderChannel: String, channel: String, customerRef: String, status: String!, reason: String, customerReasonText: String
+  lines: [ReturnLine!]!, createdAt: DateTime, createdBy: String, riskScore: Float, riskLevel: String, reasonCodes: [ReasonCode!]!, riskDecisionRecordId: String
+  refundTiming: String, refundTimingDecisionRecordId: String, disposition: String, dispositionDecisionRecordId: String
+  eligibility: Eligibility, refund: RefundView, keepIt: KeepIt, condition: String, inspectionNote: String, receiptPresent: Boolean!, storeNodeId: String
+  agentId: String, mandateId: String, reviewTaskId: String, reviewTaskType: String, scannedAt: DateTime, receivedAt: DateTime, receivedNodeId: String
+  inspectedAt: DateTime, refundedAt: DateTime, refundAmount: Money, merchandiseTotal: Money
+}
+
+# ---- Inputs -----------------------------------------------------------------------------------------------------------
+
+input OrderFilter {
+  statuses: [String!], channel: String, orderType: String, customerRef: String, nodeId: String, placedFrom: DateTime, placedTo: DateTime
+  text: String, agentOrders: Boolean, belowFloor: Boolean
+}
+
+input MoneyInput { amount: Decimal!, currency: String! }
+input CustomerInput { ref: String, name: String, email: String, phone: String, tier: String, ageVerified: Boolean, age: Int, history: JSON }
+input LineInput { lineId: String, sku: String!, description: String, qty: Int!, unitPrice: MoneyInput, discount: MoneyInput, taxCode: String, attributes: JSON }
+input AddressInput { type: String!, name: String, line1: String, line2: String, city: String, state: String, zip: String, country: String, phone: String, addressType: String }
+input ChargeInput { type: String!, code: String, amount: MoneyInput!, description: String }
+input TenderInput { type: String!, token: String, amount: MoneyInput, details: JSON }
+input NoteInput { source: String, author: String, text: String!, customerVisible: Boolean }
+input ProvenanceInput { agentId: String!, protocol: String, mandateId: String, spendLimit: MoneyInput, instructionText: String, signature: String, buyerRef: String, raw: JSON }
+
+"Mirrors CaptureRequest (POST /api/v1/orders). Everything is optional except channel, channelOrderId and one line."
+input CaptureOrderInput {
+  channel: String!
+  channelOrderId: String!
+  orderType: String
+  customerRef: String
+  customer: CustomerInput
+  lines: [LineInput!]!
+  addresses: [AddressInput!]
+  charges: [ChargeInput!]
+  tenders: [TenderInput!]
+  notes: [NoteInput!]
+  intentChoices: [String!]
+  shipMethod: String
+  placedAt: DateTime
+  currency: String
+  extensions: JSON
+  provenance: ProvenanceInput
+}
+
+enum ModificationType { ChangeAddress, ChangeQty, CancelLine, CancelOrder, ChangeShipMethod, ChangeItem }
+"Mirrors the REST Modification: the variant in type, its fields flat (FR-CS-02)."
+input ModificationInput { type: ModificationType!, lineId: String, qty: Int, newSku: String, shipMethod: String, address: AddressInput }
+
+input PromiseLineInput { sku: String!, qty: Int! }
+input PromiseInput { lines: [PromiseLineInput!]!, destinationZip: String, destinationState: String, channel: String, shipMethod: String }
+
+input ReturnLineInput { lineId: String!, qty: Int!, reasonCode: String, customerReasonText: String }
+input ReturnInput { orderId: ID!, lines: [ReturnLineInput!]!, channel: String, agentId: String, mandateId: String, receiptPresent: Boolean, storeNodeId: String, customerReasonText: String }

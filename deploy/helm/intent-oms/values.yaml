@@ -1,0 +1,199 @@
+# Default values for the intent-oms chart. Production-shaped by default (prod Spring profile, no demo data, secrets
+# required). For a quick evaluation in a cluster:
+#   helm install oms deploy/helm/intent-oms --set demo.enabled=true --set postgresql.enabled=true
+# and port-forward svc/oms-intent-oms 8080:80. See deploy/helm/intent-oms/README.md and docs/DEPLOYMENT.md.
+
+replicaCount: 3
+
+image:
+  # ghcr.io/<owner>/<repo> as published by .github/workflows/release.yml; "intent-oms" is the placeholder owner.
+  repository: ghcr.io/pradeepvanalli/invent_based_oms
+  tag: ""            # defaults to .Chart.appVersion; pin by digest below in production
+  digest: ""         # e.g. sha256:...; when set it wins over tag
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# ---------------------------------------------------------------------------------------------------- application
+# Spring profile. "prod" (the default when demo.enabled=false) loads application-prod.yml and runs the fail-fast
+# ProductionReadinessCheck: random JWT secret, master key, explicit CORS, no dev users, no demo seed. Set to "" for
+# the default profile (what demo.enabled does).
+springProfile: ""
+# Evaluation mode: default profile, demo seed of the four sample tenants, the six bootstrap users per tenant
+# (password = user name). Never enable on anything reachable from the internet.
+demo:
+  enabled: false
+  tenants: demo,retail,electronics,apparel
+  # id:password:tenant:role1|role2, comma separated (OMS_DEV_USERS). Empty = the application default (demo tenant users).
+  devUsers: ""
+
+# Non-secret environment (rendered into a ConfigMap and loaded with envFrom). Keys are environment variable names;
+# see .env.example and docs/CONFIGURATION.md for the full list.
+config:
+  OMS_CORS_ALLOWED_ORIGINS: ""          # required in prod, e.g. https://oms.example.com (comma separated, no "*")
+  OMS_CORS_ALLOW_CREDENTIALS: "false"
+  OMS_DB_POOL: "32"
+  OMS_SWAGGER_ENABLED: "false"
+  OMS_OIDC_ISSUER_URI: ""
+  OMS_OIDC_AUDIENCE: ""
+  OMS_OIDC_DEFAULT_TENANT: ""
+  OMS_OIDC_TENANT_CLAIM: "tenant"
+  OMS_OIDC_ROLES_CLAIM: "roles"
+  OMS_REDIS_URL: ""                     # redis://host:6379 for the shared promise cache (optional)
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""       # http://otel-collector:4318/v1/traces
+  OTEL_SAMPLING: "0.1"
+  LLM_PROVIDER: "auto"
+  JEV_ENABLED: "true"
+  JAVA_OPTS: "-XX:MaxRAMPercentage=75 -XX:+UseZGC -XX:+ZGenerational -Djava.io.tmpdir=/tmp"
+# Extra env entries in Kubernetes form (valueFrom etc.), appended verbatim.
+extraEnv: []
+# Extra envFrom sources (e.g. a Secret managed by external-secrets), appended verbatim.
+extraEnvFrom: []
+
+# ---------------------------------------------------------------------------------------------------- secrets
+secrets:
+  # false → nothing is created; existingSecret must then hold the keys listed under `values` (same names).
+  create: true
+  existingSecret: ""
+  # Values rendered into the chart-managed Secret. Empty strings are omitted. In prod every one of the first five is
+  # required by ProductionReadinessCheck. Leave OMS_JWT_SECRET / OMS_MASTER_KEY empty to have the chart generate
+  # random values on first install (kept across upgrades via lookup; NOT available with `helm template`).
+  values:
+    OMS_DB_URL: ""          # ignored when postgresql.enabled (derived from the bundled database)
+    OMS_DB_USER: ""
+    OMS_DB_PASSWORD: ""
+    OMS_JWT_SECRET: ""      # >= 32 random chars (openssl rand -base64 48)
+    OMS_MASTER_KEY: ""      # openssl rand -base64 32; wraps per-tenant PII keys - back it up
+    OPENROUTER_API_KEY: ""  # AI providers (optional; without them the system runs on rules and defaults)
+    TYPESAFE_API_KEY: ""
+    ANTHROPIC_API_KEY: ""
+    OPENAI_API_KEY: ""
+    OMS_FINANCE_STRIPE_API_KEY: ""
+
+# ---------------------------------------------------------------------------------------------------- database
+# Bundled PostgreSQL 16 (a single-replica StatefulSet with a PVC) for evaluation and small installs. For production
+# set enabled=false and point secrets.values.OMS_DB_URL at a managed service or an operator-run cluster
+# (CloudNativePG, Crunchy, Zalando) with synchronous replication and WAL archiving (docs/DEPLOYMENT.md section 5).
+postgresql:
+  enabled: false
+  image: postgres:16-alpine
+  database: oms
+  username: oms
+  password: oms            # change it; or use existingSecret with key POSTGRES_PASSWORD
+  existingSecret: ""
+  storage:
+    size: 20Gi
+    storageClassName: ""   # cluster default when empty
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { memory: 2Gi }
+  args: ["-c", "max_connections=300", "-c", "shared_buffers=512MB", "-c", "wal_level=logical"]
+
+# ---------------------------------------------------------------------------------------------------- config dir
+# Tenant configuration files mounted at OMS_CONFIG_DIR (/config), replacing the config/ baked into the image. Keys are
+# paths relative to the config dir (tenants/<tenant>/<file>.yaml); or name a ConfigMap you manage yourself whose keys
+# use "__" in place of "/". Most production deployments load tenants through the API instead (scripts/new-tenant.sh)
+# and leave this disabled.
+configDir:
+  enabled: false
+  existingConfigMap: ""
+  files: {}
+  #  tenants/acme/tenant.yaml: |
+  #    id: acme
+  #    name: Acme Outdoors
+
+# ---------------------------------------------------------------------------------------------------- workload
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+  automountToken: false
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/path: /actuator/prometheus
+  prometheus.io/port: "8080"
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 100           # `oms` user created in the Dockerfile (alpine adduser -S)
+  runAsGroup: 101
+  fsGroup: 101
+  seccompProfile: { type: RuntimeDefault }
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  privileged: false
+  capabilities: { drop: ["ALL"] }
+tmpSizeLimit: 256Mi
+
+resources:
+  requests: { cpu: "1", memory: 2Gi }
+  limits: { memory: 3Gi }
+
+livenessProbe:
+  httpGet: { path: /actuator/health/liveness, port: http }
+  periodSeconds: 10
+  failureThreshold: 6
+readinessProbe:
+  httpGet: { path: /actuator/health/readiness, port: http }
+  periodSeconds: 5
+startupProbe:
+  httpGet: { path: /actuator/health/readiness, port: http }
+  periodSeconds: 5
+  failureThreshold: 60     # up to 5 minutes for Flyway + demo seed
+terminationGracePeriodSeconds: 45
+preStopSleepSeconds: 5
+
+strategy:
+  type: RollingUpdate
+  rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+nodeSelector: {}
+tolerations: []
+affinity: {}
+priorityClassName: ""
+
+service:
+  type: ClusterIP
+  port: 80
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  #  cert-manager.io/cluster-issuer: letsencrypt
+  #  nginx.ingress.kubernetes.io/proxy-body-size: 16m
+  hosts:
+    - host: oms.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: oms-tls
+  #    hosts: [oms.example.com]
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 30
+  targetCPUUtilizationPercentage: 65
+  targetMemoryUtilizationPercentage: ""
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+  # maxUnavailable: 1
+
+networkPolicy:
+  # Only the ingress namespace may reach the pods; egress to DNS, PostgreSQL, OTLP and HTTPS.
+  enabled: false
+  ingressNamespace: ingress-nginx
+  extraEgress: []

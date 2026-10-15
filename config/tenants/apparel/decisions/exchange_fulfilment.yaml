@@ -1,0 +1,69 @@
+# Exchange fulfilment (apparel). When a shopper wants the same dress in the next size, how does the new size get to
+# her? The brand prefers exchanges over refunds (a refund loses the sale, an exchange keeps it), so the fastest option
+# is to ship the new size today from the nearest store that has it, before the original is back. That is goods out
+# the door against a return that has not arrived, so the decision is T2: act only >= 0.9; the default when nothing
+# can be decided is the safe one, hold until the carrier scans the return.
+decision: exchange_fulfilment
+version: 1
+owner: returns-and-fit
+tier: T2
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: hold_until_return_received
+state:
+  include:
+    - exchange.original_sku
+    - exchange.new_sku
+    - exchange.reason
+    - exchange.value_usd
+    - exchange.days_since_delivery
+    - exchange.nearest_store_km
+    - exchange.nearest_store_atp
+    - exchange.dc_atp
+    - exchange.network_atp
+    - exchange.same_price
+    - order.channel
+    - order.destination_state
+    - customer.tier
+    - customer.history.returns_12m
+    - customer.history.not_received_claims
+    - customer.history.flags
+rules:
+  - id: out_of_window
+    when: "input.exchange.days_since_delivery > 30"
+    then: escalate
+    reason: exchange_out_of_window
+    priority: 5
+  - id: flagged_customer_holds
+    when: "'flagged_customer' in input.customer.history.flags || input.customer.history.not_received_claims >= 1"
+    then: hold_until_return_received
+    reason: flagged_or_not_received_history
+    priority: 10
+  - id: nothing_to_exchange
+    when: "input.exchange.network_atp == 0"
+    then: refund_instead
+    reason: new_size_out_of_stock_everywhere
+    priority: 20
+questions:
+  fulfilment:
+    type: choice
+    instructions: How should the replacement size or colour reach this shopper?
+    feeds: exchange_order_type_and_sourcing
+    criteria:
+      ship_from_store_same_day: The new size is in stock at a store within the same-day radius and the shopper's history is ordinary, so cross-ship today from that store
+      ship_from_dc: No nearby store has it but the DC or 3PL does, cross-ship now by ground
+      hold_until_return_received: Elevated risk, a high-value garment or a mismatch between the sizes, so release the new size when the carrier scans the return
+      refund_instead: The new size is unavailable everywhere or the shopper would rather have the money
+      unclear: Not enough information to decide
+bands:
+  act: { confidence_gte: 0.9 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+postChecks:
+  - "!(decision.value == 'ship_from_store_same_day' && input.exchange.nearest_store_atp == 0)"
+  - "!(decision.value == 'ship_from_dc' && input.exchange.dc_atp == 0)"
+evaluation:
+  goldenSet: exchange_fulfilment_gold
+  minAccuracyInActBand: 0.90
+  maxCalibrationError: 0.05

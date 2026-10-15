@@ -1,0 +1,38 @@
+# Maple & Main (retail reference tenant) — decision `sla_breach_risk`. Same shape as the starter with production evaluation gates
+# (minAccuracyInActBand 0.90, maxCalibrationError 0.05). Review: owner, tier, bands, criteria wording, and add a
+# golden set under golden-sets/ before publishing through the normal approval path (see README.md §4). fallbackProvider stays
+# `heuristic` so the tenant works without AI keys; switch to `llm.structured` once an LLM key is configured.
+# SLA breach risk (PRD section 9, FR-MON-02). Score 0-4 per open order, tier T1; feeds proactive re-promise.
+decision: sla_breach_risk
+version: 1
+owner: control-tower
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: 1
+state:
+  include:
+    - order.state
+    - order.hours_in_state
+    - order.promise_hours_remaining
+    - order.ship_method
+    - node.backlog_units
+    - node.reject_rate
+    - node.minutes_to_cutoff
+    - carrier.on_time_rate_7d
+questions:
+  breach_risk:
+    type: score
+    instructions: How likely is this order to miss its delivery promise?
+    feeds: proactive_repromise
+    criteria:
+      - Very unlikely to breach, well ahead of promise with healthy node and carrier
+      - Unlikely to breach, on track with minor slack
+      - Even chance, slack is thin or the node is backlogged
+      - Likely to breach, already late in state or carrier degraded
+      - Almost certain to breach, past cutoff or stuck with no movement
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }

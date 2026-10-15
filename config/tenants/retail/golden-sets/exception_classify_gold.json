@@ -1,0 +1,243 @@
+{
+  "goldenSet": "exception_classify_gold",
+  "cases": [
+    {
+      "caseId": "ex_01",
+      "input": {
+        "exception": {
+          "source": "address_verifier",
+          "code": "AVS_FAIL",
+          "message": "Address could not be verified, undeliverable as addressed"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released"
+        }
+      },
+      "expected": {
+        "value": "address"
+      }
+    },
+    {
+      "caseId": "ex_02",
+      "input": {
+        "exception": {
+          "source": "wms",
+          "code": "SHORT_PICK",
+          "message": "Short pick: stockout on SKU 4411, inventory shortage at node DC1"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released"
+        }
+      },
+      "expected": {
+        "value": "inventory_short"
+      }
+    },
+    {
+      "caseId": "ex_03",
+      "input": {
+        "exception": {
+          "source": "carrier",
+          "code": "DELAY",
+          "message": "Carrier delay, missed scan at hub, delivery will be late"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released"
+        }
+      },
+      "expected": {
+        "value": "carrier_delay"
+      }
+    },
+    {
+      "caseId": "ex_04",
+      "input": {
+        "exception": {
+          "source": "psp",
+          "code": "AUTH_DECLINED",
+          "message": "Payment authorization declined by issuer"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released"
+        }
+      },
+      "expected": {
+        "value": "payment"
+      }
+    },
+    {
+      "caseId": "ex_05",
+      "input": {
+        "exception": {
+          "source": "store",
+          "code": "REJECTED",
+          "message": "Store rejected the release, could not fulfil from this node"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released"
+        }
+      },
+      "expected": {
+        "value": "store_reject"
+      }
+    },
+    {
+      "caseId": "ex_06",
+      "input": {
+        "exception": {
+          "source": "integration",
+          "code": "TIMEOUT",
+          "message": "System error: integration timeout calling WMS, bad data in response"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released"
+        }
+      },
+      "expected": {
+        "value": "system"
+      }
+    },
+    {
+      "caseId": "ex_07",
+      "input": {
+        "exception": {
+          "source": "wms",
+          "code": "OVERSOLD",
+          "message": "Oversold item, inventory shortage detected during allocation"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released"
+        }
+      },
+      "expected": {
+        "value": "inventory_short"
+      }
+    },
+    {
+      "caseId": "ex_08",
+      "input": {
+        "exception": {
+          "source": "carrier",
+          "code": "LOST",
+          "message": "Lost in transit, no scan for 6 days"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released"
+        }
+      },
+      "expected": {
+        "value": "carrier_delay"
+      }
+    },
+    {
+      "caseId": "ex_09",
+      "input": {
+        "exception": {
+          "source": "psp",
+          "code": "CAPTURE_FAIL",
+          "message": "Capture failure, authorization expired before shipment"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released"
+        }
+      },
+      "expected": {
+        "value": "payment"
+      }
+    },
+    {
+      "caseId": "ex_10",
+      "input": {
+        "exception": {
+          "source": "address_verifier",
+          "code": "INVALID",
+          "message": "Invalid address, apartment number unverifiable"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released"
+        }
+      },
+      "expected": {
+        "value": "address"
+      }
+    },
+    {
+      "caseId": "ex_11",
+      "input": {
+        "exception": {
+          "source": "ops",
+          "code": "MISC",
+          "message": "Customer called about packaging preference"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released"
+        }
+      },
+      "expected": {
+        "value": "other"
+      }
+    },
+    {
+      "caseId": "ex_12",
+      "input": {
+        "exception": {
+          "source": "unknown",
+          "code": "",
+          "message": ""
+        },
+        "order": {
+          "channel": "web",
+          "status": "released"
+        }
+      },
+      "expected": {
+        "value": "unclear"
+      }
+    },
+    {
+      "caseId": "ex_13",
+      "input": {
+        "exception": {
+          "source": "integration",
+          "code": "ERR_500",
+          "message": "Integration failure, system returned bad data"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released"
+        }
+      },
+      "expected": {
+        "value": "system"
+      }
+    },
+    {
+      "caseId": "ex_14",
+      "input": {
+        "exception": {
+          "source": "store",
+          "code": "NO_STOCK",
+          "message": "Node could not fulfil, store rejected release after walk"
+        },
+        "order": {
+          "channel": "web",
+          "status": "released"
+        }
+      },
+      "expected": {
+        "value": "store_reject"
+      }
+    }
+  ]
+}

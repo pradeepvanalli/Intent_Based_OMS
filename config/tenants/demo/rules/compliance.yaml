@@ -1,0 +1,133 @@
+# Demo tenant — L0 compliance rules (FR-FIN-03, FR-CAP-05, GR-01).
+#
+# Loaded into the compliance_rule table by ComplianceRuleLoader (the demo seeder calls loadFile on this path).
+# Each rule is a CEL boolean over three roots:
+#   line   : line_id, sku, qty, attributes (raw map) and every attribute flattened; well-known attributes are
+#            defaulted when absent: hazmat=false, age_restricted=false, export_controlled=false, lithium_battery=false,
+#            category="", min_age=0
+#   order  : destination {state, zip, zip5, country, address_type, is_po_box}, customer {age_verified, age},
+#            ship_method (lower-cased), ship_method_is_air, line_count
+#   tenant : tenant_config snapshot (dots → underscores) plus compliance_restricted_zips (list) and
+#            compliance_restricted_states (map category → list of states), both defaulted to empty
+# scope: line (default) evaluates once per line; order evaluates once with an empty line.
+# action: block | hold | require_signature.  severity: error | warning.  Lower priority runs first.
+rules:
+  - id: hazmat_no_air
+    name: Hazmat may not ship by air
+    scope: line
+    when: line.hazmat == true && order.ship_method_is_air
+    action: block
+    reason_code: HAZMAT_AIR
+    severity: error
+    message: "{sku} is hazardous material and cannot ship via {shipMethod}; choose a ground service"
+    priority: 10
+
+  - id: alcohol_restricted_states
+    name: Alcohol may not ship to restricted states
+    scope: line
+    when: >-
+      line.category == "alcohol"
+      && (order.destination.state in ["UT", "MS", "AL", "KY", "OK", "DE", "RI"]
+          || (has(tenant.compliance_restricted_states.alcohol) && order.destination.state in tenant.compliance_restricted_states.alcohol))
+    action: block
+    reason_code: ALCOHOL_STATE_RESTRICTED
+    severity: error
+    message: "Alcohol ({sku}) cannot be shipped to {state}"
+    priority: 20
+
+  - id: tobacco_restricted_states
+    name: Tobacco and vapour products may not ship to restricted states
+    scope: line
+    when: >-
+      (line.category == "tobacco" || line.category == "vape")
+      && (order.destination.state in ["UT", "MS", "AR", "ME", "SD", "VT", "MA", "NY"]
+          || (has(tenant.compliance_restricted_states.tobacco) && order.destination.state in tenant.compliance_restricted_states.tobacco))
+    action: block
+    reason_code: TOBACCO_STATE_RESTRICTED
+    severity: error
+    message: "Tobacco / vapour product {sku} cannot be shipped to {state}"
+    priority: 21
+
+  - id: alcohol_adult_signature
+    name: Alcohol requires adult signature on delivery
+    scope: line
+    when: line.category == "alcohol" && order.destination.country == "US"
+    action: require_signature
+    reason_code: ALCOHOL_ADULT_SIGNATURE
+    severity: warning
+    message: "Adult (21+) signature required on delivery for {sku}"
+    priority: 25
+
+  - id: age_restricted_requires_verification
+    name: Age-restricted goods require a verified customer
+    scope: line
+    when: line.age_restricted == true && !order.customer.age_verified
+    action: hold
+    reason_code: AGE_VERIFICATION_REQUIRED
+    severity: error
+    message: "{sku} is age-restricted; the customer must complete age verification before release"
+    priority: 30
+
+  - id: age_restricted_min_age
+    name: Verified customer is below the item's minimum age
+    scope: line
+    when: line.age_restricted == true && order.customer.age_verified && line.min_age > 0 && order.customer.age < line.min_age
+    action: block
+    reason_code: UNDER_MINIMUM_AGE
+    severity: error
+    message: "The customer does not meet the minimum age for {sku}"
+    priority: 31
+
+  - id: lithium_no_po_box
+    name: Lithium batteries may not ship to PO boxes
+    scope: line
+    when: >-
+      line.lithium_battery == true
+      && (order.destination.is_po_box || order.destination.zip.matches("^(09[0-8][0-9]{2}|340[0-9]{2}|96[2-6][0-9]{2})(-[0-9]{4})?$"))
+    action: block
+    reason_code: LITHIUM_PO_BOX
+    severity: error
+    message: "{sku} contains lithium batteries and cannot be delivered to a PO box or APO/FPO/DPO address"
+    priority: 40
+
+  - id: lithium_ground_only_standalone
+    name: Standalone lithium batteries ship ground only
+    scope: line
+    when: line.lithium_battery == true && line.category == "battery" && order.ship_method_is_air
+    action: block
+    reason_code: LITHIUM_AIR
+    severity: error
+    message: "Standalone lithium batteries ({sku}) are forbidden on air services"
+    priority: 41
+
+  - id: export_controlled_us_only
+    name: Export-controlled items ship within the US only
+    scope: line
+    when: line.export_controlled == true && order.destination.country != "US"
+    action: block
+    reason_code: EXPORT_CONTROLLED
+    severity: error
+    message: "{sku} is export-controlled (EAR/ITAR) and cannot be shipped to {country}"
+    priority: 50
+
+  - id: restricted_zip
+    name: Destination ZIP is on the tenant's restricted list
+    scope: order
+    when: >-
+      size(tenant.compliance_restricted_zips) > 0
+      && tenant.compliance_restricted_zips.exists(z, order.destination.zip5 == string(z) || order.destination.zip.startsWith(string(z)))
+    action: hold
+    reason_code: ZIP_RESTRICTED
+    severity: error
+    message: "Destination ZIP {zip} is restricted for this tenant; manual review required"
+    priority: 60
+
+  - id: hazmat_ground_signature
+    name: Hazmat shipped by ground requires signature
+    scope: line
+    when: line.hazmat == true && !order.ship_method_is_air
+    action: require_signature
+    reason_code: HAZMAT_SIGNATURE
+    severity: warning
+    message: "Hazmat {sku} requires a signature on delivery"
+    priority: 70

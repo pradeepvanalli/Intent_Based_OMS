@@ -1,0 +1,42 @@
+# Starter tenant — decision `return_disposition`. Copied from the demo tenant with production evaluation gates
+# (minAccuracyInActBand 0.90, maxCalibrationError 0.05). Review: owner, tier, bands, criteria wording, and add a
+# golden set under golden-sets/ before publishing through the normal approval path. fallbackProvider stays
+# `heuristic` so the tenant works without AI keys; switch to `llm.structured` once an LLM key is configured.
+# Return disposition (PRD section 9, FR-RET-04). Tier T1 choice feeding recovery.
+decision: return_disposition
+version: 1
+owner: returns-and-risk          # change to the team that owns this policy
+tier: T1
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: restock
+state:
+  include:
+    - return.reason
+    - return.item_condition
+    - return.inspection_notes
+    - item.category
+    - item.cost_usd
+    - item.resale_value_usd
+    - item.vendor_return_eligible
+    - item.hazmat
+questions:
+  disposition:
+    type: choice
+    instructions: What should happen to this returned item?
+    feeds: recovery
+    criteria:
+      restock: Resalable as new, return to sellable inventory
+      refurbish: Minor wear or repair needed before resale
+      liquidate: Sellable only through liquidation or outlet channels
+      return_to_vendor: Defective item eligible to go back to the vendor
+      donate: Usable but not sellable, donate
+      destroy: Unsafe, hazmat, recalled or unusable, destroy
+      unclear: Not enough information to decide
+bands:
+  act: { confidence_gte: 0.8 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }
+postChecks:
+  - "!(has(input.item) && has(input.item.hazmat) && input.item.hazmat == true && (decision.value == 'donate' || decision.value == 'liquidate'))"

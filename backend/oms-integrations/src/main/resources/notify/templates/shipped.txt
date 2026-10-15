@@ -1,0 +1,10 @@
+subject: {{brand}}: order {{order_number}} has shipped
+---
+Hi {{customer_name}},
+
+Good news: your order {{order_number}} is on its way with {{carrier}}.
+Tracking number: {{tracking}}
+Estimated delivery: {{eta}}
+Items: {{item_summary}}
+
+{{brand}}
