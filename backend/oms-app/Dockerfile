@@ -23,7 +23,7 @@ RUN --mount=type=cache,target=/root/.m2 mvn -q -B -ntp -f backend/pom.xml -Dskip
 # ---- runtime ----
 # Non-root, read-only-root-filesystem friendly: the only writable location the JVM needs is /tmp (mount a tmpfs there;
 # see docker-compose.yml `oms` and deploy/k8s/oms.yaml). Config is baked read-only under /config.
-FROM eclipse-temurin:21-jre-alpine
+FROM eclipse-temurin:25-jre-alpine
 ARG VERSION=dev
 ARG SOURCE_URL=https://github.com/pradeepvanalli/Intent_Based_OMS
 LABEL org.opencontainers.image.title="Intent OMS" \
