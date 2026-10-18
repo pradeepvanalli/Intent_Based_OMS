@@ -1,40 +1,83 @@
-/* Self-Optimizing Order Orchestration: learners, facts, proposals, experiments, objective, governance. */
+/* Self-Optimizing Order Orchestration: learners, facts, proposals, experiments, objective, governance, explainability. */
 import { api } from './client';
 import type {
-  AutonomyLevel, Experiment, ExperimentMode, Hypothesis, LearnedFact, LearnerState, ObjectiveProfile, ObjectiveWeights,
-  ParityReport, Proposal, Review, SubjectType,
+  AutonomyLevel, ChangeCard, Digest, Experiment, ExperimentDetail, ExperimentMode, GoldenCandidate, Hypothesis, KillSwitchState, LearnedFact,
+  LearnerMetrics, LearnerView, LiftReport, LiveParameter, LiveUseRequest, ObjectiveProfile, ObjectiveWeights, ParityReport, Proposal,
+  RetentionResult, Review, SubjectType, CumulativeDiff,
 } from './types';
 
+const enc = encodeURIComponent;
+const L = '/api/v1/learning';
+
+export type LearningJob = 'reward-maturity' | 'coverage' | 'auto-promote' | 'guardrails';
+
 export const learningApi = {
-  learners: () => api.get<LearnerState[]>('/api/v1/learning/learners', { silent: true }),
-  setAutonomy: (learnerKey: string, autonomyLevel: AutonomyLevel) =>
-    api.put<LearnerState>(`/api/v1/learning/learners/${encodeURIComponent(learnerKey)}/autonomy`, { autonomyLevel }),
-  killSwitch: (learnerKey: string, enabled: boolean) => api.post<LearnerState>('/api/v1/learning/kill-switch', { learnerKey, enabled }),
+  /* ---- learners and governance (GV-01..03) ---- */
+  learners: () => api.get<LearnerView[]>(`${L}/learners`, { silent: true }),
+  learner: (key: string) => api.get<LearnerView>(`${L}/learners/${enc(key)}`, { silent: true }),
+  setAutonomy: (learnerKey: string, autonomyLevel: AutonomyLevel) => api.put<LearnerView>(`${L}/learners/${enc(learnerKey)}/autonomy`, { autonomyLevel }),
+  /** Switch one learner on or off. */
+  setLearnerEnabled: (learnerKey: string, enabled: boolean) => api.post<KillSwitchState>(`${L}/kill-switch`, { learnerKey, enabled }),
+  /** Pause (enabled=false) or resume all learning for this tenant. */
+  setAllLearning: (enabled: boolean) => api.post<KillSwitchState>(`${L}/kill-switch`, { learnerKey: '*', enabled }),
+  killSwitch: () => api.get<KillSwitchState>(`${L}/kill-switch`, { silent: true }),
+  resume: (learnerKey: string) => api.post<LearnerView>(`${L}/learners/${enc(learnerKey)}/resume`),
+  runLearner: (learnerKey: string) => api.post<LearnerView>(`${L}/learners/${enc(learnerKey)}/run`),
+  runJob: (job: LearningJob) => api.post<{ job: string; result: unknown }>(`${L}/jobs/${enc(job)}/run`),
+  metrics: () => api.get<LearnerMetrics[]>(`${L}/metrics`, { silent: true }),
+  coverage: () => api.get<Record<string, number>>(`${L}/coverage`, { silent: true }),
 
-  facts: (subjectType: SubjectType, subjectId: string) =>
-    api.get<LearnedFact[]>('/api/v1/learning/facts', { query: { subjectType, subjectId }, silent: true }),
+  /* ---- live use of learned values (EX-07) ---- */
+  liveParameters: () => api.get<LiveParameter[]>(`${L}/live-parameters`, { silent: true }),
+  proposeLiveUse: (req: LiveUseRequest) => api.post<Proposal>(`${L}/live-parameters/proposals`, req),
+  revokeLiveUse: (family: string) => api.post<{ family: string; revoked: boolean }>(`${L}/live-parameters/${enc(family)}/revoke`),
 
-  proposals: (status: string = 'DRAFT') => api.get<Proposal[]>('/api/v1/learning/proposals', { query: { status }, silent: true }),
-  proposal: (id: string) => api.get<Proposal>(`/api/v1/learning/proposals/${encodeURIComponent(id)}`, { silent: true }),
-  approve: (id: string) => api.post<Proposal>(`/api/v1/learning/proposals/${encodeURIComponent(id)}/approve`),
-  reject: (id: string, reason?: string) => api.post<Proposal>(`/api/v1/learning/proposals/${encodeURIComponent(id)}/reject`, { reason }),
-  evaluate: (id: string) => api.post<Proposal>(`/api/v1/learning/proposals/${encodeURIComponent(id)}/evaluate`),
-  promote: (id: string) => api.post<Proposal>(`/api/v1/learning/proposals/${encodeURIComponent(id)}/promote`),
+  facts: (subjectType: SubjectType, subjectId: string) => api.get<LearnedFact[]>(`${L}/facts`, { query: { subjectType, subjectId }, silent: true }),
 
-  objective: () => api.get<ObjectiveProfile>('/api/v1/learning/objective', { silent: true }),
-  setObjective: (weights: ObjectiveWeights, constraints: Record<string, unknown> = {}) =>
-    api.put<ObjectiveProfile>('/api/v1/learning/objective', { weights, constraints }),
+  /* ---- proposals (XP-02, EX-01, EX-07) ---- */
+  proposals: (status: string = 'DRAFT') => api.get<Proposal[]>(`${L}/proposals`, { query: { status }, silent: true }),
+  proposal: (id: string) => api.get<Proposal>(`${L}/proposals/${enc(id)}`, { silent: true }),
+  card: (id: string) => api.get<ChangeCard>(`${L}/proposals/${enc(id)}/card`, { silent: true }),
+  diff: (target: string) => api.get<CumulativeDiff>(`${L}/diff`, { query: { target }, silent: true }),
+  approve: (id: string, reasonCode?: string) => api.post<Proposal>(`${L}/proposals/${enc(id)}/approve`, reasonCode ? { reasonCode } : undefined),
+  reject: (id: string, reason?: string) => api.post<Proposal>(`${L}/proposals/${enc(id)}/reject`, { reason }),
+  evaluate: (id: string) => api.post<Proposal>(`${L}/proposals/${enc(id)}/evaluate`),
+  promote: (id: string) => api.post<Proposal>(`${L}/proposals/${enc(id)}/promote`),
+  rollback: (id: string, reason: string) => api.post<Proposal>(`${L}/promotions/${enc(id)}/rollback`, { reason }),
 
-  experiments: () => api.get<Experiment[]>('/api/v1/learning/experiments', { silent: true }),
+  /* ---- objective (XP-07) ---- */
+  objective: () => api.get<ObjectiveProfile>(`${L}/objective`, { silent: true }),
+  /** Creates a DRAFT; someone other than the drafter approves it. */
+  draftObjective: (weights: ObjectiveWeights, constraints: Record<string, unknown> = {}) => api.put<ObjectiveProfile>(`${L}/objective`, { weights, constraints }),
+  draftObjectiveFromText: (text: string) => api.post<ObjectiveProfile>(`${L}/objective/draft`, { text }),
+  objectiveDrafts: () => api.get<ObjectiveProfile[]>(`${L}/objective/drafts`, { silent: true }),
+  objectiveHistory: (limit = 20) => api.get<ObjectiveProfile[]>(`${L}/objective/history`, { query: { limit }, silent: true }),
+  approveObjective: (version: number) => api.post<ObjectiveProfile>(`${L}/objective/${version}/approve`),
+
+  /* ---- experiments and lift (EX-02..06, XP-01) ---- */
+  experiments: (all = false) => api.get<Experiment[]>(`${L}/experiments`, { query: all ? { all: true } : {}, silent: true }),
+  experiment: (id: string) => api.get<ExperimentDetail>(`${L}/experiments/${enc(id)}`, { silent: true }),
   startExperiment: (proposalId: string, mode: ExperimentMode, trafficShare: number, stopRule: Record<string, unknown> = {}) =>
-    api.post<Experiment>('/api/v1/learning/experiments', { proposalId, mode, trafficShare, stopRule }),
-  stopExperiment: (id: string, status: 'STOPPED' | 'COMPLETED' = 'STOPPED') =>
-    api.post<void>(`/api/v1/learning/experiments/${encodeURIComponent(id)}/stop`, { status }),
-  ensureHoldout: (share = 0.05) => api.post<Experiment>('/api/v1/learning/experiments/holdout', undefined, { query: { share } }),
+    api.post<Experiment>(`${L}/experiments`, { proposalId, mode, trafficShare, stopRule }),
+  completeExperiment: (id: string) => api.post<Experiment>(`${L}/experiments/${enc(id)}/complete`),
+  stopExperiment: (id: string) => api.post<void>(`${L}/experiments/${enc(id)}/stop`, { status: 'STOPPED' }),
+  ensureHoldout: (share = 0.05) => api.post<Experiment>(`${L}/experiments/holdout`, undefined, { query: { share } }),
+  lift: (days = 90) => api.get<LiftReport>(`${L}/lift`, { query: { days }, silent: true }),
 
-  fairness: (decision: string) => api.get<ParityReport>(`/api/v1/learning/fairness/${encodeURIComponent(decision)}`, { silent: true }),
+  /* ---- explainability, fairness, digests, retention (XP-04, GV-07, NF-10) ---- */
+  fairness: (decision: string) => api.get<ParityReport>(`${L}/fairness/${enc(decision)}`, { silent: true }),
+  digests: (limit = 10) => api.get<Digest[]>(`${L}/digests`, { query: { limit }, silent: true }),
+  latestDigest: () => api.get<Digest>(`${L}/digests/latest`, { silent: true }),
+  runDigest: (days = 7) => api.post<Digest>(`${L}/digests/run`, undefined, { query: { days } }),
+  retention: (dryRun = true) => api.post<RetentionResult>(`${L}/retention/run`, undefined, { query: { dryRun } }),
 
-  runAnalyst: (decision?: string) => api.post<Hypothesis[]>('/api/v1/learning/llm/analyst/run', undefined, { query: decision ? { decision } : {} }),
-  runAuthor: (hypothesisId: string) => api.post<Proposal>(`/api/v1/learning/llm/author/${encodeURIComponent(hypothesisId)}`),
-  runCritic: (proposalId: string) => api.post<Review>(`/api/v1/learning/llm/critic/${encodeURIComponent(proposalId)}`),
+  /* ---- golden-case candidates (DF-03) ---- */
+  goldenCandidates: () => api.get<GoldenCandidate[]>(`${L}/golden-candidates`, { silent: true }),
+  signOffGolden: (id: string, expectedValue?: string, notes?: string) => api.post<unknown>(`${L}/golden-candidates/${enc(id)}/sign-off`, { expectedValue, notes }),
+  rejectGolden: (id: string) => api.post<unknown>(`${L}/golden-candidates/${enc(id)}/reject`),
+
+  /* ---- slow loop (§6.1) ---- */
+  runAnalyst: (decision?: string) => api.post<Hypothesis[]>(`${L}/llm/analyst/run`, undefined, { query: decision ? { decision } : {} }),
+  runAuthor: (hypothesisId: string) => api.post<Proposal>(`${L}/llm/author/${enc(hypothesisId)}`),
+  runCritic: (proposalId: string) => api.post<Review>(`${L}/llm/critic/${enc(proposalId)}`),
 };

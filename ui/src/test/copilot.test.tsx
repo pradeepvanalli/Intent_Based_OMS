@@ -172,7 +172,7 @@ describe('Why drawer explain', () => {
     expect(within(region).getByText('generated')).toBeInTheDocument();
     expect(within(region).getByText(/source of truth/)).toBeInTheDocument();
     expect(within(region).getByRole('link', { name: /View raw trace/ })).toHaveAttribute('href', '#why-raw-trace');
-    await waitFor(() => expect(screen.getByRole('switch')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('switch', { name: 'Customer-safe view' })).toBeInTheDocument());
   }, T * 2);
 });
 

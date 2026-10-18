@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import { WhyBody } from '../components/why/WhyDrawer';
 import type { DecisionTrace } from '../api/types';
 import { loginAsAdmin, renderWithProviders } from './utils';
@@ -26,6 +26,26 @@ describe('WhyBody', () => {
     expect(screen.getByText('explicit_choice')).toBeInTheDocument();
     expect(screen.getByText('chosen_plan.margin >= tenant.margin_floor')).toBeInTheDocument();
     expect(screen.getByText('Record override')).toBeInTheDocument();
+  });
+  it('explains in plain words how learning shaped the decision, and which learned values were not used', () => {
+    loginAsAdmin();
+    renderWithProviders(<WhyBody trace={{ ...trace, learning: {
+      learnedFacts: [
+        { subjectType: 'NODE', subjectId: 'DC-NV', factKey: 'NODE_REJECT_RATE', version: 14, learned: 0.031, served: 0.031, source: 'LEARNED', reason: 'promoted for live use' },
+        { subjectType: 'NODE', subjectId: 'ST-CHI-01', factKey: 'NODE_ON_TIME_RATE', version: 9, learned: 0.71, served: null, source: 'STATIC', reason: 'not promoted for live use' },
+      ], learnedFactsServed: 1, rawConfidence: 0.95, calibratedConfidence: 0.88, experiment: { experimentId: 'exp_1', arm: 'canary', version: 4 }, usedLearning: true,
+    } }} customer={false} />);
+    const section = screen.getByRole('region', { name: 'How learning shaped this decision' });
+    expect(within(section).getByText('It used 1 of 2 learned values it read.')).toBeInTheDocument();
+    expect(within(section).getByText('not used: not switched on for live decisions yet')).toBeInTheDocument();
+    expect(within(section).getByText(/0.95 sure; corrected for how often it is right, that became 0.88/)).toBeInTheDocument();
+    expect(within(section).getByText('canary')).toBeInTheDocument();
+    expect(within(section).queryByText('v14', { exact: false })).not.toBeInTheDocument(); // versions only with technical details on
+  });
+  it('shows only server-chosen learned sentences in the customer-safe view', () => {
+    renderWithProviders(<WhyBody trace={{ ...trace, audience: 'customer', learning: { learnedFacts: [{ subjectType: 'NODE', subjectId: 'DC-NV', factKey: 'NODE_REJECT_RATE', source: 'LEARNED' }], learnedFactsServed: 1, usedLearning: true }, learnedContext: ['We picked the location that ships on time most often.'] }} customer />);
+    expect(screen.getByText('We picked the location that ships on time most often.')).toBeInTheDocument();
+    expect(screen.queryByText('How learning shaped this decision')).not.toBeInTheDocument();
   });
   it('hides internal sections in customer-safe view', () => {
     renderWithProviders(<WhyBody trace={{ ...trace, audience: 'customer', customerSafeExplanation: 'We chose ship complete.' }} customer />);

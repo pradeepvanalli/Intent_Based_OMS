@@ -82,6 +82,10 @@ export interface DecisionTrace {
   escalation?: { id: string; queue?: string; taskId?: string; status?: string } | null;
   override?: { by: string; at: string; value: unknown; reason: string } | null; label?: { label: string; at: string; by: string } | null;
   explanation?: string; customerSafeExplanation?: string; audience?: 'internal' | 'customer';
+  /** XP-03: what the self-optimizing layer contributed to this decision (internal view). */
+  learning?: DecisionTraceLearning | null;
+  /** XP-05: plain sentences about learned context that are safe to show a customer. */
+  learnedContext?: string[];
 }
 export interface LintResult { severity: 'error' | 'warning' | 'info'; code: string; message: string; path?: string; }
 export interface ImpactDiff { days: number; baseVersion: number; draftVersion: number; evaluated: number; flips: number; flipRate: number; bandMixBefore: Record<Band, number>; bandMixAfter: Record<Band, number>; layerMixBefore?: Record<string, number>; layerMixAfter?: Record<string, number>; costDeltaUsd: number; latencyDeltaMs: number; escalationDelta: number; marginDeltaUsd?: number; slaBreachDelta?: number; samples: { recordId: string; subjectType: string; subjectId: string; before: unknown; after: unknown; bandBefore: Band; bandAfter: Band; confidenceBefore: number; confidenceAfter: number }[]; }
@@ -233,16 +237,32 @@ export interface AutonomyScanResult { anomaliesFound: number; anomalies: Anomaly
 
 /* ---- Self-Optimizing Order Orchestration (SOO) ---- */
 export type AutonomyLevel = 'L0_OBSERVE' | 'L1_RECOMMEND' | 'L2_ACT_WITH_APPROVAL' | 'L3_AUTONOMOUS';
-export type SubjectType = 'CUSTOMER' | 'SEGMENT' | 'NODE' | 'LANE' | 'SKU' | 'AGENT' | 'DECISION';
+export type SubjectType = 'CUSTOMER' | 'SEGMENT' | 'NODE' | 'LANE' | 'SKU' | 'AGENT' | 'DECISION' | 'SKU_NODE' | 'SUPPLIER' | 'ADDRESS' | 'CARRIER';
 export type ProposalStatus = 'DRAFT' | 'EVALUATED' | 'APPROVED' | 'CANARY' | 'PROMOTED' | 'REJECTED' | 'ROLLED_BACK';
 export type ExperimentMode = 'SHADOW' | 'CANARY' | 'HOLDOUT';
 export type ExperimentStatus = 'RUNNING' | 'STOPPED' | 'COMPLETED';
 export type RiskTier = 'T0' | 'T1' | 'T2' | 'T3';
 
-export interface LearnerState {
-  learnerKey: string; autonomyLevel: AutonomyLevel; enabled: boolean; maxPromotionsPerWeek: number;
-  maxStep?: number | null; lastRunAt?: string | null; updatedBy?: string | null; updatedAt: string;
+/** GET /learning/learners: what a learner is (its descriptor) plus how it is governed right now. */
+export interface LearnerView {
+  learnerKey: string; displayName: string; summary: string; loop: string; requirement: string;
+  outcomeDecisions: string[]; liveParameters: string[]; autonomyLevel: AutonomyLevel; enabled: boolean; paused: boolean;
+  pausedReason?: string | null; running: boolean; gateReason: string; maxPromotionsPerWeek: number; maxStep?: number | null;
+  lastRunAt?: string | null; updatedBy?: string | null; updatedAt?: string | null;
 }
+/** @deprecated the learner list returns {@link LearnerView}. */
+export type LearnerState = LearnerView;
+export interface KillSwitchState { globalKillSwitch: boolean; tenantPaused: boolean; pausedLearners: string[]; }
+export interface LearnerMetrics {
+  learnerKey: string; displayName: string; lastRunAt?: string | null; updateLagSeconds?: number | null; coverage?: number | null;
+  proposalsDrafted: number; proposalsPromoted: number; proposalsRolledBack: number; proposalYieldPerWeek: number;
+  promotionRate: number; rollbackRate: number; running: boolean; gateReason: string;
+}
+export interface LiveParameter {
+  parameter: string; learnerKey: string; min?: number | null; max?: number | null; maxStep?: number | null; status: string;
+  proposalId?: string | null; promotedBy: string; promotedAt: string; revokedBy?: string | null; revokedAt?: string | null;
+}
+export interface LiveUseRequest { family: string; learnerKey: string; min?: number | null; max?: number | null; maxStep?: number | null; enabled?: boolean; reason?: string; }
 export type TypedValue =
   | { type: 'NumberValue'; value: number } | { type: 'BoolValue'; value: boolean }
   | { type: 'TextValue'; value: string } | { type: 'ListValue'; values: string[] };
@@ -265,9 +285,11 @@ export type PolicyChange =
   | { type: 'AllowListChange'; listName: string; entry: string; add: boolean };
 export interface PolicyChangeset { target: ArtifactRef; baseVersion: number; changes: PolicyChange[]; motivatedBy?: string | null; tier: RiskTier; }
 export interface Review { verdict: 'LOOKS_SAFE' | 'NEEDS_CHANGES' | 'RISKY'; risks: string[]; }
+export interface ShadowResult { passed?: boolean; reason?: string; [k: string]: unknown; }
 export interface EvaluationReport {
-  method?: string; sampleSize?: number; baselineReward?: number; proposedRewardEstimate?: number; liftEstimate?: number;
-  confidenceInterval?: { lower: number; upper: number }; clippedRecords?: number; [k: string]: unknown;
+  method?: string; sampleSize?: number; baselineReward?: number; proposedRewardEstimate?: number; liftEstimate?: number | null;
+  confidenceInterval?: { lower: number; upper: number } | null; clippedRecords?: number; replayed?: number; decisionsChanged?: number;
+  changeTypes?: string[]; shadow?: ShadowResult; [k: string]: unknown;
 }
 export interface Proposal {
   proposalId: string; changeset: PolicyChangeset; hypothesisId?: string | null; tier: RiskTier; status: ProposalStatus;
@@ -275,14 +297,68 @@ export interface Proposal {
   evaluatedAt?: string | null; approvedBy?: string | null; approvedAt?: string | null; promotedAt?: string | null;
   rejectedReason?: string | null; rejectedAt?: string | null; rolledBackReason?: string | null; rolledBackAt?: string | null;
 }
+/** XP-02 change card: GET /learning/proposals/{id}/card. */
+export interface KeyDiff { key: string; type: string; from: unknown; to: unknown; steps: number; }
+export interface CumulativeDiff {
+  target: string; baseline: { proposalId?: string | null; approvedBy?: string | null; approvedAt?: string | null; promotedAt?: string | null } | null;
+  automaticPromotionsSinceBaseline: number; sinceBaseline: KeyDiff[]; withPending: KeyDiff[]; promotedProposalIds: string[];
+}
+export interface ChangeCardReplay {
+  evaluated: boolean; method?: string; liftEstimate?: number | null; confidenceInterval?: { lower: number; upper: number } | null;
+  sampleSize?: number; episodes?: number; guardrails?: unknown; shadow?: ShadowResult; estimator?: string; clipping?: unknown;
+}
+export interface ChangeCard {
+  proposal: Proposal; hypothesis?: Hypothesis | null; evidence: string[]; replay: ChangeCardReplay; criticReview?: Review | null;
+  diff: KeyDiff[]; cumulative?: CumulativeDiff | null; actions: { canApprove: boolean; canReject: boolean; reason?: string | null };
+}
 export interface Experiment {
   experimentId: string; proposalId: string; mode: ExperimentMode; trafficShare: number; status: ExperimentStatus;
   startAt: string; endAt?: string | null; stopRule: Record<string, unknown>; result?: Record<string, unknown> | null; createdAt: string;
+  targetRef?: string | null; decisionName?: string | null; candidateVersion?: number | null; baselineVersion?: number | null; createdBy?: string | null;
 }
+export interface ExperimentDetail {
+  experiment: Experiment;
+  proposal?: { proposalId: string; target: string; status: ProposalStatus; tier: RiskTier; changeTypes: string[] };
+  measurement?: Record<string, unknown> | null;
+}
+export interface LiftMetric {
+  metric: string; betterWhen: 'higher' | 'lower'; nTreated: number; nHoldout: number; treatedMean?: number; holdoutMean?: number;
+  lift?: number | null; ciLower?: number; ciUpper?: number; significant: boolean; improvement?: boolean;
+}
+export interface LiftReport {
+  windowDays: number; since: string; holdout: { experimentId: string; trafficShare: number; startAt: string } | null; note?: string;
+  baselines?: unknown; metrics: LiftMetric[]; byDecision?: Record<string, unknown>;
+}
+export type DigestRow = Record<string, unknown>;
+export interface DigestSummary {
+  headline?: string; periodStart?: string; periodEnd?: string;
+  changed?: { promoted?: DigestRow[]; rolledBack?: DigestRow[]; learnerChanges?: DigestRow[]; factsLearned?: DigestRow[] };
+  impact?: { rewardByDecision?: { decision: string; maturedEpisodes: number; meanReward: number; previousMeanReward?: number | null; change?: number | null }[]; coverage?: Record<string, number> };
+  pending?: { proposalsByStatus?: DigestRow[]; objectiveDrafts?: number; openHypotheses?: number; pausedLearners?: DigestRow[] };
+}
+export interface Digest { digestId: string; periodStart: string; periodEnd: string; summary: DigestSummary; deliveredTo: string[]; delivery: string; createdBy: string; createdAt: string; }
 export interface ObjectiveWeights { fill: number; otd: number; cost: number; split: number; fraud: number; cx: number; inv: number; }
 export interface ObjectiveProfile {
   version: number; status: 'DRAFT' | 'APPROVED' | 'RETIRED'; weights: ObjectiveWeights; constraints: Record<string, unknown>;
   approvedBy?: string | null; approvedAt?: string | null; createdBy: string; createdAt: string;
+  sourceText?: string | null; draftMethod?: string | null; rationale?: Record<string, string> | null;
 }
-export interface GroupParity { group: string; customers: number; actBandRate: number; overrideRate: number; }
-export interface ParityReport { decision: string; groups: GroupParity[]; tenantActBandRate: number; tenantOverrideRate: number; flags: string[]; }
+export interface GroupParity { group: string; label?: string; customers: number; decisions?: number; actBandRate: number; overrideRate: number; }
+export interface LearnerFeatureAudit { learner: string; declaredFeatures: string[]; protectedFeatures: string[]; }
+export interface ParityReport {
+  decision: string; grouping?: string; groups: GroupParity[]; tenantActBandRate: number; tenantOverrideRate: number;
+  featureAudit?: LearnerFeatureAudit[]; flags: string[];
+}
+export interface GoldenCandidate {
+  hypothesisId: string; decision: string; expectedValue: unknown; sourceRecordIds?: string[] | null; agreeingResolutions: number; rationale?: string | null; createdAt: string;
+}
+export interface RetentionResult { retentionDays: number; cutoff: string; dryRun: boolean; outcomes: number; episodes: number; supersededFacts: number; digests: number; }
+/** XP-03: one learned fact a decision read, and the value actually served to it. */
+export interface LearnedFactUse {
+  subjectType: string; subjectId: string; factKey: string; version?: number; learned?: unknown; served?: unknown; source?: string; reason?: string;
+}
+export interface DecisionTraceLearning {
+  learnedFacts: LearnedFactUse[]; learnedFactsServed: number; policyVersion?: number; rawConfidence?: number; calibratedConfidence?: number;
+  calibration?: Record<string, unknown>; experiment?: { experimentId?: string; arm?: string; version?: number }; providerRouted?: string;
+  shadow?: { arm?: string; propensity?: number }; arms?: string[]; chosenArm?: string | null; propensity?: number | null; usedLearning: boolean;
+}
