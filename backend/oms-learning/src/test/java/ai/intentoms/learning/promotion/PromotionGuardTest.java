@@ -69,6 +69,19 @@ class PromotionGuardTest {
             .isEqualTo(PromotionGuard.Verdict.BLOCKED);
     }
 
+    @Test void aPersonMayPromoteAnApprovedNoOpButNotAChangeShownToBeWorse() {
+        Map<String, Object> zero = Map.of("liftEstimate", 0.0, "confidenceInterval", Map.of("lower", 0.0, "upper", 0.0));
+        var noEvidence = proposal(PolicyChangeset.RiskTier.T1, ProposalStatus.APPROVED, zero, Review.Verdict.LOOKS_SAFE);
+        assertThat(PromotionGuard.evaluateManualPromote(noEvidence, learner(AutonomyLevel.L1_RECOMMEND, true), List.of(), Instant.now()).verdict())
+            .isEqualTo(PromotionGuard.Verdict.AUTO_PROMOTE);
+        var auto = proposal(PolicyChangeset.RiskTier.T0, ProposalStatus.EVALUATED, zero, Review.Verdict.LOOKS_SAFE);
+        assertThat(PromotionGuard.evaluate(auto, learner(AutonomyLevel.L3_AUTONOMOUS, true), List.of(), Instant.now(), 0).verdict())
+            .isEqualTo(PromotionGuard.Verdict.BLOCKED);
+        var worse = proposal(PolicyChangeset.RiskTier.T1, ProposalStatus.APPROVED, negativeLift(), Review.Verdict.LOOKS_SAFE);
+        assertThat(PromotionGuard.evaluateManualPromote(worse, learner(AutonomyLevel.L1_RECOMMEND, true), List.of(), Instant.now()).verdict())
+            .isEqualTo(PromotionGuard.Verdict.BLOCKED);
+    }
+
     @Test void t0DoesNotPromoteOnNegativeLift() {
         var p = proposal(PolicyChangeset.RiskTier.T0, ProposalStatus.EVALUATED, negativeLift(), Review.Verdict.LOOKS_SAFE);
         var r = PromotionGuard.evaluate(p, learner(AutonomyLevel.L3_AUTONOMOUS, true), List.of(), Instant.now(), 0);
