@@ -82,6 +82,43 @@ public class PaymentRepository {
             .param("t", TenantContext.require()).param("o", orderId).query(PAYMENT).list();
     }
 
+    /** The payment a gateway reference (Stripe payment intent or charge id) belongs to; newest first if reused. */
+    public Optional<Payment> findByPspRef(String pspRef) {
+        return jdbc.sql("select * from payment where tenant_id = :t and psp_ref = :r order by created_at desc limit 1")
+            .param("t", TenantContext.require()).param("r", pspRef).query(PAYMENT).optional();
+    }
+
+    /** Inserts a dispute once per gateway dispute id; a later notice for the same dispute only moves its status. Returns
+     * true when this call created the row. */
+    public boolean upsertDispute(PaymentDispute d) {
+        int inserted = jdbc.sql("""
+            insert into payment_dispute(id, tenant_id, payment_id, order_id, psp, psp_dispute_id, amount, currency, reason, status, fraud, agent_id, created_at, updated_at)
+            values (:id, :t, :pid, :oid, :psp, :did, :amt, :ccy, :reason, :st, :fraud, :agent, :c, :c)
+            on conflict (tenant_id, psp, psp_dispute_id) do nothing
+            """)
+            .param("id", d.id()).param("t", TenantContext.require()).param("pid", d.paymentId()).param("oid", d.orderId()).param("psp", d.psp())
+            .param("did", d.pspDisputeId()).param("amt", d.amount().amount()).param("ccy", d.amount().currency()).param("reason", d.reason())
+            .param("st", d.status()).param("fraud", d.fraud()).param("agent", d.agentId()).param("c", ts(d.createdAt())).update();
+        if (inserted == 1) return true;
+        jdbc.sql("update payment_dispute set status = :st, updated_at = :u where tenant_id = :t and psp = :psp and psp_dispute_id = :did")
+            .param("st", d.status()).param("u", ts(d.createdAt())).param("t", TenantContext.require()).param("psp", d.psp()).param("did", d.pspDisputeId()).update();
+        return false;
+    }
+
+    public Optional<PaymentDispute> findDispute(String psp, String pspDisputeId) {
+        return jdbc.sql("select * from payment_dispute where tenant_id = :t and psp = :psp and psp_dispute_id = :did")
+            .param("t", TenantContext.require()).param("psp", psp).param("did", pspDisputeId).query(DISPUTE).optional();
+    }
+
+    public List<PaymentDispute> disputesForOrder(String orderId) {
+        return jdbc.sql("select * from payment_dispute where tenant_id = :t and order_id = :o order by created_at")
+            .param("t", TenantContext.require()).param("o", orderId).query(DISPUTE).list();
+    }
+
+    static final RowMapper<PaymentDispute> DISPUTE = (rs, i) -> new PaymentDispute(rs.getString("id"), rs.getString("payment_id"), rs.getString("order_id"),
+        rs.getString("psp"), rs.getString("psp_dispute_id"), new Money(rs.getBigDecimal("amount"), rs.getString("currency")), rs.getString("reason"),
+        rs.getString("status"), rs.getBoolean("fraud"), rs.getString("agent_id"), rs.getTimestamp("created_at").toInstant());
+
     public void insertRefund(Refund r) {
         jdbc.sql("""
             insert into refund(id, tenant_id, order_id, payment_id, return_id, amount, currency, reason, status, psp_ref, failure_code, requested_by, created_at, updated_at)
