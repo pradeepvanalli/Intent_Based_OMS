@@ -38,7 +38,7 @@ public class HumanTaskEscalationHandler implements EscalationHandler {
     private static final Logger log = LoggerFactory.getLogger(HumanTaskEscalationHandler.class);
 
     public static final String DEDUPE_KEY = "escalation.dedupe_decisions";
-    static final Set<String> DEFAULT_DEDUPE = Set.of("sla_breach_risk");
+    static final Set<String> DEFAULT_DEDUPE = Set.of("sla_breach_risk", "stuck_order_diagnosis");
 
     private final HumanTaskService tasks;
     private final DecisionEscalationRepository escalations;

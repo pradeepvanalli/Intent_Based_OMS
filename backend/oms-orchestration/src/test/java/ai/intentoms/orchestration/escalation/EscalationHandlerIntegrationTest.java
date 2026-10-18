@@ -20,6 +20,7 @@ class EscalationHandlerIntegrationTest extends OrchestrationTestBase {
     @Autowired DecisionService decisions;
     @Autowired DecisionEscalationRepository escalations;
     @Autowired EscalationHandler handler;
+    @Autowired ai.intentoms.platform.config.TenantConfigStore config;
 
     @Test
     void t3DecisionOpensRiskReviewTaskAndCompletionResolvesIt() {
@@ -49,6 +50,35 @@ class EscalationHandlerIntegrationTest extends OrchestrationTestBase {
         if (!Boolean.FALSE.equals(rec.value())) {
             assertThat(rec.overriddenAt()).as("human value differs from the recommendation → GR-13 override").isNotNull();
             assertThat(rec.effectiveValue()).isEqualTo(false);
+        }
+    }
+
+    /** A re-escalation of the same subject links to the open task instead of opening another; completing the task resolves both. */
+    @Test
+    void reEscalationOfTheSameSubjectLinksToTheOpenTask() {
+        config.set("escalation.dedupe_decisions", java.util.List.of("agent_mandate_match"));
+        try {
+            Map<String, Object> input = Map.of(
+                "mandate", Map.of("instruction_text", "Buy one grey hoodie size M under 100 dollars", "spend_limit", 100.0, "scope", "apparel", "expires_at", "2026-12-31T00:00:00Z"),
+                "order", Map.of("total", 68.0, "items_summary", "1 x HOOD-GRY-M", "ship_to_country", "US"),
+                "agent", Map.of("trust_tier", 2));
+            String order = "ord_dedupe_" + System.nanoTime();
+            DecisionResult first = decisions.decide("agent_mandate_match", input, DecisionOptions.live("order", order, SYSTEM));
+            DecisionResult second = decisions.decide("agent_mandate_match", input, DecisionOptions.live("order", order, SYSTEM));
+            var a = escalations.find(first.escalationId()).orElseThrow();
+            var b = escalations.find(second.escalationId()).orElseThrow();
+            assertThat(a.status()).isEqualTo("OPEN");
+            assertThat(b.status()).isEqualTo("LINKED");
+            assertThat(b.taskId()).isEqualTo(a.taskId());
+            HumanTask task = tasks.get(a.taskId());
+            assertThat(task.payload()).containsEntry("latestRecordId", second.recordId()).containsEntry("reEvaluations", 1);
+
+            tasks.complete(task.id(), "approve", "Matches the instruction", Map.of("value", true));
+            drainOutbox();
+            assertThat(escalations.find(first.escalationId()).orElseThrow().status()).isEqualTo("RESOLVED");
+            assertThat(escalations.find(second.escalationId()).orElseThrow().status()).isEqualTo("RESOLVED");
+        } finally {
+            config.delete("escalation.dedupe_decisions");
         }
     }
 }
