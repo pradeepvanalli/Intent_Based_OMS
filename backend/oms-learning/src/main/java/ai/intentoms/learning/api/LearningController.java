@@ -204,14 +204,27 @@ public class LearningController {
 
     @PostMapping("/proposals/{id}/approve")
     @RequiresPermission(Permissions.LEARNING_ADMIN)
-    public Proposal approve(@PathVariable String id) {
+    public Proposal approve(@PathVariable String id, @RequestBody(required = false) Map<String, String> body) {
         Proposal p = proposals.get(id);
         String by = actorRef();
         if (by.equals(p.createdBy())) throw new ValidationException("The author of a proposal cannot approve it themselves");
+        String reasonCode = body == null ? null : body.get("reasonCode");
+        if (ai.intentoms.learning.promotion.PromotionGuard.isPostalCodeScoped(p.changeset())) {
+            // GV-07: a restriction scoped to postal codes can disadvantage a neighbourhood; it needs a stated reason.
+            List<String> allowed = config.getList("learning.postal_reason_codes").stream().map(String::valueOf).toList();
+            if (allowed.isEmpty()) allowed = POSTAL_REASON_CODES;
+            if (reasonCode == null || !allowed.contains(reasonCode)) {
+                throw new ValidationException("This change is scoped to postal codes, so approving it needs a reason code: one of " + allowed);
+            }
+        }
         proposals.approve(id, by, Instant.now());
-        events.proposalApproved(id, ai.intentoms.platform.ledger.Actor.parse(by), Map.of("target", p.changeset().target().toString(), "tier", p.tier().name(), "author", p.createdBy()));
+        Map<String, Object> payload = new java.util.LinkedHashMap<>(Map.of("target", p.changeset().target().toString(), "tier", p.tier().name(), "author", p.createdBy()));
+        if (reasonCode != null) payload.put("reasonCode", reasonCode);
+        events.proposalApproved(id, ai.intentoms.platform.ledger.Actor.parse(by), payload);
         return proposals.get(id);
     }
+
+    static final List<String> POSTAL_REASON_CODES = List.of("carrier_service_gap", "confirmed_fraud_ring", "regulatory_restriction", "natural_disaster");
 
     @PostMapping("/proposals/{id}/reject")
     @RequiresPermission(Permissions.LEARNING_ADMIN)

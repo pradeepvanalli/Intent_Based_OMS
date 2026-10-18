@@ -80,7 +80,7 @@ class GovernanceEventsIntegrationTest extends PostgresTestBase {
         Proposal p = LearningFixtures.threshold("return_risk", 0.80, 0.82, "system:band_threshold", h.hypothesisId());
         proposals.insert(p);
         events.proposalDrafted(p.proposalId(), Actor.system("author"), Map.of("hypothesisId", h.hypothesisId()));
-        controller.approve(p.proposalId());
+        controller.approve(p.proposalId(), null);
         assertThat(types(p.proposalId())).containsExactly("proposal.drafted", "proposal.approved");
         Map<String, Object> approved = events(p.proposalId()).get(1);
         assertThat(approved.get("actor")).isEqualTo("user:tester");

@@ -139,7 +139,7 @@ public final class PromotionGuard {
         return m.get("passed") instanceof Boolean b ? b : null;
     }
 
-    static boolean isPostalCodeScoped(PolicyChangeset cs) {
+    public static boolean isPostalCodeScoped(PolicyChangeset cs) {
         for (PolicyChange c : cs.changes()) {
             String s = switch (c) {
                 case PolicyChange.ParameterChange pc -> pc.parameter();
