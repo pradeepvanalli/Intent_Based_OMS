@@ -2,7 +2,7 @@
 # top-K. Tier T1. Store candidates carry thin staffing on Saturdays and a higher reject rate than the DC; the 3PL is
 # cheap for the west coast but short-picks. Input: candidates[] (one map per node).
 decision: sourcing_node_score
-version: 1
+version: 2
 owner: fulfilment-ops
 tier: T1
 provider: jev
@@ -14,6 +14,8 @@ state:
     - order.destination_state
     - order.ship_method
     - order.line_count
+    - order.sku_class
+    - order.day_part
     - candidates[].id
     - candidates[].type
     - candidates[].backlog_units
@@ -22,10 +24,12 @@ state:
     - candidates[].minutes_to_cutoff
     - candidates[].distance_km
     - candidates[].cost_usd
+    - candidates[].on_time_rate
+    - candidates[].breach_probability
 questions:
   on_time:
     type: score
-    instructions: Can this node ship this order on time given its backlog, reject rate, staffing and cutoff?
+    instructions: Can this node ship this order on time given its backlog, reject rate, staffing and cutoff, and its observed on-time rate and backlog breach probability when given?
     feeds: sourcing_composite
     criteria:
       - Very unlikely to ship on time, backlog far beyond capacity or already past cutoff
