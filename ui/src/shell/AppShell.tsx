@@ -49,7 +49,7 @@ export function AppShell() {
   const [theme, setTheme] = useTheme();
   const counts = useQuery({ queryKey: ['nav-counts'], queryFn: async () => {
     const [t, e, a] = await Promise.all([
-      api.get<Page<HumanTask>>('/api/v1/tasks', { query: { status: 'OPEN', limit: 1 }, silent: true }).catch(() => null),
+      api.get<Page<HumanTask>>('/api/v1/tasks', { query: { status: 'OPEN', limit: 1, mine: true }, silent: true }).catch(() => null),
       api.get<Page<ExceptionRecord>>('/api/v1/exceptions', { query: { status: 'active', limit: 1 }, silent: true }).catch(() => null),
       api.get<{ actionsToday: number; humanEscalations: number }>('/api/v1/autonomy/stats', { silent: true }).catch(() => null),
     ]);
@@ -65,7 +65,7 @@ export function AppShell() {
           {GROUPS.map((g) => { const items = g.items.filter((i) => ('perms' in i && i.perms ? hasAnyPermission(principal, i.perms) : !('perm' in i) || !i.perm || hasPermission(principal, i.perm))); if (!items.length) return null; return (
             <div className="nav-group" key={g.title}>
               <h4>{g.title}</h4>
-              {items.map((i) => <NavLink key={i.to} to={i.to} className={({ isActive }) => ['nav-link', isActive && 'active'].filter(Boolean).join(' ')}><i.icon /><span>{i.label}</span>{'count' in i && i.count && counts.data && counts.data[i.count as 'tasks' | 'exceptions'] > 0 && <span className="cnt" aria-label={`${counts.data[i.count as 'tasks' | 'exceptions']} open`}>{counts.data[i.count as 'tasks' | 'exceptions']}</span>}{'aiPulse' in i && i.aiPulse && counts.data?.autonomyActive && <span className="live ai" aria-label="Autonomous actions active today" title="Autonomous actions active today" style={{ marginLeft: 4 }}><span className="pulse" aria-hidden /></span>}</NavLink>)}
+              {items.map((i) => <NavLink key={i.to} to={i.to} className={({ isActive }) => ['nav-link', isActive && 'active'].filter(Boolean).join(' ')}><i.icon /><span>{i.label}</span>{'count' in i && i.count && counts.data && counts.data[i.count as 'tasks' | 'exceptions'] > 0 && <span className="cnt" aria-label={`${counts.data[i.count as 'tasks' | 'exceptions']} open${i.count === 'tasks' ? ' in your queues' : ''}`} title={i.count === 'tasks' ? 'Open tasks in the queues you work' : undefined}>{counts.data[i.count as 'tasks' | 'exceptions']}</span>}{'aiPulse' in i && i.aiPulse && counts.data?.autonomyActive && <span className="live ai" aria-label="Autonomous actions active today" title="Autonomous actions active today" style={{ marginLeft: 4 }}><span className="pulse" aria-hidden /></span>}</NavLink>)}
             </div>); })}
         </div>
         <div className="nav-foot"><span>v0.1.0</span><span>{MOCK ? 'mock API' : 'api :8080'}</span></div>

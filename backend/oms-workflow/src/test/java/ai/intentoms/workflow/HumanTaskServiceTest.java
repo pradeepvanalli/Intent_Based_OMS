@@ -90,4 +90,20 @@ class HumanTaskServiceTest extends WorkflowTestBase {
         assertThat(sweeper.sweep()).as("already escalated tasks are not escalated twice").isZero();
         assertThat(queues.list()).extracting(TaskQueue::name).contains(queue, queue + "-leads");
     }
+
+    @Test
+    void commaStatusFilterAndMyQueues() {
+        String q = "risk_review";
+        HumanTask open = tasks.create(TaskRequest.of("return_review", q, "Review return").withSubject("return", "r-" + System.nanoTime()));
+        HumanTask other = tasks.create(TaskRequest.of("exception", "cs_exceptions", "Address issue").withSubject("order", "o-" + System.nanoTime()));
+        tasks.claim(other.id(), "cs-user");
+
+        var both = tasks.list(new TaskQuery(null, "OPEN,CLAIMED", null, null, null, null, 0, 500)).items();
+        assertThat(both).extracting(HumanTask::id).contains(open.id(), other.id());
+
+        var mine = tasks.listMine(java.util.Set.of(q), "nobody", "OPEN,CLAIMED", 0, 500).items();
+        assertThat(mine).extracting(HumanTask::id).contains(open.id()).doesNotContain(other.id());
+        var claimedByMe = tasks.listMine(java.util.Set.of(), "cs-user", "CLAIMED", 0, 500).items();
+        assertThat(claimedByMe).extracting(HumanTask::id).contains(other.id());
+    }
 }

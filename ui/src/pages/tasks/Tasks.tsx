@@ -21,7 +21,9 @@ export default function Tasks() {
   const [queue, setQueue] = useQueryState('queue'); const [status, setStatus] = useQueryState('status', 'OPEN,CLAIMED'); const [sel, setSel] = useQueryState('task'); const [offset, setOffset] = useQueryState('offset', '0');
   const [mine, setMine] = useState(false);
   const queues = useQuery({ queryKey: ['queues'], queryFn: tasksApi.queues, refetchInterval: 10000 });
-  const list = useQuery({ queryKey: ['tasks', queue, status, mine, offset], queryFn: () => tasksApi.list({ queue: queue || undefined, status: status || undefined, assignee: mine ? principal?.id : undefined, offset: Number(offset), limit: 25 }), refetchInterval: 10000, placeholderData: (p) => p });
+  const [scope, setScope] = useQueryState('scope', 'mine');
+  const myQueues = scope === 'mine' && !queue && !mine;
+  const list = useQuery({ queryKey: ['tasks', queue, status, mine, scope, offset], queryFn: () => tasksApi.list({ queue: queue || undefined, status: status || undefined, assignee: mine ? principal?.id : undefined, mine: myQueues || undefined, offset: Number(offset), limit: 25 }), refetchInterval: 10000, placeholderData: (p) => p });
   const detail = useQuery({ queryKey: ['task', sel], queryFn: () => tasksApi.get(sel), enabled: !!sel });
   const [why, setWhy] = useState<string | null>(null);
   const invalidate = () => { qc.invalidateQueries({ queryKey: ['tasks'] }); qc.invalidateQueries({ queryKey: ['queues'] }); qc.invalidateQueries({ queryKey: ['task', sel] }); qc.invalidateQueries({ queryKey: ['nav-counts'] }); };
@@ -33,7 +35,7 @@ export default function Tasks() {
           <span className="icon-badge" aria-hidden="true"><IconTasks /></span>
           <div><h1>Tasks</h1><div className="sub">Work routed to a person when the system won't decide on its own — margin approvals, fraud reviews, escalations. Claim one, make the call, and your reason joins the audit trail.</div></div>
         </div>
-        <div className="page-actions"><label className="checkbox"><input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} /> Assigned to me</label><Select aria-label="Status" sm value={status} onChange={(e) => setStatus(e.target.value)}><option value="OPEN,CLAIMED">Open & claimed</option><option value="OPEN">Open</option><option value="CLAIMED">Claimed</option><option value="COMPLETED">Completed</option><option value="">All</option></Select></div></div>
+        <div className="page-actions"><Select aria-label="Which tasks" sm value={scope} onChange={(e) => setScope(e.target.value)} title="My queues shows only the queues your role works"><option value="mine">My queues</option><option value="all">Every queue</option></Select><label className="checkbox"><input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} /> Assigned to me</label><Select aria-label="Status" sm value={status} onChange={(e) => setStatus(e.target.value)}><option value="OPEN,CLAIMED">Open & claimed</option><option value="OPEN">Open</option><option value="CLAIMED">Claimed</option><option value="COMPLETED">Completed</option><option value="">All</option></Select></div></div>
       <div className="two-col rev">
         <aside className="card card-pad">
           <div className="section-title">Queues</div>
@@ -46,7 +48,7 @@ export default function Tasks() {
           <div className="card">
             {list.isLoading && <Loading />}
             {list.isError && <div className="card-body"><ErrorState error={list.error} retry={() => list.refetch()} /></div>}
-            {list.data && <Table rows={list.data.items} rowKey={(t) => t.id} selectedKey={sel} onRowClick={(t) => setSel(t.id)} empty={<EmptyState icon={<IconTasks size={18} />} title="Nothing waiting here" hint={mine ? 'Nothing is assigned to you in this view — try another queue or turn off "Assigned to me".' : 'Tasks appear automatically when a decision needs a person — a margin approval, a fraud hold, or an escalation. Clear or widen the filters above to see more.'} />} caption="Tasks" columns={[
+            {list.data && <Table rows={list.data.items} rowKey={(t) => t.id} selectedKey={sel} onRowClick={(t) => setSel(t.id)} empty={<EmptyState icon={<IconTasks size={18} />} title="Nothing waiting here" hint={mine ? 'Nothing is assigned to you in this view — try another queue or turn off "Assigned to me".' : myQueues ? 'Nothing is waiting in the queues your role works. Choose "Every queue" to see the rest.' : 'Tasks appear automatically when a decision needs a person — a margin approval, a fraud hold, or an escalation. Clear or widen the filters above to see more.'} />} caption="Tasks" columns={[
               { key: 'p', header: 'Pri', width: 44, render: (t) => <Badge tone={t.priority <= 1 ? 'danger' : t.priority === 2 ? 'warn' : 'neutral'}>P{t.priority}</Badge> },
               { key: 'title', header: 'Task', render: (t) => <span className="col gap1"><span className="strong small">{t.title}</span><span className="xs muted">{humanize(t.type)} · {humanize(t.queue)} · <Link to={subjectLink(t)} className="mono" onClick={(e) => e.stopPropagation()}>{t.subjectId}</Link></span></span> },
               { key: 'st', header: 'Status', render: (t) => <span className="row gap1"><StatusBadge status={t.status} />{t.assignee && <span className="xs muted">{t.assignee}</span>}</span> },

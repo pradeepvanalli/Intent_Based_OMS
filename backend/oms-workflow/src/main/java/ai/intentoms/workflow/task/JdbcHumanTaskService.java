@@ -192,10 +192,36 @@ public class JdbcHumanTaskService implements HumanTaskService {
         return Page.of(items, total, q.offset(), q.limit());
     }
 
+    @Override
+    public Page<HumanTask> listMine(java.util.Set<String> queues, String assignee, String status, int offset, int limit) {
+        int off = Math.max(0, offset);
+        int lim = limit <= 0 || limit > 500 ? 50 : limit;
+        StringBuilder where = new StringBuilder(" where tenant_id = :t");
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("t", TenantContext.require());
+        filter(where, params, "status", status);
+        if (queues != null) {
+            params.put("me", assignee == null ? "" : assignee);
+            if (queues.isEmpty()) where.append(" and assignee = :me");
+            else { where.append(" and (queue in (:queues) or assignee = :me)"); params.put("queues", List.copyOf(queues)); }
+        }
+        long total = jdbc.sql("select count(*) from human_task" + where).params(params).query(Long.class).single();
+        List<HumanTask> items = jdbc.sql("select " + COLUMNS + " from human_task" + where + " order by priority desc, sla_due_at asc nulls last, created_at asc offset :off limit :lim")
+            .params(params).param("off", off).param("lim", lim).query(MAPPER).list();
+        return Page.of(items, total, off, lim);
+    }
+
+    /** Equality filter; a comma-separated value ("OPEN,CLAIMED") matches any of its entries. */
     private static void filter(StringBuilder where, Map<String, Object> params, String column, String value) {
         if (value == null || value.isBlank()) return;
-        where.append(" and ").append(column).append(" = :").append(column);
-        params.put(column, value);
+        List<String> values = java.util.Arrays.stream(value.split(",")).map(String::trim).filter(v -> !v.isEmpty()).toList();
+        if (values.size() > 1) {
+            where.append(" and ").append(column).append(" in (:").append(column).append(")");
+            params.put(column, values);
+        } else {
+            where.append(" and ").append(column).append(" = :").append(column);
+            params.put(column, values.isEmpty() ? value : values.get(0));
+        }
     }
 
     @Override

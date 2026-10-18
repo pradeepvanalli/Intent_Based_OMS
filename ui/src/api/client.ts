@@ -1,6 +1,7 @@
 import type { ProblemDetail } from './types';
 import { clearSession, getSession } from '../auth/session';
 import { toast } from '../lib/toast';
+import { friendlyError } from './friendly';
 
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? '';
 export const MOCK: boolean = import.meta.env.VITE_MOCK === '1' || import.meta.env.VITE_MOCK === 'true';
@@ -73,7 +74,7 @@ export async function request<T>(method: string, path: string, opts: RequestOpti
       else { const text = await res.text(); if (text) problem.detail = text.slice(0, 500); }
     } catch { /* unparseable body */ }
     const err = new ApiError(problem);
-    if (!opts.silent && res.status !== 401) toast.danger(humanTitle(problem), problem.detail);
+    if (!opts.silent && res.status !== 401) { const f = friendlyError(problem); toast.danger(f.title, f.message); }
     throw err;
   }
   if (res.status === 204) return undefined as T;
@@ -82,11 +83,6 @@ export async function request<T>(method: string, path: string, opts: RequestOpti
   return JSON.parse(text) as T;
 }
 
-function humanTitle(p: ProblemDetail): string {
-  const t = (p.code ?? p.title ?? '').toString();
-  if (!t) return `Request failed (${p.status})`;
-  return t.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
-}
 
 export const api = {
   get: <T>(path: string, opts?: RequestOptions) => request<T>('GET', path, opts),

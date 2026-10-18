@@ -27,7 +27,14 @@ import java.util.Set;
 public class TaskController {
     private final HumanTaskService tasks;
 
-    public TaskController(HumanTaskService tasks) { this.tasks = tasks; }
+    private final ai.intentoms.workflow.task.TaskQueues queues;
+    private final ai.intentoms.platform.security.AuthorizationService authz;
+
+    public TaskController(HumanTaskService tasks, ai.intentoms.workflow.task.TaskQueues queues, ai.intentoms.platform.security.AuthorizationService authz) {
+        this.tasks = tasks;
+        this.queues = queues;
+        this.authz = authz;
+    }
 
     public record CreateRequest(String type, String queue, String subjectType, String subjectId, String title, Map<String, Object> payload,
                                 Integer slaMinutes, Set<String> requiredSkills, Integer priority, String workflowId) {}
@@ -40,7 +47,12 @@ public class TaskController {
     public Page<HumanTask> list(@RequestParam(required = false) String queue, @RequestParam(required = false) String status,
                                 @RequestParam(required = false) String assignee, @RequestParam(required = false) String subjectType,
                                 @RequestParam(required = false) String subjectId, @RequestParam(required = false) String workflowId,
-                                @RequestParam(defaultValue = "0") int offset, @RequestParam(defaultValue = "50") int limit) {
+                                @RequestParam(defaultValue = "0") int offset, @RequestParam(defaultValue = "50") int limit,
+                                @RequestParam(defaultValue = "false") boolean mine) {
+        if (mine) {
+            var p = authz.requirePrincipal();
+            return tasks.listMine(queues.queuesFor(p.roles()), p.id(), status, offset, limit);
+        }
         return tasks.list(new TaskQuery(queue, status, assignee, subjectType, subjectId, workflowId, offset, limit));
     }
 

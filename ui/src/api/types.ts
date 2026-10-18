@@ -38,7 +38,7 @@ export interface TimelineEntry { at: string; kind: TimelineKind | string; name: 
 export type TaskStatus = 'OPEN' | 'CLAIMED' | 'COMPLETED' | 'CANCELLED' | 'EXPIRED';
 export interface HumanTask { id: string; type: string; queue: string; subjectType: string; subjectId: string; title: string; payload?: Record<string, unknown>; status: TaskStatus; assignee?: string | null; slaDueAt?: string | null; createdAt: string; outcome?: string | null; outcomeReason?: string | null; completedBy?: string | null; completedAt?: string | null; workflowId?: string | null; requiredSkills?: string[]; priority: number; }
 export interface TaskQueue { name: string; slaDefault?: string; escalationQueue?: string | null; skills?: string[]; openCount?: number; claimedCount?: number; overdueCount?: number; }
-export interface TaskQuery { queue?: string; status?: string; assignee?: string; subjectType?: string; subjectId?: string; offset?: number; limit?: number; }
+export interface TaskQuery { queue?: string; status?: string; assignee?: string; subjectType?: string; subjectId?: string; offset?: number; limit?: number; /** Only queues the signed-in person works, plus tasks assigned to them. */ mine?: boolean; }
 
 export type BulkAction = 'resource' | 'repromise' | 'hold' | 'release' | 'cancel';
 export interface BulkItemResult { subjectId: string; status: 'ok' | 'failed' | 'skipped' | 'planned' | string; message?: string; applied?: Record<string, unknown>; }

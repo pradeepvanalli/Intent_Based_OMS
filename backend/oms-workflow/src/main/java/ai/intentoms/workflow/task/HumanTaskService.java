@@ -28,5 +28,8 @@ public interface HumanTaskService {
 
     Page<HumanTask> list(TaskQuery q);
 
+    /** Tasks in any of {@code queues} (null = every queue) or assigned to {@code assignee}, optionally by status. */
+    Page<HumanTask> listMine(java.util.Set<String> queues, String assignee, String status, int offset, int limit);
+
     HumanTask get(String id);
 }
