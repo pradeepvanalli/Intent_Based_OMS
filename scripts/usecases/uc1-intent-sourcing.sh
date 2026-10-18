@@ -29,7 +29,7 @@ order() { # order <ref> <note> <intentChoicesJson> <shoesAttrsJson>
    \"lines\":[{\"lineId\":\"1\",\"sku\":\"HOOD-GRY-M\",\"qty\":1,\"unitPrice\":{\"amount\":68.00,\"currency\":\"USD\"}},
              {\"lineId\":\"2\",\"sku\":\"SNK-RUN-10\",\"qty\":1,\"unitPrice\":{\"amount\":145.00,\"currency\":\"USD\"},\"attributes\":$attrs},
              {\"lineId\":\"3\",\"sku\":\"CAP-NVY\",\"qty\":1,\"unitPrice\":{\"amount\":32.00,\"currency\":\"USD\"}}],
-   \"addresses\":[{\"type\":\"ship_to\",\"name\":\"Priya Raman\",\"line1\":\"400 Pine St\",\"city\":\"Seattle\",\"state\":\"WA\",\"zip\":\"98101\",\"country\":\"US\"}],
+   \"addresses\":[{\"type\":\"ship_to\",\"name\":\"Priya Raman\",\"line1\":\"400 Pine St, Apt $ref\",\"city\":\"Seattle\",\"state\":\"WA\",\"zip\":\"98101\",\"country\":\"US\"}],
    \"tenders\":[{\"type\":\"card\",\"token\":\"tok_visa_ok\",\"amount\":{\"amount\":280.00,\"currency\":\"USD\"}}],
    \"notes\":[{\"source\":\"customer\",\"text\":\"$note\"}],
    \"intentChoices\":$intent,\"shipMethod\":\"ground\"}" | j 'd.get("id") or json.dumps(d)'

@@ -12,7 +12,7 @@ buy_and_deliver() { # buy_and_deliver <ref> <customerRef> <tier> <sku> <price> [
   oid=$(api POST /api/v1/orders "{\"channel\":\"$ch\",\"channelOrderId\":\"$ref\",\"orderType\":\"standard_ship\",\"customerRef\":\"$cust\",
    \"customer\":{\"ref\":\"$cust\",\"name\":\"$cust\",\"email\":\"$cust@example.com\",\"tier\":\"$tier\"},
    \"lines\":[{\"lineId\":\"1\",\"sku\":\"$sku\",\"qty\":1,\"unitPrice\":{\"amount\":$price,\"currency\":\"USD\"}}],
-   \"addresses\":[{\"type\":\"ship_to\",\"name\":\"$cust\",\"line1\":\"1 Market St\",\"city\":\"San Francisco\",\"state\":\"CA\",\"zip\":\"94105\",\"country\":\"US\"}],
+   \"addresses\":[{\"type\":\"ship_to\",\"name\":\"$cust\",\"line1\":\"1 Market St, Unit $cust\",\"city\":\"San Francisco\",\"state\":\"CA\",\"zip\":\"94105\",\"country\":\"US\"}],
    \"tenders\":[{\"type\":\"card\",\"token\":\"tok_visa_ok\",\"amount\":{\"amount\":$(python3 -c "print(round($price*1.2,2))"),\"currency\":\"USD\"}}],\"shipMethod\":\"ground\"}" | j 'd.get("id") or json.dumps(d)')
   sleep 4; ship_and_deliver "$oid" "$(order_node "$oid")"; echo "$oid"
 }
