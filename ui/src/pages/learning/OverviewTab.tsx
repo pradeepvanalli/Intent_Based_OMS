@@ -8,7 +8,7 @@ import { EmptyState, ErrorState, Loading, Section } from '../../components/State
 import { ApiError } from '../../api/client';
 import { fmtDate, fmtNum, fmtPct, humanize, relTime } from '../../lib/format';
 import { toast } from '../../lib/toast';
-import { InfoTip, Meter, Technical } from './Bits';
+import { DemoBadge, InfoTip, Meter, Technical } from './Bits';
 import { decisionLabel, liftVerdict, metricName, relativeChange, targetName } from './copy';
 
 const REFRESH = 30000;
@@ -24,6 +24,8 @@ export function OverviewTab({ canAdmin, goTo }: { canAdmin: boolean; goTo: (tab:
   const approved = useQuery({ queryKey: ['learning', 'proposals', 'APPROVED'], queryFn: () => learningApi.proposals('APPROVED'), refetchInterval: REFRESH });
   const objectiveDrafts = useQuery({ queryKey: ['learning', 'objective', 'drafts'], queryFn: learningApi.objectiveDrafts, refetchInterval: REFRESH });
   const digest = useQuery({ queryKey: ['learning', 'digest', 'latest'], queryFn: learningApi.latestDigest, retry: false });
+  const experiments = useQuery({ queryKey: ['learning', 'experiments', 'all'], queryFn: () => learningApi.experiments(true), refetchInterval: REFRESH });
+  const holdoutBy = experiments.data?.find((e) => e.experimentId === lift.data?.holdout?.experimentId)?.createdBy ?? null;
 
   const reward = lift.data?.metrics.find((m) => m.metric === 'reward');
   const verdict = reward ? liftVerdict(reward) : null;
@@ -38,6 +40,7 @@ export function OverviewTab({ canAdmin, goTo }: { canAdmin: boolean; goTo: (tab:
   const paused = all.filter((l) => !l.running);
   const cov = Object.entries(coverage.data ?? {});
   const lowest = cov.length ? Math.min(...cov.map(([, v]) => v)) : null;
+  const below = cov.filter(([, v]) => v < COVERAGE_FLOOR);
 
   return (
     <div className="col gap4">
@@ -50,13 +53,14 @@ export function OverviewTab({ canAdmin, goTo }: { canAdmin: boolean; goTo: (tab:
           hint={drafts.data && evaluated.data && approved.data ? `${toReview} to review · ${approved.data.length} approved, not live` : undefined} onClick={() => goTo('changes')} tone={toReview > 0 ? 'ai' : undefined} />
         <StatTile label="Learners running" value={learners.data ? `${running} of ${all.length}` : '—'} loading={learners.isLoading}
           hint={!learners.data ? undefined : paused.length ? `${paused.length} paused or switched off` : 'All running'} onClick={() => goTo('learners')} tone={paused.length ? 'warn' : undefined} />
-        <StatTile label="Outcomes coming back" value={lowest === null ? '—' : fmtPct(lowest, 0)} loading={coverage.isLoading}
-          hint={!coverage.data ? undefined : lowest === null ? 'Measured once there are enough decisions' : lowest < COVERAGE_FLOOR ? 'Below 80%: affected learners pause' : 'Lowest decision, healthy'}
-          tone={lowest !== null && lowest < COVERAGE_FLOOR ? 'danger' : undefined} />
+        <StatTile label="Outcomes coming back" value={lowest === null ? '—' : `${cov.length - below.length} of ${cov.length}`} loading={coverage.isLoading}
+          hint={!coverage.data ? undefined : lowest === null ? 'Measured once there are enough decisions'
+            : below.length ? `decisions on track · ${below.map(([d]) => decisionLabel(d)).join(', ')} below 80%, so the learners that use it pause` : 'decisions have enough outcomes to learn from'}
+          tone={below.length ? 'warn' : undefined} />
       </div>
 
       <div className="learn-two">
-        <LiftCard lift={lift.data} isLoading={lift.isLoading} error={lift.error} retry={() => lift.refetch()} canAdmin={canAdmin} />
+        <LiftCard lift={lift.data} isLoading={lift.isLoading} error={lift.error} retry={() => lift.refetch()} canAdmin={canAdmin} holdoutBy={holdoutBy} />
         <div className="col gap4">
           <Section title="Needs you">
             <div className="need-list">
@@ -94,7 +98,7 @@ function NeedItem({ count, label, onClick }: { count: number; label: string; onC
   );
 }
 
-function LiftCard({ lift, isLoading, error, retry, canAdmin }: { lift?: LiftReport; isLoading: boolean; error: unknown; retry: () => void; canAdmin: boolean }) {
+function LiftCard({ lift, isLoading, error, retry, canAdmin, holdoutBy }: { lift?: LiftReport; isLoading: boolean; error: unknown; retry: () => void; canAdmin: boolean; holdoutBy?: string | null }) {
   const qc = useQueryClient();
   const holdout = useMutation({
     mutationFn: () => learningApi.ensureHoldout(0.05),
@@ -111,7 +115,7 @@ function LiftCard({ lift, isLoading, error, retry, canAdmin }: { lift?: LiftRepo
       )}
       {lift?.holdout && (
         <>
-          <p className="caption">{fmtPct(lift.holdout.trafficShare, 0)} of customers have been in the holdout since {fmtDate(lift.holdout.startAt)}.</p>
+          <p className="caption row gap2">{fmtPct(lift.holdout.trafficShare, 0)} of customers have been in the holdout since {fmtDate(lift.holdout.startAt)}.<DemoBadge by={holdoutBy} /></p>
           <div className="table-wrap">
             <table className="tbl dense" aria-label="Lift by measure">
               <thead><tr><th scope="col">Measure</th><th scope="col" className="num">With learning</th><th scope="col" className="num">Holdout</th><th scope="col">Result</th></tr></thead>

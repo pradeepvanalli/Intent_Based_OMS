@@ -19,4 +19,8 @@ public record DecisionRecord(String id, String decision, int version, Mode mode,
                              Map<String, Object> contextFeatures, List<String> arms, String chosenArm, double propensity, Integer policyVersion) {
     /** Effective value after any human override (GR-13). */
     public Object effectiveValue() { return overriddenAt != null ? overriddenValue : value; }
+
+    /** The UI contract's name for when the decision was made (same instant as {@code createdAt}). */
+    @com.fasterxml.jackson.annotation.JsonProperty("evaluatedAt")
+    public Instant evaluatedAt() { return createdAt; }
 }

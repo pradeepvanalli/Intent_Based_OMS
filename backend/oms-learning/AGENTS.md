@@ -1,59 +1,67 @@
 # AGENTS.md — oms-learning (Self-Optimizing Order Orchestration)
 
-Closes the loop from outcome back to policy. Read the root `AGENTS.md` first. Full signatures and the honest
-gap list: `docs/MODULE_NOTES.md` § Self-Optimizing Order Orchestration. Mechanism and demo walkthrough:
-`docs/UC_SELF_OPTIMIZING_ORCHESTRATION.md`. This file is what to know before touching this code specifically.
+Closes the loop from outcome back to policy. Read the root `AGENTS.md` first. Requirement → code → test map:
+`docs/SOO_TRACEABILITY.md`. Mechanism and demo walkthrough: `docs/UC_SELF_OPTIMIZING_ORCHESTRATION.md`. This file
+is what to know before touching this code.
 
 ## The mental model
 
-Two loops. The **fast loop** (`.../learning/learner/`) reads episodes and outcomes and updates typed parameters and
-facts in minutes, no LLM — node reliability, lane transit times, a contextual bandit over the five sourcing
-policies, customer preference facts, fraud thresholds. The **slow loop** is an Analyst (extends `oms-copilot`,
-nightly) that raises hypotheses from aggregated outcome digests, an Author (extends `oms-copilot`) that drafts
-policy changesets, an Evaluator (extends `oms-simulation`) that replays a changeset against logged history with a
-confidence interval, and a Critic that reviews the evidence. Nothing from either loop is live until it clears
-replay → shadow/canary → the tiered promotion gate (`PromotionGuard`, pure and unit-tested — read it before
-changing any tier/autonomy logic, it's the single place that decision lives).
+Two loops. The **fast loop** (`.../learning/learner/`, plus learners in oms-inventory and oms-agent) turns episodes
+and outcomes into typed facts and parameter proposals, no LLM. The **slow loop** is Analyst → Author → Critic in
+`oms-copilot` (hypotheses, changesets, review) and the off-policy evaluator in `oms-simulation`. Nothing from
+either loop changes live behaviour until it clears evaluation, approval where the tier needs it, and promotion.
 
-## Dependency direction — don't get this backwards
+## Five rules that keep it safe
 
-`oms-learning` depends only on `platform`/`decision`/`workflow`. It never depends on `sourcing`, `inventory`,
-`copilot`, `simulation`, `orchestration` or `agent` — those modules depend on *it*. If you're tempted to add an
-import from `oms-learning` into any of those, the code almost certainly belongs in the other module's own package
-instead (this is why `SourcingPolicyBandit` lives here but is *called from* `oms-sourcing`, and why
-`AgentReputationLearner` lives in `oms-agent`, not here, even though conceptually it's a learner).
+1. **Every learner is governed.** Implement `GovernedLearner` with a `LearnerDescriptor` (plain-English name and
+   one-line summary — they are shown to people — requirement ids, `readsOutcomesOf` for the decisions whose
+   outcome coverage matters, `features` allowlist, `feeds` for the live families it can feed). Start every run with
+   `LearnerGovernance.begin(KEY)` and stop when `mayRun()` is false; draft proposals or hypotheses only when
+   `mayPropose()`. Event-driven learners call `recordRunThrottled`. `LearnerRegistry` registers the learner for every
+   tenant at its default autonomy (L1).
+2. **Live paths read learned values only through `ParameterResolver`.** A value is served only after a promoted
+   `ParameterChange` on `parameter:live:<family>` (created through `POST /learning/live-parameters/proposals`), within
+   its range and max step, and only while the learner is on, unpaused and above L0. Otherwise the static value is
+   served. Never read `LearnedFactRepository` directly from sourcing, promise, inventory or monitoring code; use
+   `LearnedFactCache` + `ParameterResolver`.
+3. **Learners propose, the gate decides.** A learner may write facts and proposals. It never calls
+   `DecisionStudioService.publish/edit/createDraft`, never changes an agent's trust tier, and never bypasses
+   `PromotionGuard` (autonomy × tier, change budgets, freeze windows, never-autonomous changes such as refunds,
+   cancellations, pricing, objective and autonomy). `PromotionService` applies every change type and keeps a rollback
+   snapshot.
+4. **Propensity is the probability of the logged arm.** The generic runtime logs the main question's options as
+   `arms` with propensity 1.0. Anything that samples (see `SourcingPolicyBandit`) logs the arm actually applied with
+   its true draw probability, keeps a sampled-but-unused arm in `details.shadow`, seeds the draw once and stores the
+   seed, and offers a static `replay(...)`.
+5. **One episode per decision point.** `EpisodeAssembler` keys episodes by decision, subject, line and fulfilment
+   group (`DecisionPoints`). A scorer that re-evaluates the same order must not open new episodes; it moves
+   `last_decision_id`.
 
-## The propensity rule
+## Extension points (add a bean, don't edit a shared file)
 
-Every decision logs `propensity` on its `decision_record` row (added by this module's `V401` migration in
-`oms-decision`). For an ordinary decision this defaults to `1.0` — a deterministic choice needs no correction. The
-*only* place that should ever log a genuinely sampled, non-1.0 propensity is something that actually explores among
-several arms with real randomness, like `SourcingPolicyBandit`. If you add a new learner that samples, follow its
-exact pattern: seed the random draw once, persist the seed in `decision_record.details.randomSeed`, and provide a
-static `replay(...)` method that reproduces the choice from that seed — this is what makes NF-04 (determinism) hold
-and what the off-policy evaluator depends on to be statistically honest.
+| You want to… | Add |
+|---|---|
+| Turn a new ledger event into an outcome | an `OutcomeMapper` bean (see `CoreOutcomeMapper`) |
+| Put learned facts into a decision's input | a `FeatureContributor` bean (see `NodeReliabilityFeatures`); list every fact used |
+| Calibrate confidence / route a provider / route an experiment | a `ConfidenceCalibration` / `ProviderRouter` / `ExperimentRouter` bean |
+| Add a learner | a `GovernedLearner` bean (batch learners also return `runnable() = true` and implement `runNow()`) |
+| Add a fact type | a `FactKey` value with its `TypedValue` shape; write it with versioning (`FulfilmentFacts` shows how) |
 
-## What a learner may and may not do
+All four hook interfaces are called only for LIVE and SHADOW evaluations; replay, simulation and golden-set runs
+never see them, so a recorded decision replays from its recorded input.
 
-A learner may write `LearnedFact` rows (via `LearnedFactRepository`) and `Proposal` rows (via `ProposalRepository`)
-freely — those are recommendations. A learner may **never** call `DecisionStudioService.publish()`, `.edit()`, or
-`.createDraft()` directly, never call `AgentRegistry.update()` to change a trust tier, and never bypass
-`PromotionGuard`. If your learner wants a decision or a config value to actually change, it raises a `Proposal` and
-stops — the promotion gate decides, under governance, whether and when that becomes real.
+## Dependency direction
 
-## Before you add a new outcome source
-
-`OutcomeObserver` maps real ledger event types to the typed `OutcomeData` catalog. If the event you need doesn't
-exist yet (chargeback and stranded-inventory signals don't, as of this writing), the fix is to add the field to the
-*producing* event's payload at its source (see how `StandardShipOrderWorkflow.deliver()` computes `onTime` against
-`FulfilmentGroup.promiseDate()` before appending `order.delivered`) — not to guess at it in the observer. Check
-`docs/MODULE_NOTES.md`'s gap list before assuming a signal is missing; it might just not be wired into the reward
-yet (`RewardCalculator.components()` is the pure function to extend for that, not the formula itself).
+`oms-learning` depends only on `platform`/`decision`/`workflow`. Sourcing, inventory, monitoring, orchestration,
+copilot, simulation, agent and app depend on it. If you want to import one of those here, the code belongs in that
+module instead.
 
 ## Testing
 
-`TenantIsolationTest` is the one to extend if you add a new table or query path — every new piece of this module
-needs to prove one tenant's data never leaks into another's. `SourcingPolicyBanditDeterminismTest` is the pattern
-for any new sampling learner. Scoped `mvn -pl oms-learning test` runs against whatever Postgres `PostgresTestBase`
-resolves — see the root `AGENTS.md`'s note on the local dev database's Flyway history if you hit a validation error
-after running many scoped test passes.
+- `TenantIsolationTest` for any new table or query path.
+- `EpisodePipelineIntegrationTest` for episode/outcome/reward changes.
+- `PromotionGuardTest` for any gate rule; `LiveUseFlowIntegrationTest` for live use.
+- `SourcingPolicyBanditPropensityTest` / `...DeterminismTest` for any sampling learner.
+- The demo tenant's reference data comes from `oms-app/.../glue/soo/SooDemoSeeder` (actor `system:demo-seed`);
+  guardrail monitors ignore it. The Playwright suite (`make e2e`) drives the Learning console end to end.
+- The shared `test` tenant is reused across test classes in one run; reset any state your test asserts on first.

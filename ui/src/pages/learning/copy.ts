@@ -185,7 +185,8 @@ export function authorName(createdBy: string | null | undefined, learnerNames: M
   return createdBy.replace(/^(user|system):/, '');
 }
 
-export const isDemo = (by: string | null | undefined): boolean => by === 'system:demo-seed';
+/** Seeded reference data: written by the demo seeder, or a proposal the seeder created under a learner's name. */
+export const isDemo = (by: string | null | undefined, id?: string | null): boolean => by === 'system:demo-seed' || !!id?.startsWith('prop_demo_');
 
 /** Mirrors the server's GV-07 rule: a change scoped to postal codes needs a reason code to approve. */
 export function isPostalScoped(p: Proposal): boolean {
