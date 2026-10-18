@@ -31,8 +31,10 @@ public class CriticService {
     private final CopilotLlmClient llm;
     private final PromptTemplates templates;
     private final ProposalRepository proposals;
+    private final LearningLlmAudit audit;
 
-    public CriticService(CopilotLlmClient llm, PromptTemplates templates, ProposalRepository proposals) {
+    public CriticService(CopilotLlmClient llm, PromptTemplates templates, ProposalRepository proposals, LearningLlmAudit audit) {
+        this.audit = audit;
         this.llm = llm;
         this.templates = templates;
         this.proposals = proposals;
@@ -51,14 +53,24 @@ public class CriticService {
         payload.put("changes", p.changeset().changes().stream().map(c -> Map.of("type", c.getClass().getSimpleName(), "detail", c.toString())).toList());
         payload.put("evaluationReport", p.evaluationReport());
 
+        if (!audit.withinBudget("critic", FEATURE, "proposal", proposalId, LearningSchemas.REVIEW, "system-critic.md")) {
+            log.info("Critic skipped {}: monthly learning LLM budget reached", proposalId);
+            return Optional.empty();
+        }
+        String prompt = templates.get("system-critic.md");
         JsonNode out;
-        try { out = llm.complete(FEATURE, templates.get("system-critic.md"), payload, LearningSchemas.REVIEW); }
-        catch (OmsException e) { log.warn("Critic call failed for proposal {}: {}", proposalId, e.getMessage()); return Optional.empty(); }
+        try { out = llm.complete(FEATURE, prompt, payload, LearningSchemas.REVIEW); }
+        catch (OmsException e) {
+            audit.record("critic", FEATURE, "proposal", proposalId, LearningSchemas.REVIEW, "system-critic.md", prompt, "error", null);
+            log.warn("Critic call failed for proposal {}: {}", proposalId, e.getMessage());
+            return Optional.empty();
+        }
 
         List<String> risks = new ArrayList<>();
         for (JsonNode r : out.path("risks")) risks.add(r.asText());
         Review review = new Review(Review.Verdict.valueOf(out.path("verdict").asText("NEEDS_CHANGES")), risks);
         proposals.setCriticReview(proposalId, review);
+        audit.record("critic", FEATURE, "proposal", proposalId, LearningSchemas.REVIEW, "system-critic.md", prompt, "ok", proposalId);
         return Optional.of(review);
     }
 }
