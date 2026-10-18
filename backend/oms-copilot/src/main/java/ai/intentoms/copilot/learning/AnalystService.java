@@ -40,9 +40,11 @@ public class AnalystService {
     private final DecisionRecordRepository decisionRecords;
     private final HypothesisRepository hypotheses;
     private final LearningEvents events;
+    private final LearningLlmAudit audit;
 
     public AnalystService(CopilotLlmClient llm, PromptTemplates templates, OutcomeDigestBuilder digests, DecisionRecordRepository decisionRecords,
-                           HypothesisRepository hypotheses, LearningEvents events) {
+                           HypothesisRepository hypotheses, LearningEvents events, LearningLlmAudit audit) {
+        this.audit = audit;
         this.llm = llm;
         this.templates = templates;
         this.digests = digests;
@@ -78,9 +80,18 @@ public class AnalystService {
         payload.put("decision", decision);
         payload.put("cohorts", cohorts.stream().map(c -> Map.of(
             "scopeKey", c.scopeKey(), "scopeValue", c.scopeValue(), "episodeCount", c.episodeCount(), "meanReward", c.meanReward(), "meanComponents", c.meanComponents())).toList());
+        if (!audit.withinBudget("analyst", FEATURE, "decision", decision, LearningSchemas.HYPOTHESES, "system-analyst.md")) {
+            log.info("Analyst skipped for {}: monthly learning LLM budget reached", decision);
+            return List.of();
+        }
+        String prompt = templates.get("system-analyst.md");
         JsonNode out;
-        try { out = llm.complete(FEATURE, templates.get("system-analyst.md"), payload, LearningSchemas.HYPOTHESES); }
-        catch (OmsException e) { log.warn("Analyst call failed for decision {}: {}", decision, e.getMessage()); return List.of(); }
+        try { out = llm.complete(FEATURE, prompt, payload, LearningSchemas.HYPOTHESES); }
+        catch (OmsException e) {
+            audit.record("analyst", FEATURE, "decision", decision, LearningSchemas.HYPOTHESES, "system-analyst.md", prompt, "error", null);
+            log.warn("Analyst call failed for decision {}: {}", decision, e.getMessage());
+            return List.of();
+        }
         List<Hypothesis> result = new ArrayList<>();
         for (JsonNode h : out.path("hypotheses")) {
             Hypothesis hyp = new Hypothesis(Ids.prefixed("hyp"),
@@ -93,6 +104,8 @@ public class AnalystService {
             events.hypothesisRaised(hyp.hypothesisId(), Actor.system("analyst"), Map.of("decision", decision, "targetMetric", hyp.targetMetric(), "priorConfidence", hyp.priorConfidence()));
             result.add(hyp);
         }
+        audit.record("analyst", FEATURE, "decision", decision, LearningSchemas.HYPOTHESES, "system-analyst.md", prompt, result.isEmpty() ? "no_output" : "ok",
+            result.isEmpty() ? null : result.get(0).hypothesisId());
         return result;
     }
 

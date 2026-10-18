@@ -94,8 +94,9 @@ public final class PromotionGuard {
         String refused = refusedOutright(p.changeset());
         if (refused != null) return Result.blocked(refused);
         if (p.status() != ai.intentoms.learning.model.ProposalStatus.APPROVED) return Result.blocked("proposal must be APPROVED before a human can promote it");
-        Boolean liftOk = positiveLift(p.evaluationReport());
-        if (liftOk != null && !liftOk) return Result.blocked("evaluation shows no positive lift; re-evaluate or reject instead of promoting");
+        // A person may promote a change replay could not show to be better (no matured outcomes yet, or a no-op cleanup
+        // such as retiring a rule that never fires); only evidence that it is worse blocks them.
+        if (Boolean.TRUE.equals(significantlyWorse(p.evaluationReport()))) return Result.blocked("evaluation shows the change makes outcomes worse; re-evaluate or reject instead of promoting");
         if (p.tier() == PolicyChangeset.RiskTier.T3) return Result.blocked("T3 decisions are never autonomous, including by manual promotion of an auto-drafted change");
         return Result.auto("approved by a human, promoting");
     }
@@ -168,6 +169,13 @@ public final class PromotionGuard {
         }
         Object lift = report.get("liftEstimate");
         return lift instanceof Number n && n.doubleValue() > 0;
+    }
+
+    /** True when the evaluation's confidence interval lies entirely below zero (or, without one, the estimate is negative). */
+    static Boolean significantlyWorse(Map<String, Object> report) {
+        if (report == null) return null;
+        if (report.get("confidenceInterval") instanceof Map<?, ?> m && m.get("upper") instanceof Number upper) return upper.doubleValue() < 0;
+        return report.get("liftEstimate") instanceof Number n ? n.doubleValue() < 0 : null;
     }
 
     static boolean isInsideAnyWindow(List<FreezeWindow> windows, Instant now) {

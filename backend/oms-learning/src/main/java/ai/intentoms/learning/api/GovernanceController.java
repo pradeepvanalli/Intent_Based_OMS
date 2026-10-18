@@ -10,9 +10,10 @@ import ai.intentoms.platform.security.Permissions;
 import ai.intentoms.platform.security.RequiresPermission;
 import org.springframework.web.bind.annotation.*;
 
-/** EX-07 manual promotion, GV-06 crypto-shred propagation, GV-07 fairness parity. Separate controller from {@code
- * LearningController}/{@code EvaluationController}/{@code LearningLlmController} per this build's file-ownership
- * split — same {@code /api/v1/learning} base path, different sub-paths. */
+import java.util.Map;
+
+/** EX-07 promotion and rollback, GV-06 crypto-shred propagation, GV-07 fairness parity. Same {@code /api/v1/learning}
+ * base path as {@code LearningController}, different sub-paths. */
 @RestController
 @RequestMapping("/api/v1/learning")
 public class GovernanceController {
@@ -31,6 +32,13 @@ public class GovernanceController {
     @PostMapping("/proposals/{id}/promote")
     @RequiresPermission(Permissions.LEARNING_ADMIN)
     public Proposal promote(@PathVariable String id) { return promotion.promote(id, Actor.parse(authz.requirePrincipal().actorRef())); }
+
+    /** AC4 / EX-05: revert a promoted change to exactly what it replaced. Body: {@code {"reason": "..."}} (optional). */
+    @PostMapping("/promotions/{id}/rollback")
+    @RequiresPermission(Permissions.LEARNING_ADMIN)
+    public Proposal rollback(@PathVariable String id, @RequestBody(required = false) Map<String, String> body) {
+        return promotion.rollback(id, Actor.parse(authz.requirePrincipal().actorRef()), body == null ? null : body.get("reason"));
+    }
 
     @GetMapping("/fairness/{decision}")
     @RequiresPermission(Permissions.LEARNING_READ)

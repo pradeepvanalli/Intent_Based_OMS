@@ -3,32 +3,24 @@ package ai.intentoms.simulation.learning;
 import ai.intentoms.learning.model.PolicyChange;
 import ai.intentoms.learning.model.PolicyChangeset;
 
+import java.util.Locale;
+
 /**
- * What a proposed {@link PolicyChangeset} would have chosen for an already-logged decision, without re-running the
- * full L0→L1→L2→L3 pipeline — the logged confidence and band are enough to determine whether a {@code
- * ThresholdChange} would have moved this specific record into or out of the act band, which is exactly the signal
- * the IPS/doubly-robust estimator needs (did the proposed policy's arm match the logged one).
- *
- * <p><b>Scope:</b> {@code ThresholdChange} is fully simulated. {@code WeightChange}, {@code RuleAdd}, {@code
- * RuleRetire}, {@code ParameterChange} and {@code AllowListChange} would need to re-run decision-specific scoring
- * or rule logic this estimator doesn't have — for those, the proposed arm defaults to the logged arm (no simulated
- * behaviour change for that record). A changeset mixing a threshold change with other change types still gets a
- * real threshold simulation; only the other change types' effect is left at "no observed difference" until a
- * decision-specific simulator is built for them.
+ * Fast path for threshold-only changesets: what the proposed bands would have done with an already-logged decision,
+ * from its logged confidence and band alone, without re-running the pipeline. Raising the act threshold above a record's
+ * confidence means the proposed policy would no longer act on it (null arm); lowering it below means a record that
+ * confirmed or escalated would now act on its logged value. Every other change type is re-simulated through the
+ * candidate definition by {@link ProposalEvaluationService}.
  */
 public final class ProposedArmSimulator {
     private ProposedArmSimulator() {}
 
-    /** The arm the proposed policy would choose for this record, or null when it would no longer act (escalate/confirm
-     * instead of the logged arm) — null correctly scores as "doesn't match the logged arm" in the IPS indicator. */
+    /** The arm the proposed policy would choose for this record, or null when it would no longer act. */
     public static String proposedArm(LoggedRecord r, PolicyChangeset changeset) {
-        String arm = r.chosenArm();
-        boolean stillActs = !"ESCALATE".equals(r.band());
+        boolean acts = "ACT".equals(r.band());
         for (PolicyChange change : changeset.changes()) {
-            if (change instanceof PolicyChange.ThresholdChange tc && "ACT".equals(tc.band())) {
-                stillActs = r.confidence() >= tc.to();
-            }
+            if (change instanceof PolicyChange.ThresholdChange tc && "act".equals(tc.band().toLowerCase(Locale.ROOT))) acts = r.confidence() >= tc.to();
         }
-        return stillActs ? arm : null;
+        return acts ? r.chosenArm() : null;
     }
 }

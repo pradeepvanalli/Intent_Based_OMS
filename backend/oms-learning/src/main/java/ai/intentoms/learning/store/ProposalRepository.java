@@ -27,16 +27,17 @@ public class ProposalRepository {
 
     private static final String COLS = "proposal_id, target_ref, base_version, changeset::text as changeset, hypothesis_id, tier, status, " +
         "critic_review::text as critic_review, evaluation_report::text as evaluation_report, created_by, created_at, updated_at, evaluated_at, " +
-        "approved_by, approved_at, promoted_at, rejected_reason, rejected_at, rolled_back_reason, rolled_back_at";
+        "approved_by, approved_at, promoted_at, rejected_reason, rejected_at, rolled_back_reason, rolled_back_at, motivation";
 
     public void insert(Proposal p) {
         jdbc.sql("""
-            insert into proposal(proposal_id, tenant_id, target_ref, base_version, changeset, hypothesis_id, tier, status, created_by, created_at, updated_at)
-            values (:id, :t, :target, :base, :changes, :hyp, :tier, :status, :by, :created, :updated)
+            insert into proposal(proposal_id, tenant_id, target_ref, base_version, changeset, hypothesis_id, tier, status, created_by, created_at, updated_at, motivation)
+            values (:id, :t, :target, :base, :changes, :hyp, :tier, :status, :by, :created, :updated, :motivation)
             """)
             .param("id", p.proposalId()).param("t", TenantContext.require()).param("target", p.changeset().target().toString()).param("base", p.changeset().baseVersion())
             .param("changes", Jsonb.of(Json.write(p.changeset().changes(), CHANGES))).param("hyp", p.hypothesisId()).param("tier", p.tier().name()).param("status", p.status().name())
-            .param("by", p.createdBy()).param("created", Timestamp.from(p.createdAt())).param("updated", Timestamp.from(p.updatedAt())).update();
+            .param("by", p.createdBy()).param("created", Timestamp.from(p.createdAt())).param("updated", Timestamp.from(p.updatedAt()))
+            .param("motivation", p.changeset().motivatedBy()).update();
     }
 
     public Proposal get(String id) { return find(id).orElseThrow(() -> new NotFoundException("Proposal " + id + " not found")); }
@@ -101,11 +102,43 @@ public class ProposalRepository {
             .param("r", reason).param("at", Timestamp.from(at)).param("t", TenantContext.require()).param("id", id).update();
     }
 
+    /** Adds or replaces one section of the evaluation report (e.g. {@code shadow}, {@code canary}) without touching the rest. */
+    public void mergeReport(String id, String section, Map<String, Object> value) {
+        jdbc.sql("update proposal set evaluation_report = coalesce(evaluation_report, '{}'::jsonb) || jsonb_build_object(:k, :v::jsonb), updated_at = now() where tenant_id = :t and proposal_id = :id")
+            .param("k", section).param("v", Json.write(value)).param("t", TenantContext.require()).param("id", id).update();
+    }
+
+    /** EX-07 / AC4: what a promotion replaced, written when it is applied and read back by rollback. */
+    public void setRollbackSnapshot(String id, Map<String, Object> snapshot) {
+        jdbc.sql("update proposal set rollback_snapshot = :s where tenant_id = :t and proposal_id = :id")
+            .param("s", Jsonb.of(snapshot)).param("t", TenantContext.require()).param("id", id).update();
+    }
+
+    public Optional<Map<String, Object>> rollbackSnapshot(String id) {
+        return jdbc.sql("select rollback_snapshot::text from proposal where tenant_id = :t and proposal_id = :id and rollback_snapshot is not null")
+            .param("t", TenantContext.require()).param("id", id).query(String.class).optional().map(Json::readMap);
+    }
+
+    /** Proposals promoted since an instant, newest first (guardrail watch window, change-budget counting). */
+    public List<Proposal> promotedSince(Instant since, int limit) {
+        String t = TenantContext.require();
+        return jdbc.sql("select " + COLS + " from proposal where tenant_id = :t and status = 'PROMOTED' and promoted_at >= :since order by promoted_at desc limit :lim")
+            .param("t", t).param("since", Timestamp.from(since)).param("lim", limit).query().listOfRows().stream().map(ProposalRepository::hydrate).toList();
+    }
+
+    /** Proposals in any of these statuses created by an author, newest first (author quality metric). */
+    public List<Proposal> byCreator(String createdBy, int limit) {
+        String t = TenantContext.require();
+        return jdbc.sql("select " + COLS + " from proposal where tenant_id = :t and created_by = :by order by created_at desc limit :lim")
+            .param("t", t).param("by", createdBy).param("lim", limit).query().listOfRows().stream().map(ProposalRepository::hydrate).toList();
+    }
+
     private static final com.fasterxml.jackson.core.type.TypeReference<List<PolicyChange>> CHANGES = new com.fasterxml.jackson.core.type.TypeReference<>() {};
 
     private static Proposal hydrate(Map<String, Object> r) {
         PolicyChangeset changeset = new PolicyChangeset(ArtifactRef.parse((String) r.get("target_ref")), (Integer) r.get("base_version"),
-            Json.read((String) r.get("changeset"), CHANGES), (String) r.get("hypothesis_id"), PolicyChangeset.RiskTier.valueOf((String) r.get("tier")));
+            Json.read((String) r.get("changeset"), CHANGES), r.get("motivation") != null ? (String) r.get("motivation") : (String) r.get("hypothesis_id"),
+            PolicyChangeset.RiskTier.valueOf((String) r.get("tier")));
         String criticJson = (String) r.get("critic_review");
         return new Proposal((String) r.get("proposal_id"), changeset, (String) r.get("hypothesis_id"), PolicyChangeset.RiskTier.valueOf((String) r.get("tier")),
             ProposalStatus.valueOf((String) r.get("status")), criticJson == null ? null : Json.read(criticJson, Review.class),
