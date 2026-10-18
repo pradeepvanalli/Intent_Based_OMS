@@ -19,6 +19,10 @@ show the customer why.
 
 ![Playground: place an order and watch the decision trace](docs/images/hero-playground.png)
 
+> **Cloning this to work on it, or pointing an AI coding agent at it?** Read [`AGENTS.md`](AGENTS.md) first — build
+> and test commands, the conventions every module follows, and a map of where everything lives, written for an
+> agent to act on immediately rather than a human to read end to end.
+
 ## Try it in 3 minutes
 
 Three paths. All of them end at http://localhost:8080 with four seeded tenants (`demo`, `retail`, `electronics`,
@@ -194,10 +198,13 @@ The full matrix, provider setup and degraded-mode behaviour are in `docs/FEATURE
 
 | Document | Contents |
 |---|---|
+| `AGENTS.md` | **Start here if you or your AI coding agent just cloned this repo.** Build/test commands, the non-negotiable conventions, a module map, and pointers to everything below. Nested `AGENTS.md` files in `backend/oms-decision/`, `backend/oms-learning/`, `backend/oms-agent/`, `backend/oms-orchestration/`, `ui/` and `config/` cover those areas' own sharp edges |
 | `docs/QUICKSTART.md` | Every way to run it: published image, Codespaces, `scripts/try.sh`, Windows, resets, troubleshooting |
 | `docs/GETTING_STARTED.md` | Run, log in, place an order, change a policy two ways, connect Shopify, WMS, carriers and an agent |
 | `docs/WHY.md` | Why order management should be built on typed LLM decisions now, and the limits |
 | `docs/COMPARISON.md` | Capability by capability against a conventional rules-engine OMS |
+| `docs/FEATURE_INVENTORY.md` | Every feature verified against the code (not docs claims), with an honest gap list and a prioritized roadmap |
+| `docs/UC_AGENTIC_CONTROL_TOWER.md`, `docs/UC_SELF_OPTIMIZING_ORCHESTRATION.md` | How the Agentic Control Tower and Self-Optimizing Order Orchestration actually work, mechanism and guardrails |
 | `docs/REFERENCE_IMPLEMENTATIONS.md` | The three reference tenants, their scenarios, and how to make your own |
 | `docs/FEATURES.md` | Full feature matrix, AI providers, degraded mode, tiers and bands |
 | `docs/DEMO_USE_CASES.md`, `docs/DEMO_SAMPLES.md` | The seven scenarios with talk tracks and a captured live run |
