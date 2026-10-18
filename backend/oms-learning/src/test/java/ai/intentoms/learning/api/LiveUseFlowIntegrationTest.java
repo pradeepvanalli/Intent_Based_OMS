@@ -42,6 +42,7 @@ class LiveUseFlowIntegrationTest extends PostgresTestBase {
     @Test
     void liveUseIsAProposalThroughTheGateAndRevokeIsImmediate() {
         String family = NodeReliabilityFeatures.REJECT_RATE;
+        resolver.revoke(family, "test-setup"); // the shared test tenant may carry a promotion from another test
         assertThat(resolver.isLive(family)).isFalse();
         assertThat(resolver.explain(family, 0.10, 0.30).value()).isEqualTo(0.10);
 
