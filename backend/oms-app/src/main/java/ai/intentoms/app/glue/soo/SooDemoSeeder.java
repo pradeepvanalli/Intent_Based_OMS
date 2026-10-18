@@ -217,7 +217,7 @@ public class SooDemoSeeder {
         }
         counts.put("learnerRuns", learnerRuns);
         step(warnings, "draft", () -> draftFallback(ids));
-        step(warnings, "holdout", () -> ids.put("holdoutExperiment", experiments.ensureHoldout(0.05, SEED).experimentId()));
+        step(warnings, "holdout", () -> ids.put("holdoutExperiment", backdatedHoldout()));
         step(warnings, "objective", () -> objective(ids));
         step(warnings, "coverage", coverage::sweepOnce);
         step(warnings, "digest", () -> ids.put("digest", digests.publish(7, SEED).digestId()));
@@ -503,5 +503,16 @@ public class SooDemoSeeder {
         m.put("experiments", jdbc.sql("select count(*) from experiment where tenant_id = :t").param("t", t).query(Long.class).single());
         m.put("segments", jdbc.sql("select count(*) from segment where tenant_id = :t").param("t", t).query(Long.class).single());
         return m;
+    }
+
+    /**
+     * The persistent holdout, started as if it had been running through the seeded history (about 92 days), so the
+     * lift report compares the seeded holdout customers with everyone else. Demo tenant only, labelled demo data.
+     */
+    private String backdatedHoldout() {
+        String id = experiments.ensureHoldout(0.05, SEED).experimentId();
+        jdbc.sql("update experiment set start_at = now() - interval '92 days' where tenant_id = :t and experiment_id = :id and created_by = :by")
+            .param("t", ai.intentoms.platform.tenant.TenantContext.require()).param("id", id).param("by", SEED).update();
+        return id;
     }
 }

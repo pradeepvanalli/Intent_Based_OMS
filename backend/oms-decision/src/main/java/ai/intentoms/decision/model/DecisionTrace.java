@@ -15,7 +15,18 @@ public record DecisionTrace(String recordId, String decision, int version, Tier 
                             Bands bands, Band band, String action, Layer layer, Object value, double confidence, boolean requiresHuman, List<String> reasonCodes,
                             String provider, String modelVersion, long latencyMs, double costUsd, String actor, DecisionEscalation escalation,
                             Map<String, Object> override, Map<String, Object> labels, Map<String, Object> details, Instant createdAt,
-                            Map<String, Object> learning) {
+                            Map<String, Object> learning, String subjectType, String subjectId, String correlationId, String inputHash) {
+
+    /** Without the subject and input hash (tests and callers that build a trace by hand). */
+    public DecisionTrace(String recordId, String decision, int version, Tier tier, Mode mode, Map<String, Object> definition, Map<String, Object> state,
+                         List<QuestionTrace> questions, Map<String, Answer> answers, List<String> rulesFired, List<CheckResult> preChecks, List<CheckResult> postChecks,
+                         Bands bands, Band band, String action, Layer layer, Object value, double confidence, boolean requiresHuman, List<String> reasonCodes,
+                         String provider, String modelVersion, long latencyMs, double costUsd, String actor, DecisionEscalation escalation,
+                         Map<String, Object> override, Map<String, Object> labels, Map<String, Object> details, Instant createdAt, Map<String, Object> learning) {
+        this(recordId, decision, version, tier, mode, definition, state, questions, answers, rulesFired, preChecks, postChecks, bands, band, action, layer, value,
+            confidence, requiresHuman, reasonCodes, provider, modelVersion, latencyMs, costUsd, actor, escalation, override, labels, details, createdAt, learning,
+            null, null, null, null);
+    }
 
     /** One question as asked, with its criteria and the answer received. */
     public record QuestionTrace(String key, String type, String instructions, Map<String, String> choiceCriteria, List<String> scoreLevels, boolean reasonCode, Answer answer) {}

@@ -82,6 +82,18 @@ public class SooDemoHistory {
     private int outcomeCount;
     private int eventCount;
     private final Map<String, Integer> recordCount = new TreeMap<>();
+    /** Whether the order being generated belongs to a holdout customer (decisions tagged, outcomes at baseline). */
+    private boolean holdoutOrder;
+
+    /** Demo holdout tag on decision records; the seeder points the running holdout experiment at this history. */
+    static final String HOLDOUT_TAG = "demo-holdout";
+
+    /**
+     * XP-01 needs a holdout to compare against: a sticky ~8% of demo customers stand for customers routed to the
+     * pre-learning baseline. Their outcomes are drawn at baseline rates (no learned node reliability, no tuned breach
+     * threshold, no split avoidance), so the Overview's lift report has something to show. Labelled demo data.
+     */
+    static boolean holdoutCustomer(String customer) { return Math.floorMod(customer.hashCode() * 31 + 7, 100) < 8; }
 
     public SooDemoHistory(DecisionRecordRepository records, DecisionDefinitionRepository definitions, EpisodeRepository episodes, OutcomeRepository outcomes,
                           NodeReliabilityLearner nodeReliability, LaneDeliveryLearner laneTransit, CiPreferenceLearner customerPreferences, FraudLabelCapture fraudLabels) {
@@ -114,10 +126,12 @@ public class SooDemoHistory {
             // A short tail older than every maturity window (so some episodes are MATURE), then 90 days of recent history.
             double ageDays = i < TAIL ? 135.0 - i : 90.0 - 88.0 * (i - TAIL) / ORDERS + rnd.nextDouble() * 0.25;
             Order o = order(i, now.minus(Duration.ofMinutes(Math.round(ageDays * 1440))), ageDays, rnd);
+            holdoutOrder = holdoutCustomer(o.customer());
+            if (holdoutOrder && o.packages() == 1 && rnd.nextDouble() < 0.25) o = split(o);
 
             double snsConf = 0.55 + rnd.nextDouble() * 0.44;
             double slaConf = 0.5 + rnd.nextDouble() * 0.49;
-            o = shapeOutcome(o, snsConf, slaConf, rnd);
+            o = shapeOutcome(o, snsConf, slaConf, holdoutOrder, rnd);
             if (o.delivered() && o.deliveredAt().isAfter(now.minus(Duration.ofHours(1)))) o = inTransit(o);
             int slaScore = o.onTime() ? rnd.nextInt(2) : 2 + rnd.nextInt(3);
 
@@ -136,6 +150,7 @@ public class SooDemoHistory {
             if (o.delivered() && o.returned()) returnRisk(o, versions.get("return_risk"), rnd, now);
             feedLearners(o, now);
         }
+        holdoutOrder = false;
         returnGroups(versions.get("return_risk"), now);
         return new Result(Map.copyOf(recordCount), episodeCount, outcomeCount, eventCount);
     }
@@ -171,8 +186,9 @@ public class SooDemoHistory {
      * a node score held in the confirm band waited for a person (later), a breach score that acted on its own with low
      * confidence missed more, and one a person re-promised did a little better.
      */
-    private static Order shapeOutcome(Order o, double snsConf, double slaConf, Random rnd) {
+    private static Order shapeOutcome(Order o, double snsConf, double slaConf, boolean holdout, Random rnd) {
         double p = NODE_ON_TIME.get(o.node()) * CARRIER_FACTOR.get(o.carrier()) - (o.storeRejected() ? 0.2 : 0);
+        if (holdout) p -= 0.12; // baseline: sourcing without learned node reliability or lane transit times
         if (snsConf >= 0.5 && snsConf < 0.80) p -= 0.25;
         if (slaConf >= 0.80 && slaConf < 0.86) p -= 0.45;
         if (slaConf < 0.80) p += 0.04;
@@ -185,6 +201,13 @@ public class SooDemoHistory {
         return new Order(o.id(), o.at(), o.customer(), o.channel(), o.shipMethod(), o.orderType(), o.node(), o.secondNode(), o.skuClass(), o.carrier(), o.zip3(),
             o.packages(), o.units(), o.value(), o.cost(), o.delivered(), onTime, lateBy, o.shippedAt(), deliveredAt, o.eta(), wismo, o.chargeback(), o.cod(),
             o.refused(), o.returned(), o.storeRejected());
+    }
+
+    /** Baseline sourcing splits more often: a second package from the second node, and the extra shipping cost. */
+    private static Order split(Order o) {
+        return new Order(o.id(), o.at(), o.customer(), o.channel(), o.shipMethod(), o.orderType(), o.node(), o.secondNode(), o.skuClass(), o.carrier(), o.zip3(),
+            2, Math.max(2, o.units()), o.value(), round2(o.cost() + 5.5), o.delivered(), o.onTime(), o.lateByHours(), o.shippedAt(), o.deliveredAt(), o.eta(),
+            o.wismo(), o.chargeback(), o.cod(), o.refused(), o.returned(), o.storeRejected());
     }
 
     /** Not delivered yet: its delivery date is still ahead. */
@@ -439,11 +462,12 @@ public class SooDemoHistory {
         return epi;
     }
 
-    private static Map<String, Object> details(String tier, Map<String, Object> topK) {
+    private Map<String, Object> details(String tier, Map<String, Object> topK) {
         Map<String, Object> d = new LinkedHashMap<>();
         if (tier != null) d.put("tier", tier);
         d.put("mode", "LIVE");
         d.put("demoData", true);
+        if (holdoutOrder) d.put("experiment", Map.of("experimentId", HOLDOUT_TAG, "arm", "holdout"));
         if (!topK.isEmpty()) d.put("topK", topK);
         return d;
     }

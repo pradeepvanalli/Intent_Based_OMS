@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { clearSession, hasAnyPermission, hasPermission, useSession } from '../auth/session';
 import { useTheme } from '../lib/hooks';
-import { MOCK } from '../api/client';
+import { API_BASE, MOCK } from '../api/client';
 import { ordersApi } from '../api/orders';
 import { api } from '../api/client';
 import type { Page, HumanTask, ExceptionRecord } from '../api/types';
@@ -68,7 +68,7 @@ export function AppShell() {
               {items.map((i) => <NavLink key={i.to} to={i.to} className={({ isActive }) => ['nav-link', isActive && 'active'].filter(Boolean).join(' ')}><i.icon /><span>{i.label}</span>{'count' in i && i.count && counts.data && counts.data[i.count as 'tasks' | 'exceptions'] > 0 && <span className="cnt" aria-label={`${counts.data[i.count as 'tasks' | 'exceptions']} open${i.count === 'tasks' ? ' in your queues' : ''}`} title={i.count === 'tasks' ? 'Open tasks in the queues you work' : undefined}>{counts.data[i.count as 'tasks' | 'exceptions']}</span>}{'aiPulse' in i && i.aiPulse && counts.data?.autonomyActive && <span className="live ai" aria-label="Autonomous actions active today" title="Autonomous actions active today" style={{ marginLeft: 4 }}><span className="pulse" aria-hidden /></span>}</NavLink>)}
             </div>); })}
         </div>
-        <div className="nav-foot"><span>v0.1.0</span><span>{MOCK ? 'mock API' : 'api :8080'}</span></div>
+        <div className="nav-foot"><span>v0.1.0</span><span>{MOCK ? 'mock API' : `api ${API_BASE ? new URL(API_BASE, location.href).host : location.host}`}</span></div>
       </nav>
       <header className="topbar">
         <GlobalSearch />

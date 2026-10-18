@@ -22,7 +22,7 @@ export function ChangeDrawer({ proposalId, onClose, canAdmin, names }: { proposa
   return (
     <Drawer open={!!proposalId} onClose={onClose} width={720}
       title={p ? proposalTitle(p) : 'Proposed change'}
-      subtitle={p ? <span className="row wrap gap2"><Badge tone={STATUS_TONE[p.status]}>{STATUS_WORDS[p.status]}</Badge><Badge tone={p.tier} title={`Risk tier ${p.tier}`}>{TIER_WORDS[p.tier]}</Badge><DemoBadge by={p.createdBy} /></span> : undefined}
+      subtitle={p ? <span className="row wrap gap2"><Badge tone={STATUS_TONE[p.status]}>{STATUS_WORDS[p.status]}</Badge><Badge tone={p.tier} title={`Risk tier ${p.tier}`}>{TIER_WORDS[p.tier]}</Badge><DemoBadge by={p.createdBy} id={p.proposalId} /></span> : undefined}
       footer={card.data && canAdmin ? <Actions card={card.data} onDone={() => card.refetch()} /> : <Button onClick={onClose}>Close</Button>}>
       {card.isLoading && <Loading label="Loading change…" />}
       {card.isError && <ErrorState error={card.error} retry={() => card.refetch()} />}
@@ -128,9 +128,19 @@ function Replay({ card }: { card: ChangeCard }) {
 }
 
 function keyLabel(key: string): string {
+  const parts = key.split(':');
+  if (parts[0] === 'threshold' && parts.length === 3) return `${decisionLabel(parts[1])}: ${parts[2]} threshold`;
+  if (parts[0] === 'weight' && parts.length === 3) return `${humanizeKey(parts[1])}: ${parts[2]} weight`;
+  if ((parts[0] === 'rule' || parts[0] === 'retire') && parts.length >= 3) return `${decisionLabel(parts[1])}: rule ${parts.slice(2).join(':')}`;
   if (key.startsWith('bands.')) return `${decisionLabel(key.slice('bands.'.length))} confidence threshold`;
   if (key.startsWith('live:')) return `${familyName(key.slice('live:'.length))} (used live)`;
   return decisionLabel(key.replace(/\./g, ' · '));
+}
+
+/** "sourcing.weights" → "Sourcing weights". */
+function humanizeKey(k: string): string {
+  const t = k.replace(/[._]/g, ' ').trim();
+  return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
 function DiffTable({ rows, caption }: { rows: KeyDiff[]; caption: string }) {

@@ -9,8 +9,8 @@ import { useTechnical } from '../../lib/technical';
 import { isDemo } from './copy';
 
 /** Marks seeded reference data so nobody mistakes it for real activity. */
-export function DemoBadge({ by }: { by?: string | null }) {
-  if (!isDemo(by)) return null;
+export function DemoBadge({ by, id }: { by?: string | null; id?: string | null }) {
+  if (!isDemo(by, id)) return null;
   return <Badge tone="outline" title="Seeded reference data for trying the product, not real activity" data-testid="demo-badge">Demo data</Badge>;
 }
 

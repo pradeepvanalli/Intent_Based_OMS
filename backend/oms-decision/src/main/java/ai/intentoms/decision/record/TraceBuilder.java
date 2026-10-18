@@ -73,7 +73,7 @@ public class TraceBuilder {
         }
         return new DecisionTrace(r.id(), r.decision(), r.version(), tier, r.mode(), summary, r.state(), questions, r.answers(), r.rulesFired(), pre, post, bands, r.band(), r.action(),
             r.layer(), r.value(), r.confidence(), r.requiresHuman(), r.reasonCodes(), r.provider(), r.modelVersion(), r.latencyMs(), r.costUsd(), r.actor(), esc, override, r.labels(),
-            r.details(), r.createdAt(), learning(r));
+            r.details(), r.createdAt(), learning(r), r.subjectType(), r.subjectId(), r.correlationId(), r.inputHash());
     }
 
     /**

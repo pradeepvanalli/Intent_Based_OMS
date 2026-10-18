@@ -68,7 +68,7 @@ function ChangeRow({ p, names, onOpen }: { p: Proposal; names: Map<string, strin
         <span className="title">{proposalTitle(p)}</span>
         <span className="meta">
           <span>Suggested by {authorName(p.createdBy, names)}</span><span>·</span><span>{relTime(p.createdAt)}</span>
-          <DemoBadge by={p.createdBy} />
+          <DemoBadge by={p.createdBy} id={p.proposalId} />
           <Technical><span className="mono">{p.proposalId} · {p.changeset.target.type}:{p.changeset.target.name}</span></Technical>
         </span>
       </div>
