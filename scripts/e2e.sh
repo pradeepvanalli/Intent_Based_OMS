@@ -39,9 +39,16 @@ trap cleanup EXIT
 if [ "$REUSE" = 0 ]; then
   lsof -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 && die "port $PORT is already in use; stop that process, pick another OMS_PORT, or use --reuse"
   [ -x "$JAVA" ] || die "JDK 21 not found at $JAVA_HOME (set JAVA_HOME)"
-  say "starting Postgres (docker compose)"
-  (cd "$ROOT" && docker compose up -d postgres >/dev/null)
-  for _ in $(seq 1 60); do (cd "$ROOT" && docker compose exec -T postgres pg_isready -U oms >/dev/null 2>&1) && break; sleep 1; done
+  # Reuse whichever container already publishes Postgres on 5440 (a git worktree has a different compose project
+  # name, and `docker compose up` there would try to start a second Postgres on the same port).
+  PG=$(docker ps --filter "publish=5440" --format '{{.Names}}' | head -1)
+  if [ -z "$PG" ]; then
+    say "starting Postgres (docker compose)"
+    (cd "$ROOT" && docker compose up -d postgres >/dev/null)
+    PG=$(docker ps --filter "publish=5440" --format '{{.Names}}' | head -1)
+  fi
+  [ -n "$PG" ] || die "no Postgres container publishing port 5440"
+  for _ in $(seq 1 60); do docker exec "$PG" pg_isready -U oms >/dev/null 2>&1 && break; sleep 1; done
 
   if [ "$BUILD" = 1 ]; then
     say "building the UI into the backend static folder"
@@ -54,7 +61,7 @@ if [ "$REUSE" = 0 ]; then
   cp "$JAR" "$RESULTS/intent-oms-e2e.jar"
 
   say "fresh database $DB"
-  (cd "$ROOT" && docker compose exec -T postgres psql -q -U oms -d postgres -c "drop database if exists $DB with (force)" -c "create database $DB" >/dev/null)
+  docker exec "$PG" psql -q -U oms -d postgres -c "drop database if exists $DB with (force)" -c "create database $DB" >/dev/null
 
   say "booting the service on :$PORT with the e2e profile (log: ui/e2e/.results/app.log)"
   OMS_DB_URL="jdbc:postgresql://localhost:5440/$DB" OMS_PORT="$PORT" OMS_CONFIG_DIR="$ROOT/config" \
