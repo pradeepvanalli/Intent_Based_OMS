@@ -63,7 +63,8 @@ class DecisionStudioIntegrationTest extends DecisionTestBase {
             .replace("ship_as_available: Each item as soon as it is ready, in separate shipments", "ship_as_available: Everything together in one delivery, even if it arrives later");
         DecisionDefinition draft = studio.createDraft("fulfilment_intent", yaml);
         int v = draft.version();
-        assertThat(v).isGreaterThan(1);
+        int seeded = new ai.intentoms.decision.definition.DecisionDefinitionParser().parse(TestYaml.demo("fulfilment_intent")).version();
+        assertThat(v).isGreaterThan(seeded);
         assertThat(draft.status()).isEqualTo("draft");
 
         LintReport lint = studio.lint("fulfilment_intent", v);
@@ -115,15 +116,15 @@ class DecisionStudioIntegrationTest extends DecisionTestBase {
         var canary = studio.publish("fulfilment_intent", v, "canary:20", false);
         assertThat(canary.definition().status()).isEqualTo("canary");
         assertThat(canary.definition().canaryPercent()).isEqualTo(20);
-        assertThat(definitions.find("fulfilment_intent", 1).get().definition().status()).isEqualTo("live");    // previous live stays live
+        assertThat(definitions.find("fulfilment_intent", seeded).get().definition().status()).isEqualTo("live");    // previous live stays live
 
         var live = studio.publish("fulfilment_intent", v, "live", false);
         assertThat(live.definition().status()).isEqualTo("live");
-        assertThat(definitions.find("fulfilment_intent", 1).get().definition().status()).isEqualTo("retired");
+        assertThat(definitions.find("fulfilment_intent", seeded).get().definition().status()).isEqualTo("retired");
         assertThat(decisions.decide("fulfilment_intent", intentInput("x", "after"), DecisionOptions.live("order", "after", Actor.system("t"))).version()).isEqualTo(v);
 
         var back = studio.rollback("fulfilment_intent");
-        assertThat(back.definition().version()).isEqualTo(1);
+        assertThat(back.definition().version()).isEqualTo(seeded);
         assertThat(back.definition().status()).isEqualTo("live");
         assertThat(definitions.find("fulfilment_intent", v).get().definition().status()).isEqualTo("retired");
         assertThat(events("config", "decision:fulfilment_intent", "decision.definition.rolled_back")).isNotEmpty();

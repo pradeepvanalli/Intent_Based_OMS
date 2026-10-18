@@ -35,7 +35,7 @@ class DecisionAnalyticsServiceIntegrationTest extends AnalyticsTestBase {
         assertThat(a.name()).isEqualTo("fulfilment_intent");
         assertThat(a.tier()).isEqualTo(Tier.T1);
         assertThat(a.versions()).isNotEmpty();
-        DecisionAnalytics.VersionAnalytics v = a.versions().stream().filter(x -> x.version() == 1).findFirst().orElseThrow();
+        DecisionAnalytics.VersionAnalytics v = a.versions().stream().filter(x -> "live".equals(x.status())).findFirst().orElseThrow();
         assertThat(v.status()).isEqualTo("live");
         assertThat(v.volume()).isGreaterThanOrEqualTo(4);
         assertThat(v.bandMix()).containsOnlyKeys("ACT", "CONFIRM", "ESCALATE");
