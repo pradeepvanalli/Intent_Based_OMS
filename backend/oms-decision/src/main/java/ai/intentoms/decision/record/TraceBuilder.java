@@ -73,6 +73,36 @@ public class TraceBuilder {
         }
         return new DecisionTrace(r.id(), r.decision(), r.version(), tier, r.mode(), summary, r.state(), questions, r.answers(), r.rulesFired(), pre, post, bands, r.band(), r.action(),
             r.layer(), r.value(), r.confidence(), r.requiresHuman(), r.reasonCodes(), r.provider(), r.modelVersion(), r.latencyMs(), r.costUsd(), r.actor(), esc, override, r.labels(),
-            r.details(), r.createdAt());
+            r.details(), r.createdAt(), learning(r));
+    }
+
+    /**
+     * XP-03: which learned facts (and versions) and which policy version shaped this decision. Built only from what
+     * the runtime recorded on the record, so it is exactly what was used, never a re-lookup of today's values.
+     */
+    static Map<String, Object> learning(DecisionRecord r) {
+        Map<String, Object> d = r.details() == null ? Map.of() : r.details();
+        Map<String, Object> m = new LinkedHashMap<>();
+        Object facts = d.get("learnedFacts");
+        List<?> factList = facts instanceof List<?> l ? l : List.of();
+        m.put("learnedFacts", factList);
+        long served = factList.stream().filter(f -> f instanceof Map<?, ?> fm && "LEARNED".equals(fm.get("source"))).count();
+        m.put("learnedFactsServed", served);
+        m.put("policyVersion", r.policyVersion() == null ? r.version() : r.policyVersion());
+        if (d.get("rawConfidence") != null) {
+            m.put("rawConfidence", d.get("rawConfidence"));
+            m.put("calibratedConfidence", r.confidence());
+            m.put("calibration", d.get("calibration"));
+        }
+        if (d.get("experiment") != null) m.put("experiment", d.get("experiment"));
+        if (d.get("providerRouted") != null) m.put("providerRouted", d.get("providerRouted"));
+        if (d.get("shadow") != null) m.put("shadow", d.get("shadow"));
+        if (r.arms() != null && !r.arms().isEmpty()) {
+            m.put("arms", r.arms());
+            m.put("chosenArm", r.chosenArm());
+            m.put("propensity", r.propensity());
+        }
+        m.put("usedLearning", served > 0 || d.get("rawConfidence") != null || d.get("experiment") != null || d.get("providerRouted") != null);
+        return m;
     }
 }
