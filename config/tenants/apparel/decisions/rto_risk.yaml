@@ -1,15 +1,30 @@
 # Refused-delivery (return-to-origin) risk in cash-on-delivery markets (SOO requirements doc FD-02). Noul, tier T2.
-# Feeds two actions: offer a prepaid-conversion discount, or trigger an address-confirmation contact — never an
-# autonomous cancel. Act-band threshold is tuned by the FraudThresholdTuner learner (FD-03) as a reviewable
-# ThresholdChange proposal only.
+# Invoked by the order workflow for orders paid cash on delivery (orchestration PaymentRiskGate). A risky order gets
+# two actions: an offer of a discount to pay now (prepaid conversion) and an address-confirmation contact, with an
+# address_confirmation hold that lapses after fraud.rto.confirmation_hold_hours. Never an autonomous cancel.
+# Refused parcels (order.returned_to_sender on a COD order) label the decision as confirmed; deliveries label it not.
+# The act-band threshold is tuned by the FraudThresholdTuner learner (FD-03) as a reviewable ThresholdChange only.
+# v2: L0 rules clear returning customers at verified clean addresses and trusted repeat COD customers without a model
+# call or a task; a first-time COD buyer (the main source of refusals) goes to the model.
 decision: rto_risk
-version: 1
+version: 2
 owner: returns-and-risk
 tier: T2
 provider: jev
 fallbackProvider: heuristic
 timeoutMs: 800
 default: false
+rules:
+  - id: verified_clean_address
+    when: "input.address.verification_status == 'verified' && input.customer.history.orders_12m >= 1 && input.address.prior_refused_count == 0 && input.address.prior_failed_deliveries == 0 && input.customer.history.refused_12m == 0"
+    then: false
+    reason: verified_clean_address
+    priority: 40
+  - id: trusted_cod_customer
+    when: "input.customer.history.orders_12m >= 2 && input.customer.history.refused_12m == 0 && input.address.prior_refused_count == 0"
+    then: false
+    reason: trusted_cod_customer
+    priority: 50
 state:
   include:
     - order.payment_method

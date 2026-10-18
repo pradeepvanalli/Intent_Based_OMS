@@ -151,6 +151,7 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         evt.put("lines", shippedByLine);
         evt.put("captured", capture.get("captured"));
         evt.put("allShipped", allShipped);
+        evt.putAll(outcomeFacts(fresh, group, nodeId, shipLines));
         if (!groupsDone.isEmpty()) s.markGroups(order.id(), groupsDone, "shipped", null);
         s.appendOrderEvent(order.id(), "order.shipped", evt);
         notifier.notify(order.id(), "email", "shipped", "Your order has shipped", "Shipment " + shipment.tracking() + " (" + shipment.carrier() + ") with " + shipLines.size() + " line(s)",
@@ -163,6 +164,35 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         out.put("capture", capture);
         out.put("allShipped", allShipped);
         return out;
+    }
+
+    /**
+     * OC-03: what the self-optimizing layer needs to score the fulfilment decisions behind this shipment (reward fill,
+     * cost and split terms). {@code packageCount} counts the order's live packages (rejected or cancelled groups do not
+     * ship); {@code storeRejected} says some node rejected part of the order before it shipped; {@code splitAvoided} is
+     * a multi-line order going out as one package. Units are per package: planned for this package versus shipped in
+     * it, so fill sums correctly across an order's shipments. Cost is the package's planned fulfilment cost; order value
+     * is the order's grand total.
+     */
+    static Map<String, Object> outcomeFacts(Order order, FulfilmentGroup group, String nodeId, List<ShipmentRecord.Line> shipLines) {
+        List<FulfilmentGroup> live = order.fulfilmentGroups().stream().filter(g -> !Set.of("rejected", "cancelled").contains(String.valueOf(g.status()).toLowerCase(java.util.Locale.ROOT))).toList();
+        int packages = Math.max(1, live.size());
+        int unitsShipped = shipLines.stream().mapToInt(ShipmentRecord.Line::qty).sum();
+        int unitsPlanned = group != null ? group.allocations().stream().mapToInt(FulfilmentGroup.Allocation::qty).sum() : order.lines().stream().mapToInt(OrderLine::qty).sum();
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("orderId", order.id());
+        if (order.customerRef() != null) m.put("customerRef", order.customerRef());
+        if (group != null) m.put("fulfilmentGroupId", group.id());
+        m.put("nodeIds", nodeId == null ? List.of() : List.of(nodeId));
+        m.put("packageCount", packages);
+        m.put("splitAvoided", packages == 1 && order.lines().size() > 1);
+        m.put("storeRejected", order.fulfilmentGroups().stream().anyMatch(g -> "rejected".equalsIgnoreCase(g.status())));
+        m.put("unitsOrdered", Math.max(unitsPlanned, unitsShipped));
+        m.put("unitsShipped", unitsShipped);
+        m.put("fulfillmentCost", group == null || group.estimatedCost() == null ? 0.0 : group.estimatedCost().amount().doubleValue());
+        m.put("orderValue", order.totals() == null || order.totals().grandTotal() == null ? 0.0 : order.totals().grandTotal().amount().doubleValue());
+        m.put("lineIds", shipLines.stream().map(ShipmentRecord.Line::lineId).distinct().toList());
+        return m;
     }
 
     /** Cumulative shipped units per {@code sku|node} across the order's shipments (so partial shipments consume reservations once covered). */
@@ -288,6 +318,7 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
                     details.put("shipments", touched);
                     Map<String, Object> exc = s.raise("carrier", sig.name(), Signals.CARRIER_EXCEPTION.equals(sig.name()) ? "Carrier reported an exception on " + payload.getOrDefault("tracking", "shipment") : "Parcel returned to sender",
                         order.id(), null, null, details, Signals.CARRIER_EXCEPTION.equals(sig.name()) ? "carrier_delay" : null);
+                    s.appendOrderEvent(order.id(), "order." + sig.name(), carrierFacts(order, touched));
                     return Map.of("shipments", touched, "exception", exc);
                 });
                 ctx.log("Carrier event " + sig.name() + "; exception raised, still waiting for delivery", result);
@@ -342,6 +373,23 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         Map<String, Object> out = new LinkedHashMap<>(evt);
         out.put("transitions", transitions);
         return out;
+    }
+
+    /**
+     * {@code order.carrier_exception} / {@code order.returned_to_sender} (OC-03, FD-02): a refused or failed delivery is
+     * an outcome for the order's decisions and, for cash on delivery, the refused-delivery label {@code rto_risk} learns
+     * from. The address token and customer let later risk checks count prior refusals without storing the address.
+     */
+    static Map<String, Object> carrierFacts(Order order, List<String> shipmentIds) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("orderId", order.id());
+        if (order.customerRef() != null) m.put("customerRef", order.customerRef());
+        String token = order.shipTo().map(ai.intentoms.orchestration.fraud.AddressTokens::token).orElse(null);
+        if (token != null) m.put("addressToken", token);
+        m.put("cod", ai.intentoms.orchestration.fraud.PaymentRiskFeatures.hasCod(order));
+        m.put("amount", order.totals() == null || order.totals().grandTotal() == null ? 0.0 : order.totals().grandTotal().amount().doubleValue());
+        m.put("shipments", shipmentIds);
+        return m;
     }
 
     /** Shipments a carrier payload refers to: by id, else by tracking, else every undelivered shipment of the order. */
