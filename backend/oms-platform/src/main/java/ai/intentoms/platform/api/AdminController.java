@@ -81,7 +81,8 @@ public class AdminController {
     @PutMapping("/config/{key}")
     @RequiresPermission(Permissions.CONFIG_ADMIN)
     public Map<String, Object> set(@PathVariable String key, @RequestBody ConfigWrite body) {
-        config.set(key, body.value());
+        // TenantConfigStore binds a String as raw JSON text (callers pre-encode), so a plain string value is encoded here.
+        config.set(key, body.value() instanceof String s ? ai.intentoms.platform.json.Json.write(s) : body.value());
         audit.record("config.set", "tenant_config", key, body.reason(), Map.of("value", body.value()));
         return Map.of("key", key, "value", body.value());
     }
