@@ -16,8 +16,16 @@ import java.util.Set;
  *                   an insert defaults to 1.0 and an update keeps the stored confidence (so a Jev-scored
  *                   confidence survives routine WMS syncs).
  * @param asOf       when the source observed this quantity; feeds older than the stored {@code asOf} are ignored.
+ * @param receivedAt optional: when the oldest on-hand unit arrived (IU-03 stock age). When absent, the store sets it the
+ *                   moment on-hand goes from zero to positive and keeps it while stock remains.
+ * @param supplierId optional: supplier of an inbound (po / asn / in_transit) row, so ATP can weight it by reliability (IU-05).
  */
-public record InventoryPosition(String sku, String nodeId, String supplyType, String demandType, int qty, double confidence, Instant asOf) {
+public record InventoryPosition(String sku, String nodeId, String supplyType, String demandType, int qty, double confidence, Instant asOf,
+                                Instant receivedAt, String supplierId) {
+    public InventoryPosition(String sku, String nodeId, String supplyType, String demandType, int qty, double confidence, Instant asOf) {
+        this(sku, nodeId, supplyType, demandType, qty, confidence, asOf, null, null);
+    }
+
     public static final String ON_HAND = "on_hand";
     public static final String PO = "po";
     public static final String ASN = "asn";
@@ -40,7 +48,8 @@ public record InventoryPosition(String sku, String nodeId, String supplyType, St
     public InventoryPosition normalised(Instant now) {
         String supply = supplyType == null || supplyType.isBlank() ? ON_HAND : supplyType;
         String demand = demandType == null || demandType.isBlank() ? null : demandType;
-        InventoryPosition p = new InventoryPosition(sku, nodeId, supply, demand, qty, confidence, asOf == null ? now : asOf);
+        InventoryPosition p = new InventoryPosition(sku, nodeId, supply, demand, qty, confidence, asOf == null ? now : asOf, receivedAt,
+            supplierId == null || supplierId.isBlank() ? null : supplierId);
         p.validate();
         return p;
     }

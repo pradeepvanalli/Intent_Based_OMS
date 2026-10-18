@@ -1,6 +1,7 @@
 package ai.intentoms.inventory.service;
 
 import ai.intentoms.inventory.config.InventoryConfigKeys;
+import ai.intentoms.inventory.learning.LearnedInventoryParameters;
 import ai.intentoms.inventory.model.Reservation;
 import ai.intentoms.inventory.model.ReservationLine;
 import ai.intentoms.inventory.store.InventoryPositionStore;
@@ -50,9 +51,11 @@ public class DefaultReservationService implements ReservationService {
     private final Metrics metrics;
     private final TimeSource time;
     private final AuthorizationService authz;
+    private final LearnedInventoryParameters learned;
 
     public DefaultReservationService(ReservationStore reservations, InventoryPositionStore positions, EventStore events, TenantConfigStore config,
-                                     NetworkAtpCache cache, Metrics metrics, TimeSource time, AuthorizationService authz) {
+                                     NetworkAtpCache cache, Metrics metrics, TimeSource time, AuthorizationService authz, LearnedInventoryParameters learned) {
+        this.learned = learned;
         this.reservations = reservations;
         this.positions = positions;
         this.events = events;
@@ -79,7 +82,9 @@ public class DefaultReservationService implements ReservationService {
         String tenant = TenantContext.require();
         return metrics.time("oms.inventory.reserve", () -> {
             Instant now = time.now();
-            Instant expiresAt = Reservation.SOURCE_ORDER.equals(source) || ttl == null || ttl.isZero() || ttl.isNegative() ? null : now.plus(ttl);
+            // IU-02: a cart reservation without a TTL gets the tenant default (learned once promoted, else static, else none).
+            Duration effectiveTtl = ttl == null && !Reservation.SOURCE_ORDER.equals(source) ? learned.defaultReservationTtl().orElse(null) : ttl;
+            Instant expiresAt = Reservation.SOURCE_ORDER.equals(source) || effectiveTtl == null || effectiveTtl.isZero() || effectiveTtl.isNegative() ? null : now.plus(effectiveTtl);
             boolean includeInbound = config.getBoolean(InventoryConfigKeys.INCLUDE_INBOUND, false);
 
             // Demand per (sku, node), locked in deterministic order so concurrent reserveAll calls cannot deadlock.
@@ -120,7 +125,7 @@ public class DefaultReservationService implements ReservationService {
 
     /** ATP of one (sku, node) read while the on-hand row is locked by this transaction. */
     private int availableUnderLock(String tenant, ReservationLine d, boolean includeInbound) {
-        List<AtpRow> rows = positions.atpRows(tenant, d.sku(), d.nodeId());
+        List<AtpRow> rows = learned.apply(tenant, positions.atpRows(tenant, d.sku(), d.nodeId()), includeInbound);
         return rows.isEmpty() ? 0 : DefaultInventoryService.available(rows.get(0), includeInbound);
     }
 
@@ -171,11 +176,14 @@ public class DefaultReservationService implements ReservationService {
         if (!r.active()) throw notActive(r, "consume");
         Instant now = time.now();
         positions.lockOnHand(tenant, r.sku(), r.nodeId());
+        // IU-03: how old the stock this order took was, read before the decrement can clear it.
+        Integer stockAgeDays = positions.receivedAt(tenant, r.sku(), r.nodeId())
+            .map(at -> (int) Math.max(0, Duration.between(at, now).toDays())).orElse(null);
         int onHandAfter = positions.addOnHand(tenant, r.sku(), r.nodeId(), -r.qty(), now);
         reservations.setStatus(tenant, r.id(), Reservation.CONSUMED, now);
         Reservation consumed = withStatus(r, Reservation.CONSUMED);
         events.append(InventoryEvents.RESERVATION, r.id(), new NewEvent(InventoryEvents.RESERVATION_CONSUMED,
-            payload(consumed, row.orderId(), Map.of("onHandAfter", onHandAfter)), actor()));
+            payload(consumed, row.orderId(), stockAgeDays == null ? Map.of("onHandAfter", onHandAfter) : Map.of("onHandAfter", onHandAfter, "stockAgeDays", stockAgeDays)), actor()));
         cache.invalidate(tenant, r.sku());
         metrics.count("oms.inventory.consumed");
         return consumed;

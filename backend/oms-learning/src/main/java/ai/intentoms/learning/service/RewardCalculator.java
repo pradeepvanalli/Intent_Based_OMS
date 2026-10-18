@@ -44,7 +44,7 @@ public final class RewardCalculator {
                 case OutcomeData.ReturnOutcome r -> { if (r.fraudConfirmed()) fraudLoss += r.refundAmount(); }
                 case OutcomeData.PaymentOutcome p -> { if (p.chargeback()) fraudLoss += p.amount(); }
                 case OutcomeData.ContactOutcome ct -> contacts += ct.complaint() ? 1.0 : 0.5;
-                case OutcomeData.InventoryOutcome inv -> invRelief = inv.stranded() ? 0.0 : 1.0;
+                case OutcomeData.InventoryOutcome inv -> { if (inv.stranded()) invRelief = 0.0; else if (inv.daysToSale() > 0) invRelief = 1.0; } // a backorder resolution is not aged-stock relief
             }
         }
         Map<String, Double> c = new LinkedHashMap<>();
@@ -72,7 +72,7 @@ public final class RewardCalculator {
                 case OutcomeData.ReturnOutcome r -> { if (r.fraudConfirmed()) s.add("fraud"); }
                 case OutcomeData.PaymentOutcome p -> { if (p.chargeback()) s.add("fraud"); }
                 case OutcomeData.ContactOutcome ct -> s.add("cx");
-                case OutcomeData.InventoryOutcome inv -> s.add("inv");
+                case OutcomeData.InventoryOutcome inv -> { if (inv.stranded() || inv.daysToSale() > 0) s.add("inv"); }
             }
         }
         return s;

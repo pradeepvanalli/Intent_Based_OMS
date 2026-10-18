@@ -1,6 +1,7 @@
 package ai.intentoms.inventory.service;
 
 import ai.intentoms.inventory.config.InventoryConfigKeys;
+import ai.intentoms.inventory.learning.LearnedInventoryParameters;
 import ai.intentoms.inventory.model.Atp;
 import ai.intentoms.inventory.model.InventoryPosition;
 import ai.intentoms.inventory.model.ReconciliationReport;
@@ -41,9 +42,11 @@ public class DefaultInventoryService implements InventoryService {
     private final Metrics metrics;
     private final TimeSource time;
     private final AuthorizationService authz;
+    private final LearnedInventoryParameters learned;
 
     public DefaultInventoryService(InventoryPositionStore positions, SyncLogStore syncLog, EventStore events, TenantConfigStore config,
-                                   NetworkAtpCache cache, Metrics metrics, TimeSource time, AuthorizationService authz) {
+                                   NetworkAtpCache cache, Metrics metrics, TimeSource time, AuthorizationService authz, LearnedInventoryParameters learned) {
+        this.learned = learned;
         this.positions = positions;
         this.syncLog = syncLog;
         this.events = events;
@@ -59,7 +62,7 @@ public class DefaultInventoryService implements InventoryService {
         String tenant = TenantContext.require();
         return metrics.time("oms.inventory.atp", () -> {
             boolean inbound = includeInbound();
-            List<AtpRow> rows = positions.atpRows(tenant, sku, null);
+            List<AtpRow> rows = learned.apply(tenant, positions.atpRows(tenant, sku, null), inbound);
             List<Atp> out = new ArrayList<>(rows.size());
             for (AtpRow r : rows) out.add(toAtp(r, inbound));
             return out;
@@ -70,8 +73,9 @@ public class DefaultInventoryService implements InventoryService {
     public Atp atp(String sku, String nodeId) {
         String tenant = TenantContext.require();
         return metrics.time("oms.inventory.atp", () -> {
-            List<AtpRow> rows = positions.atpRows(tenant, sku, nodeId);
-            return rows.isEmpty() ? new Atp(sku, nodeId, 0, 0, 0, 0, 0, 0, 1.0) : toAtp(rows.get(0), includeInbound());
+            boolean inbound = includeInbound();
+            List<AtpRow> rows = learned.apply(tenant, positions.atpRows(tenant, sku, nodeId), inbound);
+            return rows.isEmpty() ? new Atp(sku, nodeId, 0, 0, 0, 0, 0, 0, 1.0) : toAtp(rows.get(0), inbound);
         }, "scope", "node");
     }
 
@@ -103,10 +107,13 @@ public class DefaultInventoryService implements InventoryService {
     /** One grouped query for all missing skus; per-node clamping happens here so negative nodes never hide positive ones. */
     private Map<String, NetworkAtpCache.Entry> loadNetwork(String tenant, List<String> skus) {
         Map<String, int[]> totals = new HashMap<>();
-        for (AtpRow r : positions.atpRows(tenant, skus)) {
-            int[] t = totals.computeIfAbsent(r.sku(), k -> new int[2]);
-            t[0] += Math.max(0, available(r, false));
-            t[1] += Math.max(0, available(r, true));
+        List<AtpRow> raw = positions.atpRows(tenant, skus);
+        List<AtpRow> withoutInbound = learned.apply(tenant, raw, false);
+        List<AtpRow> withInbound = learned.apply(tenant, raw, true);
+        for (int i = 0; i < raw.size(); i++) {
+            int[] t = totals.computeIfAbsent(raw.get(i).sku(), k -> new int[2]);
+            t[0] += Math.max(0, available(withoutInbound.get(i), false));
+            t[1] += Math.max(0, available(withInbound.get(i), true));
         }
         Map<String, NetworkAtpCache.Entry> out = new HashMap<>();
         totals.forEach((sku, t) -> out.put(sku, new NetworkAtpCache.Entry(t[0], t[1])));
