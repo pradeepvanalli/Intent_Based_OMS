@@ -19,6 +19,9 @@ public final class IntegrationsConfigKeys {
     /** {@code carrier.easypost.webhook_secret}: secret EasyPost signs tracker webhooks with ({@code X-Hmac-Signature}). */
     public static final String EASYPOST_WEBHOOK_SECRET = "carrier.easypost.webhook_secret";
 
+    /** {@code payments.stripe.webhook_secret}: Stripe endpoint signing secret ({@code whsec_...}) for {@code POST /webhooks/payments/stripe}. */
+    public static final String STRIPE_WEBHOOK_SECRET = "payments.stripe.webhook_secret";
+
     /** {@code wms.<nodeId>.release_url} / {@code wms.release_url}: where release documents are posted. */
     public static String wmsReleaseUrl(String nodeId) { return "wms." + nodeId + ".release_url"; }
     public static final String WMS_RELEASE_URL = "wms.release_url";

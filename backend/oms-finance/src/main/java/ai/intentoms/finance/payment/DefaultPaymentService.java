@@ -71,12 +71,13 @@ public class DefaultPaymentService implements PaymentService {
         Map<String, Object> mandate = agentMandate == null ? Map.of() : agentMandate;
         String paymentId = Ids.prefixed("pay");
         Actor actor = currentActor();
+        PaymentGateway gw = tender == TenderType.COD ? CodGateway.INSTANCE : gateway;
         return metrics.time("oms.finance.payment.authorize", () -> tx.execute(status -> {
-            AuthResult result = gateway.authorize(new AuthRequest(paymentId, orderId, amount, tenderToken, tender.code(), mandate));
+            AuthResult result = gw.authorize(new AuthRequest(paymentId, orderId, amount, tenderToken, tender.code(), mandate));
             Instant now = time.now();
             Payment p;
             if (result.approved()) {
-                p = new Payment(paymentId, orderId, tender.code(), tenderToken, gateway.name(), result.pspRef(), PaymentStatus.AUTHORIZED,
+                p = new Payment(paymentId, orderId, tender.code(), tenderToken, gw.name(), result.pspRef(), PaymentStatus.AUTHORIZED,
                     amount, Money.zero(amount.currency()), result.authExpiresAt(), mandate, null, now, now);
                 repo.insert(p);
                 Map<String, Object> payload = basePayload(p);
@@ -113,7 +114,7 @@ public class DefaultPaymentService implements PaymentService {
                 if (!p.status().isOpen() || p.authExpiresAt() == null || !p.authExpiresAt().isBefore(threshold)) return null;
                 Money remaining = p.uncaptured();
                 if (!remaining.isPositive()) return null;
-                AuthResult r = gateway.reauthorize(p.pspRef(), remaining);
+                AuthResult r = gatewayFor(p).reauthorize(p.pspRef(), remaining);
                 Instant now = time.now();
                 if (!r.approved()) {
                     Payment failed = new Payment(p.id(), p.orderId(), p.tenderType(), p.tenderToken(), p.psp(), p.pspRef(), PaymentStatus.FAILED,
@@ -168,7 +169,7 @@ public class DefaultPaymentService implements PaymentService {
                 Money take = want.min(p.uncaptured());
                 if (!take.isPositive()) return null;
                 String captureId = Ids.prefixed("cap");
-                CaptureResult cr = gateway.capture(p.pspRef(), take, captureId);
+                CaptureResult cr = gatewayFor(p).capture(p.pspRef(), take, captureId);
                 Instant now = time.now();
                 if (!cr.succeeded()) {
                     Payment failed = new Payment(p.id(), p.orderId(), p.tenderType(), p.tenderToken(), p.psp(), p.pspRef(), PaymentStatus.FAILED,
@@ -254,7 +255,7 @@ public class DefaultPaymentService implements PaymentService {
                 append(AGGREGATE_REFUND, r.id(), "refund.requested", refundPayload(r), who, orderId);
                 return r;
             });
-            RefundResult rr = gateway.refund(payment.pspRef(), leg, pending.id(), reason);
+            RefundResult rr = gatewayFor(payment).refund(payment.pspRef(), leg, pending.id(), reason);
             // Transaction 2: record the outcome and, on success, the GR-05 spend.
             Refund fin = tx.execute(status -> {
                 Instant done = time.now();
@@ -291,7 +292,7 @@ public class DefaultPaymentService implements PaymentService {
             tx.executeWithoutResult(status -> {
                 Payment p = repo.lock(candidate.id());
                 if (!p.status().isOpen() || p.amountCaptured().isPositive()) return;
-                gateway.voidAuth(p.pspRef());
+                gatewayFor(p).voidAuth(p.pspRef());
                 Instant now = time.now();
                 Payment voided = new Payment(p.id(), p.orderId(), p.tenderType(), p.tenderToken(), p.psp(), p.pspRef(), PaymentStatus.VOIDED,
                     p.amountAuthorized(), p.amountCaptured(), p.authExpiresAt(), p.agentMandate(), null, p.createdAt(), now);
@@ -314,6 +315,25 @@ public class DefaultPaymentService implements PaymentService {
     public Payment get(String paymentId) { return repo.get(paymentId); }
 
     // ---- helpers -----------------------------------------------------------------------------------------------
+
+    /** The gateway that owns a payment: cash on delivery never touches the card gateway. */
+    private PaymentGateway gatewayFor(Payment p) { return CodGateway.NAME.equals(p.psp()) ? CodGateway.INSTANCE : gateway; }
+
+    /**
+     * FD-02 cash on delivery: there is no hold to place or release with a card network. "Authorise" records the
+     * amount the courier will collect, "capture" records the collection, and a refund is paid out by the merchant
+     * outside the card rails (recorded as succeeded so the refund ledger stays complete).
+     */
+    static final class CodGateway implements PaymentGateway {
+        static final String NAME = "cod";
+        static final CodGateway INSTANCE = new CodGateway();
+        @Override public String name() { return NAME; }
+        @Override public AuthResult authorize(AuthRequest r) { return AuthResult.approved("cod_" + r.paymentId(), null, Map.of("collectOnDelivery", true)); }
+        @Override public AuthResult reauthorize(String pspRef, Money amount) { return AuthResult.approved(pspRef, null, Map.of()); }
+        @Override public CaptureResult capture(String pspRef, Money amount, String idempotencyKey) { return CaptureResult.succeeded(pspRef + ":" + idempotencyKey, amount); }
+        @Override public RefundResult refund(String pspRef, Money amount, String idempotencyKey, String reason) { return RefundResult.succeeded(pspRef + ":refund:" + idempotencyKey); }
+        @Override public void voidAuth(String pspRef) { }
+    }
 
     private void append(String aggregate, String id, String type, Map<String, Object> payload, Actor actor, String orderId) {
         events.append(aggregate, id, new NewEvent(type, payload, actor, null, orderId, Map.of("orderId", orderId)));

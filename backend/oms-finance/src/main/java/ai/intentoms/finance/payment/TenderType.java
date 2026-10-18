@@ -4,9 +4,12 @@ import ai.intentoms.platform.error.ValidationException;
 
 import java.util.Locale;
 
-/** Tender types accepted by {@link PaymentService#authorize} (FR-FIN-01 split tender, FR-FIN-06 agent tokens). */
+/**
+ * Tender types accepted by {@link PaymentService#authorize} (FR-FIN-01 split tender, FR-FIN-06 agent tokens, FD-02
+ * cash on delivery: nothing to authorise with a gateway, the courier collects at the door).
+ */
 public enum TenderType {
-    CARD, PAYPAL, GIFT_CARD, NET_TERMS, AGENT_TOKEN;
+    CARD, PAYPAL, GIFT_CARD, NET_TERMS, AGENT_TOKEN, COD;
 
     /** Persisted / wire form: lower-case snake case ("gift_card"). */
     public String code() { return name().toLowerCase(Locale.ROOT); }

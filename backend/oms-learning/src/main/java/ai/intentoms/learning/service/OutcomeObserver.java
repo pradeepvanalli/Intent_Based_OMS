@@ -67,9 +67,28 @@ public class OutcomeObserver implements EventSubscriber {
         if (e.aggregateType() != null && !"order".equals(e.aggregateType()))
             episodes.forSubject(e.aggregateType(), e.aggregateId()).forEach(ep -> targets.put(ep.episodeId(), ep));
         for (Episode ep : targets.values()) {
-            if (ep.status() == EpisodeStatus.MATURE) continue;
+            if (ep.status() == EpisodeStatus.MATURE || !concerns(e, ep)) continue;
             outcomes.insert(OutcomeRecord.of(Ids.prefixed("out"), ep.episodeId(), data, e.occurredAt(), e.id(), Instant.now()));
         }
+    }
+
+    /**
+     * OC-02: an outcome that names a fulfilment group or lines only reaches episodes for that group or those lines; an
+     * order-level episode (no group, no line) receives every outcome of the order. A package shipped from one node
+     * therefore never scores the decision made for another package of the same order.
+     */
+    static boolean concerns(Event e, Episode ep) {
+        Map<String, Object> p = e.payload() == null ? Map.of() : e.payload();
+        Object fg = p.getOrDefault("fulfilmentGroupId", p.get("fulfillmentGroupId"));
+        if (ep.fulfillmentGroupId() != null && fg != null && !ep.fulfillmentGroupId().equals(String.valueOf(fg))) return false;
+        if (ep.lineId() != null) {
+            java.util.Set<String> lines = new java.util.HashSet<>();
+            if (p.get("lineId") != null) lines.add(String.valueOf(p.get("lineId")));
+            if (p.get("lineIds") instanceof java.util.Collection<?> c) c.forEach(x -> lines.add(String.valueOf(x)));
+            if (p.get("lines") instanceof Map<?, ?> m) m.keySet().forEach(x -> lines.add(String.valueOf(x)));
+            if (!lines.isEmpty() && !lines.contains(ep.lineId())) return false;
+        }
+        return true;
     }
 
     static String orderIdOf(Event e) {

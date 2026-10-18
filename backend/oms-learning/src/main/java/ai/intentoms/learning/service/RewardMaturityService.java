@@ -101,6 +101,7 @@ public class RewardMaturityService {
             if (!windowClosed && !(CLOSE_ON_EVIDENCE.contains(term) && scored.contains(term))) mature = false;
         }
         Double reward = outs.isEmpty() ? null : RewardCalculator.compute(components, weights);
+        components.putAll(OutcomeAttribution.attribute(outs)); // OC-05: who most likely caused a bad outcome, stored with the reward
         EpisodeStatus status = mature ? EpisodeStatus.MATURE : outs.isEmpty() ? EpisodeStatus.OPEN : EpisodeStatus.PROVISIONAL;
         episodes.updateStatusAndReward(ep.episodeId(), status, reward, components, mature ? now : null);
         if (status != ep.status()) metrics.count("oms.learning.episode.status_changed", "decision", ep.decisionName(), "to", status.name());
@@ -111,6 +112,8 @@ public class RewardMaturityService {
             payload.put("reward", reward);
             payload.put("components", components);
             payload.put("scoredTerms", List.copyOf(scored));
+            String blamed = OutcomeAttribution.primary(components);
+            if (blamed != null) payload.put("attributedTo", blamed);
             events.episodeMatured(ep.episodeId(), Actor.system("reward-maturity"), payload);
             if (reward != null) metrics.count("oms.learning.reward", reward, "decision", ep.decisionName());
         }

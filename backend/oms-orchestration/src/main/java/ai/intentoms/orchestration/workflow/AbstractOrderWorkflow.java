@@ -82,6 +82,12 @@ public abstract class AbstractOrderWorkflow implements WorkflowDefinition {
         this.agentHook = agentHook;
     }
 
+    private ai.intentoms.orchestration.fraud.PaymentRiskGate paymentRiskGate;
+
+    /** Pre-capture fraud checks (FD-01/FD-02); optional so a workflow built without it simply skips them. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setPaymentRiskGate(ai.intentoms.orchestration.fraud.PaymentRiskGate gate) { this.paymentRiskGate = gate; }
+
     /** Step entered after a successful release ({@code await_fulfilment} for ship-to-home, {@code await_pick} for BOPIS). */
     protected abstract String afterReleaseStep();
 
@@ -205,6 +211,13 @@ public abstract class AbstractOrderWorkflow implements WorkflowDefinition {
 
     protected Next paymentAuthorize(WorkflowContext ctx) {
         Order order = order(ctx);
+        ai.intentoms.orchestration.fraud.PaymentRiskGate gate = paymentRiskGate;
+        if (gate != null) {
+            // FD-01/FD-02 before the money moves: a risky order is held before release/capture, never cancelled here.
+            Map<String, Object> risk = ctx.activity("payment_risk", RETRY, () -> gate.assess(order));
+            ctx.vars().put("paymentRisk", risk);
+            ctx.log("Payment risk assessed before authorisation (FD-01/FD-02)", risk);
+        }
         ctx.compensation("void_auth");
         List<Map<String, Object>> auths = ctx.activity("authorize", RETRY, () -> s.authorizeTenders(order));
         ctx.vars().put("payments", auths);
