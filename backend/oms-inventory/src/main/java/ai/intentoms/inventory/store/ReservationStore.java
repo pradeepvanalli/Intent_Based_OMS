@@ -52,7 +52,7 @@ public class ReservationStore {
     }
 
     public void convert(String tenant, String id, String orderId, Instant now) {
-        jdbc.sql("update inventory_reservation set source = 'order', order_id = :o, expires_at = null, updated_at = :now where tenant_id = :t and id = :id")
+        jdbc.sql("update inventory_reservation set source = 'order', order_id = :o, expires_at = null, converted_at = :now, updated_at = :now where tenant_id = :t and id = :id")
             .param("o", orderId).param("now", Timestamp.from(now)).param("t", tenant).param("id", id).update();
     }
 

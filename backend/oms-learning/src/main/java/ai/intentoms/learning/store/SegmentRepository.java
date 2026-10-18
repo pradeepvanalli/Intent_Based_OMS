@@ -26,6 +26,20 @@ public class SegmentRepository {
             .param("def", Jsonb.of(s.definition())).param("size", s.size()).param("by", s.createdBy()).param("created", Timestamp.from(s.createdAt())).update();
     }
 
+    /** Next discovery run's version: every segment written by one run shares it. */
+    public int nextVersion() {
+        return jdbc.sql("select coalesce(max(version), 0) + 1 from segment where tenant_id = :t").param("t", TenantContext.require()).query(Integer.class).single();
+    }
+
+    /** The segments of the most recent discovery run. */
+    public List<Segment> latest() {
+        String t = TenantContext.require();
+        return jdbc.sql("""
+            select segment_id, version, label, description, definition::text as definition, size, created_by, created_at from segment
+            where tenant_id = :t and version = (select max(version) from segment where tenant_id = :t) order by size desc, label
+            """).param("t", t).query().listOfRows().stream().map(SegmentRepository::hydrate).toList();
+    }
+
     public List<Segment> list() {
         String t = TenantContext.require();
         return jdbc.sql("select segment_id, version, label, description, definition::text as definition, size, created_by, created_at from segment where tenant_id = :t order by label, version desc")

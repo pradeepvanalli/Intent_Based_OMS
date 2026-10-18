@@ -114,7 +114,8 @@ class AiEconomicsServiceIntegrationTest extends AnalyticsTestBase {
         String id = "dr_" + Ids.shortId();
         Timestamp at = Timestamp.from(day.atStartOfDay(ZoneOffset.UTC).toInstant().plusSeconds(7200));
         jdbc.sql("insert into decision_record (id, tenant_id, decision, version, mode, subject_type, subject_id, layer, band, action, value, confidence, input_hash, latency_ms, cost_usd, requires_human, created_at) "
-                + "values (:id, :t, :d, 1, 'LIVE', 'order', :s, :layer, :band, :action, '\"x\"'::jsonb, :conf, :h, :lat, :cost, :rh, :at)")
+                + "values (:id, :t, :d, coalesce((select max(version) from decision_definition where tenant_id = :t and name = :d and status = 'live'), 1), "
+                + "'LIVE', 'order', :s, :layer, :band, :action, '\"x\"'::jsonb, :conf, :h, :lat, :cost, :rh, :at)")
             .params(Map.ofEntries(Map.entry("id", id), Map.entry("t", TENANT), Map.entry("d", decision), Map.entry("s", "O" + id), Map.entry("layer", layer), Map.entry("band", band), Map.entry("action", action),
                 Map.entry("conf", confidence), Map.entry("h", "h_" + id), Map.entry("lat", latencyMs), Map.entry("cost", costUsd), Map.entry("rh", requiresHuman), Map.entry("at", at)))
             .update();

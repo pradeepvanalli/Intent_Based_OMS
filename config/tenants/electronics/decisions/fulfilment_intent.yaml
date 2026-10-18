@@ -3,7 +3,7 @@
 # and bundles is ship_complete and the model reads the note for an explicit wish.
 # Sandbox gates (0.6 / 0.5) so the heuristic fallback passes without API keys; production values 0.90 / 0.05.
 decision: fulfilment_intent
-version: 1
+version: 2
 owner: omnichannel-strategy
 tier: T1
 provider: jev
@@ -18,6 +18,11 @@ state:
     - order.order_type
     - customer.tier
     - customer.history.split_acceptance_rate
+    - customer.facts.split_tolerance
+    - customer.facts.speed_vs_cost
+    - customer.facts.pickup_preference
+    - customer.facts.preferred_contact_channel
+    - customer.facts.segment
 rules:
   - id: bundle_always_complete
     when: "has(input.order.order_type) && input.order.order_type == 'bundle_ship_complete'"

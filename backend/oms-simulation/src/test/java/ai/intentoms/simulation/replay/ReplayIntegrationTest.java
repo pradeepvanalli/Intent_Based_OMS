@@ -71,7 +71,9 @@ class ReplayIntegrationTest extends SimulationTestBase {
         // v2 lowers the act threshold so the heuristic provider's 0.55-0.6 confidence now acts (FR-PRM-02 draft).
         String yaml = Files.readString(DEMO.resolve("decisions/fulfilment_intent.yaml")).replace("act: { confidence_gte: 0.8 }", "act: { confidence_gte: 0.5 }");
         DecisionDefinition draft = studio.createDraft("fulfilment_intent", yaml);
-        assertThat(draft.version()).isEqualTo(2);
+        int seeded = new ai.intentoms.decision.definition.DecisionDefinitionParser().parse(yaml).version();
+        int proposedVersion = draft.version();
+        assertThat(proposedVersion).isEqualTo(seeded + 1);
         assertThat(draft.status()).isEqualTo("draft");
 
         ReplayResult current = replays.replay(o.id(), ReplayOptions.current());
@@ -88,11 +90,11 @@ class ReplayIntegrationTest extends SimulationTestBase {
         assertThat(current.sourcing().before().nodeIds()).containsExactly("DC-NJ");
         assertThat(current.summary().decisionsReplayed()).isEqualTo(current.decisions().size());
 
-        ReplayResult proposed = replays.replay(o.id(), ReplayOptions.decisions(Map.of("fulfilment_intent", 2)));
+        ReplayResult proposed = replays.replay(o.id(), ReplayOptions.decisions(Map.of("fulfilment_intent", proposedVersion)));
         ReplayResult.DecisionReplay intent = proposed.decisions().stream().filter(d -> "fulfilment_intent".equals(d.decision())).findFirst().orElseThrow();
-        assertThat(intent.versionBefore()).isEqualTo(1);
-        assertThat(intent.version()).isEqualTo(1);
-        assertThat(intent.versionAfter()).isEqualTo(2);
+        assertThat(intent.versionBefore()).isEqualTo(seeded);
+        assertThat(intent.version()).isEqualTo(seeded);
+        assertThat(intent.versionAfter()).isEqualTo(proposedVersion);
         assertThat(intent.flipped()).isFalse();                          // same input, same heuristic answer
         if (intent.before().band() == Band.CONFIRM) {                     // the heuristic answer sits in the confirm band under v1 ...
             assertThat(intent.after().band()).isEqualTo(Band.ACT);        // ... and acts under v2
@@ -112,7 +114,7 @@ class ReplayIntegrationTest extends SimulationTestBase {
         // REPLAY-mode records exist for the order (they never act: no escalation, no cache), LIVE records are untouched.
         List<Map<String, Object>> replayRecords = records(o.id(), "REPLAY");
         assertThat(replayRecords).hasSize(current.decisions().size() + proposed.decisions().size());
-        assertThat(replayRecords).anyMatch(r -> "fulfilment_intent".equals(r.get("decision")) && Integer.valueOf(2).equals(r.get("version")));
+        assertThat(replayRecords).anyMatch(r -> "fulfilment_intent".equals(r.get("decision")) && Integer.valueOf(proposedVersion).equals(r.get("version")));
         assertThat(records(o.id(), "LIVE")).hasSizeGreaterThanOrEqualTo(current.decisions().size()); // re-sourcing in the replay adds LIVE sourcing_node_score records
         assertThat(jdbc.sql("select count(*) from decision_escalation where tenant_id = :t and record_id in (select id from decision_record where tenant_id = :t and mode = 'REPLAY')")
             .param("t", tenant).query(Long.class).single()).isZero();

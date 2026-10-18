@@ -1,6 +1,6 @@
 # Split acceptability (PRD section 9). Noul, tier T2: act only >= 0.9 (confidence |2p-1|), else a person decides.
 decision: split_acceptability
-version: 1
+version: 2
 owner: omnichannel-strategy
 tier: T2
 provider: jev
@@ -15,6 +15,11 @@ state:
     - customer.tier
     - customer.history.split_acceptance_rate
     - customer.history.split_complaints
+    - customer.facts.split_tolerance
+    - customer.facts.speed_vs_cost
+    - customer.facts.pickup_preference
+    - customer.facts.preferred_contact_channel
+    - customer.facts.segment
     - plan_options[].packages
     - plan_options[].eta
     - plan_options[].cost_delta

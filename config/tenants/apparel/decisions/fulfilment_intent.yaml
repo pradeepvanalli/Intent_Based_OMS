@@ -3,7 +3,7 @@
 # the fulfilment policy the planner optimises for. Nouls surface gift and gift-wrap intent as reason codes so the DC
 # packs accordingly. Production evaluation gates (0.90 / 0.05): bootstrap through the seeder or --publish emergency.
 decision: fulfilment_intent
-version: 1
+version: 2
 owner: omnichannel-ops
 tier: T1
 provider: jev
@@ -19,6 +19,11 @@ state:
     - order.line_count
     - customer.tier
     - customer.history.split_acceptance_rate
+    - customer.facts.split_tolerance
+    - customer.facts.speed_vs_cost
+    - customer.facts.pickup_preference
+    - customer.facts.preferred_contact_channel
+    - customer.facts.segment
 questions:
   intent:
     type: choice
