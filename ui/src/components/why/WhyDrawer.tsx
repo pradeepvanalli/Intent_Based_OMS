@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { decisionRecordsApi } from '../../api/decisions';
 import { copilotApi } from '../../api/copilot';
-import type { DecisionTrace, TraceQuestion } from '../../api/types';
+import { learningApi } from '../../api/learning';
+import type { DecisionTrace, SubjectType, TraceQuestion } from '../../api/types';
 import { fmtConf, fmtDateTime, fmtUsd, humanize, valueLabel } from '../../lib/format';
 import { toast } from '../../lib/toast';
 import { useSession, hasPermission } from '../../auth/session';
@@ -68,9 +69,13 @@ export function WhyBody({ trace, customer }: { trace: DecisionTrace; customer: b
             ['Evaluated', fmtDateTime(r.evaluatedAt)], ['Actor', <span className="mono">{trace.actor}</span>],
             ['Subject', <Link to={subjectLink(r.subjectType, r.subjectId)} className="mono">{r.subjectType}/{r.subjectId}</Link>],
             ['Input hash', <span className="mono small">{trace.inputHash ?? '—'}</span>],
+            ...(r.policyVersion != null ? [['Policy version used', <span className="mono">v{r.policyVersion}</span>] as [ReactNode, ReactNode]] : []),
+            ...(r.propensity != null ? [['Propensity', <span className="num">{r.propensity.toFixed(2)}{r.chosenArm ? ` · chose ${r.chosenArm}` : ''}</span>] as [ReactNode, ReactNode]] : []),
           ]} />
         </section>
       )}
+
+      {!customer && <LearnedContext subjectType={r.subjectType} subjectId={r.subjectId} />}
 
       <section>
         <div className="section-title">Questions & answers</div>
@@ -162,6 +167,35 @@ function QuestionCard({ q, main }: { q: TraceQuestion; main: boolean }) {
       {q.type === 'score' && a.probabilities && <div className="col gap1"><div className="row gap3"><ScorePips value={Number(a.value)} max={(q.levels ?? []).length || 5} /><b>{q.levels?.[Number(a.value)] ?? valueLabel(a.value)}</b></div>{Object.entries(a.probabilities).map(([k, p]) => <ProbBar key={k} label={`${k} · ${(q.levels?.[Number(k)] ?? '').slice(0, 28)}`} value={p} chosen={String(a.value) === k} />)}</div>}
       {q.type === 'noul' && <div className="col gap1"><ProbBar label="true" value={Number(a.probabilities?.true ?? a.value)} chosen={Number(a.value) >= 0.5} tone={Number(a.value) >= 0.5 ? 'warn' : 'ok'} /><ProbBar label="false" value={Number(a.probabilities?.false ?? 1 - Number(a.value))} chosen={Number(a.value) < 0.5} /></div>}
     </div>
+  );
+}
+
+const KNOWN_SUBJECT_TYPES = new Set(['CUSTOMER', 'SEGMENT', 'NODE', 'LANE', 'SKU', 'AGENT', 'DECISION']);
+
+/** XP-03: which learned facts and policy version shaped this decision, when the subject is one SOO learns about
+ * (not every decision's subject is — e.g. order/return/exception subjects have no learned facts, so this renders
+ * nothing for those rather than an empty, confusing section). */
+function LearnedContext({ subjectType, subjectId }: { subjectType?: string | null; subjectId?: string | null }) {
+  const soo = subjectType ? subjectType.toUpperCase() : '';
+  const enabled = KNOWN_SUBJECT_TYPES.has(soo) && !!subjectId;
+  const q = useQuery({ queryKey: ['learning-facts', soo, subjectId], queryFn: () => learningApi.facts(soo as SubjectType, subjectId!), enabled });
+  if (!enabled || (q.data && q.data.length === 0)) return null;
+  return (
+    <section>
+      <div className="section-title">Learned context</div>
+      {q.isLoading && <Loading inline label="Loading learned facts…" />}
+      {q.data && q.data.length > 0 && (
+        <div className="subtle-list small">
+          {q.data.map((f) => (
+            <div key={f.factId} className="row gap3">
+              <Badge tone="ai">{f.factKey.toLowerCase().replace(/_/g, ' ')}</Badge>
+              <span className="mono">{f.value.type === 'ListValue' ? f.value.values.join(', ') : String(f.value.value)}</span>
+              <span className="xs muted">confidence {f.confidence.toFixed(2)} · {f.sampleSize} samples · learned by {f.learner}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

@@ -35,7 +35,10 @@ const GROUPS = [
     { to: '/replay', label: 'Margin Replay', icon: IconDiff, perm: 'simulation.run' },
     { to: '/copilot', label: 'Copilot', icon: IconSparkle, perms: ['decision.edit', 'statemodel.edit', 'config.admin'] },
   ] },
-  { title: 'Insight', items: [{ to: '/analytics', label: 'Analytics', icon: IconChart, perm: 'analytics.read' }] },
+  { title: 'Insight', items: [
+    { to: '/analytics', label: 'Analytics', icon: IconChart, perm: 'analytics.read' },
+    { to: '/learning', label: 'Learning', icon: IconSparkle, perm: 'learning.read' },
+  ] },
   { title: 'Admin', items: [{ to: '/settings', label: 'Settings', icon: IconSettings, perm: 'config.admin' }] },
   { title: 'Explore', items: [{ to: '/showcase', label: 'Showcase', icon: IconPlay, perm: '' }] },   // visible to everyone
 ];

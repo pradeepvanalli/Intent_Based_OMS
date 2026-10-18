@@ -1,0 +1,33 @@
+# Refused-delivery (return-to-origin) risk in cash-on-delivery markets (SOO requirements doc FD-02). Noul, tier T2.
+# Feeds two actions: offer a prepaid-conversion discount, or trigger an address-confirmation contact — never an
+# autonomous cancel. Act-band threshold is tuned by the FraudThresholdTuner learner (FD-03) as a reviewable
+# ThresholdChange proposal only.
+decision: rto_risk
+version: 1
+owner: returns-and-risk
+tier: T2
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: false
+state:
+  include:
+    - order.payment_method
+    - order.total
+    - address.verification_status
+    - address.prior_failed_deliveries
+    - address.prior_refused_count
+    - customer.history.refused_12m
+    - customer.history.orders_12m
+questions:
+  high_rto_risk:
+    type: noul
+    statement: This cash-on-delivery order is likely to be refused at the door.
+    feeds: rto_action
+    criteria:
+      "true": Unverified or previously-refused address, or a customer with a history of refused COD deliveries
+      "false": Verified address with a clean delivery history for this customer
+bands:
+  act: { confidence_gte: 0.9 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }

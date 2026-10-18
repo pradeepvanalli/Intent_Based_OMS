@@ -62,6 +62,13 @@ own tenant from the starter. Kubernetes: `deploy/helm/intent-oms`. Full guide: `
   action, an allow-list, a kill switch) it resolves the order on its own, fully audited and reversible; refunds and
   cancellations are never autonomous, by rule, no matter the configuration. Outside those guardrails it hands a person
   the diagnosis instead of a blank slate. See `docs/UC_AGENTIC_CONTROL_TOWER.md`.
+* **Self-optimizing orchestration.** Every decision's outcome — on time or late, split or kept whole, returned or
+  kept, a chargeback or a clean payment — is measured and joined back to the decision that caused it. Parameter
+  learners (node reliability, lane transit times, a sourcing-policy bandit, customer preference facts) tune
+  themselves in minutes from that stream, no LLM involved. An Analyst/Author/Critic pipeline proposes policy
+  changes nightly, but nothing goes live without clearing offline replay with a confidence interval, a shadow run,
+  and a canary — autonomy is opt-in per learner and starts at recommend-only for every new tenant. See
+  `docs/UC_SELF_OPTIMIZING_ORCHESTRATION.md`.
 * **Typed decisions with confidence bands.** A decision is a YAML object with a risk tier, enumerated options, an
   escape option and a default. Jev (TypeSafe's System One model) answers inside those options and reports a
   calibrated confidence; the band (act, confirm, escalate) decides whether it acts, asks an LLM to confirm, or opens a

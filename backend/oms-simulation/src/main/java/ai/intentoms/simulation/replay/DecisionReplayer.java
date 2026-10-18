@@ -8,9 +8,12 @@ import ai.intentoms.decision.model.DecisionResult;
 import ai.intentoms.decision.model.Mode;
 import ai.intentoms.decision.runtime.DecisionRuntime;
 import ai.intentoms.decision.runtime.DecisionService;
+import ai.intentoms.learning.learner.SourcingPolicyBandit;
 import ai.intentoms.platform.error.ValidationException;
 import ai.intentoms.platform.ledger.Actor;
 import org.springframework.stereotype.Component;
+
+import java.util.Set;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -26,6 +29,13 @@ import java.util.Optional;
  */
 @Component
 public class DecisionReplayer {
+    /** Decision names written directly to {@code decision_record} by a learner outside the normal decision fabric
+     * (SOO's propensity logging, requirements doc FS-01) — these have no {@code decision_definition} to replay
+     * against by design (they're a reinforcement-learning arm choice, not a risk-tiered judgment call with golden
+     * sets and lint), so order-level replay skips them rather than treating a missing definition as a data-integrity
+     * error. */
+    private static final Set<String> NOT_REPLAYABLE = Set.of(SourcingPolicyBandit.DECISION_NAME);
+
     private final DecisionService decisions;
     private final DecisionRuntime runtime;
     private final DecisionDefinitionRepository definitions;
@@ -38,7 +48,7 @@ public class DecisionReplayer {
 
     /** LIVE records of the order subject, oldest first; {@code newestPerDecision} keeps only the latest per decision name. */
     public List<DecisionRecord> recordsFor(String orderId, boolean newestPerDecision) {
-        List<DecisionRecord> live = new ArrayList<>(decisions.forSubject("order", orderId).stream().filter(r -> r.mode() == Mode.LIVE).toList());
+        List<DecisionRecord> live = new ArrayList<>(decisions.forSubject("order", orderId).stream().filter(r -> r.mode() == Mode.LIVE && !NOT_REPLAYABLE.contains(r.decision())).toList());
         live.sort((a, b) -> a.createdAt().compareTo(b.createdAt()));
         if (!newestPerDecision) return live;
         Map<String, DecisionRecord> newest = new LinkedHashMap<>();

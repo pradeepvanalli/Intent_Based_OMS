@@ -35,6 +35,7 @@
     <module>oms-orchestration</module>
     <module>oms-copilot</module>
     <module>oms-integrations</module>
+    <module>oms-learning</module>
     <module>oms-app</module>
   </modules>
 
@@ -72,6 +73,7 @@
       <dependency><groupId>ai.intentoms</groupId><artifactId>oms-orchestration</artifactId><version>${project.version}</version></dependency>
       <dependency><groupId>ai.intentoms</groupId><artifactId>oms-copilot</artifactId><version>${project.version}</version></dependency>
       <dependency><groupId>ai.intentoms</groupId><artifactId>oms-integrations</artifactId><version>${project.version}</version></dependency>
+      <dependency><groupId>ai.intentoms</groupId><artifactId>oms-learning</artifactId><version>${project.version}</version></dependency>
 
       <dependency><groupId>dev.cel</groupId><artifactId>cel</artifactId><version>${cel.version}</version></dependency>
       <dependency><groupId>com.github.ben-manes.caffeine</groupId><artifactId>caffeine</artifactId><version>${caffeine.version}</version></dependency>

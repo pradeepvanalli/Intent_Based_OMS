@@ -34,4 +34,6 @@ public final class Permissions {
     public static final String SIMULATION_RUN = "simulation.run";
     public static final String APPEASEMENT_ISSUE = "appeasement.issue";
     public static final String MARGIN_FLOOR_APPROVE = "margin.approve";
+    public static final String LEARNING_READ = "learning.read";
+    public static final String LEARNING_ADMIN = "learning.admin";
 }

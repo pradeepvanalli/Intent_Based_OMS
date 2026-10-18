@@ -3,6 +3,7 @@ package ai.intentoms.sourcing.plan;
 import ai.intentoms.decision.model.DecisionOptions;
 import ai.intentoms.decision.model.DecisionResult;
 import ai.intentoms.decision.runtime.DecisionService;
+import ai.intentoms.learning.learner.SourcingPolicyBandit;
 import ai.intentoms.order.model.FulfilmentGroup;
 import ai.intentoms.order.model.IntentProfile;
 import ai.intentoms.order.model.MarginSnapshot;
@@ -92,9 +93,11 @@ public class DefaultSourcingService implements SourcingService {
     private final TimeSource time;
     private final Metrics metrics;
     private final AuthorizationService authz;
+    private final SourcingPolicyBandit bandit;
 
     public DefaultSourcingService(OrderRepository orders, CandidateGenerator candidates, PlanBuilder planBuilder, SoftScorer softScorer, DecisionService decisions, NodeRegistry nodes,
-                                  RateCardRepository rates, SourcingSettings settings, SourcingPlanRepository planRepo, EventStore events, TimeSource time, Metrics metrics, AuthorizationService authz) {
+                                  RateCardRepository rates, SourcingSettings settings, SourcingPlanRepository planRepo, EventStore events, TimeSource time, Metrics metrics, AuthorizationService authz,
+                                  SourcingPolicyBandit bandit) {
         this.orders = orders;
         this.candidates = candidates;
         this.planBuilder = planBuilder;
@@ -108,6 +111,7 @@ public class DefaultSourcingService implements SourcingService {
         this.time = time;
         this.metrics = metrics;
         this.authz = authz;
+        this.bandit = bandit;
     }
 
     @Override
@@ -206,7 +210,7 @@ public class DefaultSourcingService implements SourcingService {
             reasons.add(run.candidates().isEmpty() ? "no node is active, capable and stocked for any line" : "no plan could be built from the candidates");
             return new SourcingResult(SourcingResult.Status.NO_FEASIBLE_NODE, null, List.of(), run.soft().decisionRecordId(), reasons);
         }
-        String policy = resolvePolicy(order, run, reasons);
+        String policy = resolvePolicy(order, run, reasons, actor);
         SourcingPlan chosen = bestFor(run.plans(), policy);
         if (chosen == null) {
             for (String p : FALLBACK_ORDER) { chosen = bestFor(run.plans(), p); if (chosen != null) { reasons.add("no " + policy + " plan is feasible; fell back to " + p); policy = p; break; } }
@@ -290,7 +294,7 @@ public class DefaultSourcingService implements SourcingService {
 
     // ---- policy ---------------------------------------------------------------------------------------------------
 
-    String resolvePolicy(Order order, Run run, List<String> reasons) {
+    String resolvePolicy(Order order, Run run, List<String> reasons, Actor actor) {
         if (run.req().isPickup()) { reasons.add("pickup order: pickup_consolidated"); return Policies.PICKUP_CONSOLIDATED; }
         IntentProfile intent = order.intent();
         String policy = null;
@@ -306,7 +310,30 @@ public class DefaultSourcingService implements SourcingService {
             reasons.add("intent says splits are not acceptable; preferring ship_complete");
             policy = Policies.SHIP_COMPLETE;
         }
-        return policy;
+        return applyBandit(order, run, policy, reasons, actor);
+    }
+
+    /** FS-01: logs a sampled arm/propensity against the policies that actually clear the margin floor here, and
+     * only overrides the policy above when the bandit learner's autonomy is L2 or higher (see {@link
+     * SourcingPolicyBandit}) — below that it's pure observation and this method is a no-op on the returned policy. */
+    private String applyBandit(Order order, Run run, String defaultPolicy, List<String> reasons, Actor actor) {
+        List<String> eligible = bestPerPolicy(run.plans()).stream().filter(SourcingPlan::meetsMarginFloor).map(SourcingPlan::policy).toList();
+        if (eligible.isEmpty()) return defaultPolicy;
+        Map<String, Object> context = new LinkedHashMap<>();
+        context.put("channel", order.channel());
+        context.put("intentPolicy", order.intent() == null ? null : order.intent().policy());
+        context.put("customerTier", order.customer() == null ? null : order.customer().tier());
+        context.put("lineCount", order.lines() == null ? 0 : order.lines().size());
+        try {
+            SourcingPolicyBandit.Choice choice = bandit.choose(order.id(), eligible, defaultPolicy, context, actor.ref());
+            if (choice.acted() && !choice.policy().equals(defaultPolicy) && eligible.contains(choice.policy())) {
+                reasons.add("sourcing_policy_bandit chose " + choice.policy() + " over " + defaultPolicy + " (propensity " + choice.propensity() + ", record " + choice.decisionRecordId() + ")");
+                return choice.policy();
+            }
+        } catch (RuntimeException e) {
+            log.warn("Sourcing policy bandit unavailable for order {}: {}", order.id(), e.getMessage());
+        }
+        return defaultPolicy;
     }
 
     /** T2 {@code split_acceptability}: a confident "no" (act band) on a multi-package plan falls back to ship_complete when available. */

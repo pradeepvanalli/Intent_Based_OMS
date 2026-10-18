@@ -16,6 +16,7 @@
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-inventory</artifactId></dependency>
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-finance</artifactId></dependency>
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-order</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-learning</artifactId></dependency>
     <dependency><groupId>com.github.ben-manes.caffeine</groupId><artifactId>caffeine</artifactId></dependency>
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-testing</artifactId><scope>test</scope></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>

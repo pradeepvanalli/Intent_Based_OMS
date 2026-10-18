@@ -24,7 +24,7 @@ class DemoCatalogueIntegrationTest extends DecisionTestBase {
     void catalogueIsLiveAndLintsWithoutErrors() throws Exception {
         List<String> files;
         try (var s = Files.list(TestYaml.DEMO_DECISIONS)) { files = s.map(p -> p.getFileName().toString()).filter(n -> n.endsWith(".yaml")).sorted().toList(); }
-        assertThat(files).hasSize(15); // +1: stuck_order_diagnosis.yaml (Agentic Control Tower)
+        assertThat(files).hasSize(17); // +1: stuck_order_diagnosis.yaml (Agentic Control Tower); +2: payment_risk.yaml, rto_risk.yaml (SOO fraud learners, FD-01/FD-02)
         for (String f : files) {
             String name = f.substring(0, f.length() - 5);
             assertThat(definitions.byStatus(name, "live")).as(name + " live").isNotEmpty();

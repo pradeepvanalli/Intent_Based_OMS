@@ -42,7 +42,7 @@ class RetailTenantSeedIntegrationTest extends OrchestrationTestBase {
         assertThat(jdbc.sql("select name from tenant where tenant_id = 'retail'").query(String.class).single()).isEqualTo("Maple & Main General Store");
 
         Map<String, Object> config = (Map<String, Object>) summary.get("config");
-        assertThat((Integer) config.get("decisions")).as("14 starter decisions + store_reject_reroute + curbside_eta_promise").isEqualTo(16);
+        assertThat((Integer) config.get("decisions")).as("14 starter decisions + store_reject_reroute + curbside_eta_promise + payment_risk + rto_risk (SOO FD-01/FD-02)").isEqualTo(18);
         assertThat((Integer) config.get("nodes")).isEqualTo(9);
         assertThat((Integer) config.get("catalogItems")).isEqualTo(41);
         assertThat((Integer) config.get("orderTypes")).isEqualTo(7);

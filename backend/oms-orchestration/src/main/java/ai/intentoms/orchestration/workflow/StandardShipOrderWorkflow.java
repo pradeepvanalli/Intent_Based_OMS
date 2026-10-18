@@ -320,6 +320,23 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         evt.put("shipments", delivered);
         evt.put("tracking", String.valueOf(payload.getOrDefault("tracking", "")));
         evt.put("allDelivered", all);
+        // On-time/late/damaged, computed here against each group's own promise date rather than left for a consumer
+        // to guess (SOO's OutcomeObserver, and the reward's otd term, read these fields directly and otherwise have
+        // no basis to compute them). A group with no promiseDate (not every policy sets one) doesn't penalize.
+        java.time.LocalDate today = java.time.LocalDate.now();
+        boolean onTime = true;
+        long lateByHours = 0;
+        for (FulfilmentGroup g : fresh.fulfilmentGroups()) {
+            if (g.promiseDate() == null || !"delivered".equalsIgnoreCase(g.status())) continue;
+            if (today.isAfter(g.promiseDate())) {
+                onTime = false;
+                lateByHours = Math.max(lateByHours, java.time.temporal.ChronoUnit.HOURS.between(g.promiseDate().atStartOfDay(), today.atStartOfDay()));
+            }
+        }
+        evt.put("onTime", onTime);
+        evt.put("lateByHours", lateByHours);
+        evt.put("damaged", Boolean.TRUE.equals(payload.get("damaged")));
+        evt.put("lost", Boolean.TRUE.equals(payload.get("lost")));
         s.appendOrderEvent(order.id(), "order.delivered", evt);
         if (all) notifier.notify(order.id(), "email", "delivered", "Your order was delivered", "All items of order " + order.id() + " were delivered", Map.of());
         Map<String, Object> out = new LinkedHashMap<>(evt);

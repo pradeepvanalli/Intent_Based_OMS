@@ -20,6 +20,7 @@
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-sourcing</artifactId></dependency>
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-monitoring</artifactId></dependency>
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-returns</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-learning</artifactId></dependency>
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-testing</artifactId><scope>test</scope></dependency>
   </dependencies>
 </project>

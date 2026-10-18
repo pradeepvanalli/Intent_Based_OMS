@@ -12,6 +12,7 @@
   <description>Inventory: available-to-promise, positions, row-locked reservations, feeds and reconciliation (FR-INV-*)</description>
   <dependencies>
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-platform</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-learning</artifactId></dependency>
     <dependency><groupId>com.github.ben-manes.caffeine</groupId><artifactId>caffeine</artifactId></dependency>
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-testing</artifactId><scope>test</scope></dependency>
   </dependencies>

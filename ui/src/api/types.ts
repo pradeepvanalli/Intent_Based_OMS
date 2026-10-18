@@ -69,7 +69,7 @@ export interface DecisionSummary { name: string; liveVersion?: number | null; la
 export interface Answer { type: QuestionType; value: unknown; probabilities?: Record<string, number>; confidence: number; legend?: Record<string, string>; }
 export type DecisionMode = 'LIVE' | 'SHADOW' | 'SIMULATION' | 'REPLAY';
 export interface DecisionResult { recordId: string; decision: string; version: number; layer: Layer; band: Band; value: unknown; answers: Record<string, Answer>; confidence: number; action: 'act' | 'confirm' | 'escalate' | 'blocked' | 'default' | string; requiresHuman: boolean; escalationId?: string | null; rulesFired: string[]; reasonCodes?: string[]; latencyMs: number; costUsd: number; provider: string; modelVersion?: string; details?: Record<string, unknown>; }
-export interface DecisionRecord { id: string; decision: string; version: number; subjectType: string; subjectId: string; mode: DecisionMode; layer: Layer; band: Band; value: unknown; confidence: number; action: string; provider: string; modelVersion?: string; latencyMs: number; costUsd: number; evaluatedAt: string; actor?: string; overridden?: boolean; overrideValue?: unknown; overrideReason?: string; label?: string | null; reasonCodes?: string[]; correlationId?: string; }
+export interface DecisionRecord { id: string; decision: string; version: number; subjectType: string; subjectId: string; mode: DecisionMode; layer: Layer; band: Band; value: unknown; confidence: number; action: string; provider: string; modelVersion?: string; latencyMs: number; costUsd: number; evaluatedAt: string; actor?: string; overridden?: boolean; overrideValue?: unknown; overrideReason?: string; label?: string | null; reasonCodes?: string[]; correlationId?: string; policyVersion?: number | null; propensity?: number | null; chosenArm?: string | null; arms?: string[]; }
 export interface TraceQuestion { key: string; type: QuestionType; instructions?: string; criteria?: Record<string, string>; levels?: string[]; statement?: string; answer: Answer; escape?: boolean; }
 export interface TraceCheck { expression: string; passed: boolean; phase: 'pre' | 'post'; message?: string; }
 export interface TraceRule { id: string; when: string; then: string; reason?: string; matched: boolean; }
@@ -230,3 +230,59 @@ export interface AutonomyStats {
   humanEscalations: number; automationRate: number;
 }
 export interface AutonomyScanResult { anomaliesFound: number; anomalies: Anomaly[]; }
+
+/* ---- Self-Optimizing Order Orchestration (SOO) ---- */
+export type AutonomyLevel = 'L0_OBSERVE' | 'L1_RECOMMEND' | 'L2_ACT_WITH_APPROVAL' | 'L3_AUTONOMOUS';
+export type SubjectType = 'CUSTOMER' | 'SEGMENT' | 'NODE' | 'LANE' | 'SKU' | 'AGENT' | 'DECISION';
+export type ProposalStatus = 'DRAFT' | 'EVALUATED' | 'APPROVED' | 'CANARY' | 'PROMOTED' | 'REJECTED' | 'ROLLED_BACK';
+export type ExperimentMode = 'SHADOW' | 'CANARY' | 'HOLDOUT';
+export type ExperimentStatus = 'RUNNING' | 'STOPPED' | 'COMPLETED';
+export type RiskTier = 'T0' | 'T1' | 'T2' | 'T3';
+
+export interface LearnerState {
+  learnerKey: string; autonomyLevel: AutonomyLevel; enabled: boolean; maxPromotionsPerWeek: number;
+  maxStep?: number | null; lastRunAt?: string | null; updatedBy?: string | null; updatedAt: string;
+}
+export type TypedValue =
+  | { type: 'NumberValue'; value: number } | { type: 'BoolValue'; value: boolean }
+  | { type: 'TextValue'; value: string } | { type: 'ListValue'; values: string[] };
+export interface LearnedFact {
+  factId: string; subjectType: SubjectType; subjectId: string; factKey: string; value: TypedValue;
+  confidence: number; sampleSize: number; learner: string; version: number; validFrom: string; validTo?: string | null; createdAt: string;
+}
+export interface Hypothesis {
+  hypothesisId: string; scope: Record<string, unknown>; targetMetric: string; expectedDirection: 'INCREASE' | 'DECREASE';
+  lever: Record<string, unknown>; priorConfidence: number; evidence: string[]; rationale?: string | null;
+  status: 'OPEN' | 'DRAFTED' | 'REJECTED' | 'SUPERSEDED'; createdAt: string;
+}
+export interface ArtifactRef { type: string; name: string; }
+export type PolicyChange =
+  | { type: 'ThresholdChange'; decision: string; band: string; from: number; to: number }
+  | { type: 'WeightChange'; target: string; weightKey: string; from: number; to: number }
+  | { type: 'RuleAdd'; decision: string; expression: string; thenValue: string; reason?: string }
+  | { type: 'RuleRetire'; decision: string; ruleId: string; reason?: string }
+  | { type: 'ParameterChange'; parameter: string; from: unknown; to: unknown }
+  | { type: 'AllowListChange'; listName: string; entry: string; add: boolean };
+export interface PolicyChangeset { target: ArtifactRef; baseVersion: number; changes: PolicyChange[]; motivatedBy?: string | null; tier: RiskTier; }
+export interface Review { verdict: 'LOOKS_SAFE' | 'NEEDS_CHANGES' | 'RISKY'; risks: string[]; }
+export interface EvaluationReport {
+  method?: string; sampleSize?: number; baselineReward?: number; proposedRewardEstimate?: number; liftEstimate?: number;
+  confidenceInterval?: { lower: number; upper: number }; clippedRecords?: number; [k: string]: unknown;
+}
+export interface Proposal {
+  proposalId: string; changeset: PolicyChangeset; hypothesisId?: string | null; tier: RiskTier; status: ProposalStatus;
+  criticReview?: Review | null; evaluationReport?: EvaluationReport | null; createdBy: string; createdAt: string; updatedAt: string;
+  evaluatedAt?: string | null; approvedBy?: string | null; approvedAt?: string | null; promotedAt?: string | null;
+  rejectedReason?: string | null; rejectedAt?: string | null; rolledBackReason?: string | null; rolledBackAt?: string | null;
+}
+export interface Experiment {
+  experimentId: string; proposalId: string; mode: ExperimentMode; trafficShare: number; status: ExperimentStatus;
+  startAt: string; endAt?: string | null; stopRule: Record<string, unknown>; result?: Record<string, unknown> | null; createdAt: string;
+}
+export interface ObjectiveWeights { fill: number; otd: number; cost: number; split: number; fraud: number; cx: number; inv: number; }
+export interface ObjectiveProfile {
+  version: number; status: 'DRAFT' | 'APPROVED' | 'RETIRED'; weights: ObjectiveWeights; constraints: Record<string, unknown>;
+  approvedBy?: string | null; approvedAt?: string | null; createdBy: string; createdAt: string;
+}
+export interface GroupParity { group: string; customers: number; actBandRate: number; overrideRate: number; }
+export interface ParityReport { decision: string; groups: GroupParity[]; tenantActBandRate: number; tenantOverrideRate: number; flags: string[]; }

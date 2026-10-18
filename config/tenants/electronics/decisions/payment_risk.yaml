@@ -1,0 +1,36 @@
+# Pre-capture payment-fraud risk (SOO requirements doc FD-01). Noul, tier T2 like its sibling risk decisions
+# (address_risk, return_risk): act only >= 0.9, since a false "high risk" blocks a real, good order.
+# GR-16: state carries fraud signals only, no protected attributes. velocity/addressLinkage/deviceLinkage and the
+# act-band threshold are tuned by the FraudThresholdTuner learner (FD-03) as reviewable ThresholdChange proposals —
+# never applied live without the usual lint/golden-set/approval gate.
+decision: payment_risk
+version: 1
+owner: returns-and-risk
+tier: T2
+provider: jev
+fallbackProvider: heuristic
+timeoutMs: 800
+default: false
+state:
+  include:
+    - payment.velocity_1h
+    - payment.velocity_24h
+    - payment.address_linkage_count
+    - payment.device_linkage_count
+    - payment.billing_shipping_mismatch
+    - agent.mandate_present
+    - agent.reputation_score
+    - order.total
+    - order.channel
+questions:
+  high_risk_payment:
+    type: noul
+    statement: This payment is likely fraudulent and should be held before capture.
+    feeds: payment_hold
+    criteria:
+      "true": High velocity across cards/addresses/devices, billing/shipping mismatch, or a low agent-reputation mandate order
+      "false": Normal velocity, consistent billing and shipping, no linkage signals
+bands:
+  act: { confidence_gte: 0.9 }
+  confirm: { confidence_gte: 0.5 }
+  escalate: { otherwise: true }

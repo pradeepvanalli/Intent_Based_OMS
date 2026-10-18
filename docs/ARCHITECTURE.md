@@ -25,11 +25,16 @@ oms-agent         agent registry, mandates, limits, MCP server, UCP order capabi
 oms-simulation    replay from ledger, batch simulation, what-if                                                                   (FR-SIM-*)
 oms-analytics     KPI + decision analytics                                                                                        (FR-ANL-*)
 oms-orchestration order workflows wiring every module together, bulk action handlers, escalation handler, demo seed, WMS/carrier mocks
+oms-learning      Self-Optimizing Order Orchestration: episodes, outcomes, learned facts/parameters, typed hypotheses/
+                  changesets, experiments, promotion gate — the closed loop from outcome back to policy
 oms-app           Spring Boot main, application.yml, Dockerfile, static UI
 ```
 
 Dependency direction (a module may only depend on modules above it in this list, as declared in its pom).
 `platform ← statemachine | workflow | decision | inventory ← finance(decision) ← order ← sourcing ← monitoring/returns ← agent/simulation/analytics ← orchestration ← app`.
+`oms-learning` depends only on `platform`/`decision`/`workflow`; `sourcing`, `inventory`, `copilot`, `simulation`,
+`orchestration` and `agent` each depend on it in turn, to read learned facts/parameters and drive proposals —
+`oms-learning` itself never depends back on any of them.
 
 ## 2. Conventions every module follows
 
@@ -333,6 +338,23 @@ REST: `POST /api/v1/simulations/replay/{orderId}`, `POST /api/v1/simulations/bat
 
 ### 3.13 oms-orchestration
 `StandardShipOrderWorkflow` (type `order.standard_ship`, v1): steps `validate` → `infer_intent` (decision fulfilment_intent) → `payment_authorize` → `source` (SourcingService.source; if requiresApproval → create human task queue `margin_floor_approvals` → WaitTask) → `reserve` (convert cart reservations / reserve) → `release` (line transitions `decision.sourcing_plan` → released; send release to WMS mock; compensation: release reservation, void auth) → `await_fulfilment` (WaitSignal shipped|store_rejected|short_pick|cancel_requested, timeout = SLA) → on `store_rejected`: transition `event.store_rejected`, `resource` → back to `source`; on `shipped`: transition, capture payment → `await_delivery` → `delivered` → Complete. BOPIS workflow `order.bopis` (source=pickup node → `ready_for_pickup` → signal `picked_up`). Return workflow `return.standard`. `HumanTaskEscalationHandler` implements decision `EscalationHandler`. `BulkActionHandler`s: resource, repromise, hold, release, cancel. `PlaybookAction`s. `DemoSeeder` (@Order(100), when `oms.demo.seed=true`): loads `config/tenants/demo/**` (state models, decisions, nodes, order types, taxonomy, playbooks, SLA, golden sets), inventory for ~40 SKUs across 6 nodes, 3 agents, 25 sample orders in various states, a few returns and exceptions. Mock integrations: `POST /webhooks/wms/{nodeId}` (shipped/short_pick/store_rejected), `POST /webhooks/carrier` (scan/delivered), `POST /webhooks/shopify` (order create → capture).
+
+### 3.14 oms-learning (`ai.intentoms.learning`)
+See `docs/UC_SELF_OPTIMIZING_ORCHESTRATION.md` for the full mechanism. Nine tables: `episode`, `outcome`,
+`learned_fact`, `segment`, `hypothesis`, `proposal`, `experiment`, `objective_profile`, `learner`, plus propensity-
+logging columns (`context_features`, `arms`, `chosen_arm`, `propensity`, `policy_version`) added to `oms-decision`'s
+existing `decision_record` table. `EpisodeAssembler`/`OutcomeObserver` are `EventSubscriber`s on the existing
+ledger (`decision.evaluated`, `order.delivered`, `order.shipped`, `refund.*`, `return.dispositioned`, `cs.wismo`,
+`task.completed`) — no order-path module needs to know this module exists. `RewardMaturityService` moves episodes
+OPEN → PROVISIONAL → MATURE and computes reward from the live `ObjectiveProfile`; `CoverageMonitor` auto-pauses
+learners when outcome coverage drops below threshold. Parameter learners live in `.../learning/learner/`; the
+Analyst/Author/Critic LLM roles extend `oms-copilot`; the off-policy evaluator extends `oms-simulation`; the
+promotion gate and experiment manager live here and drive real changes through `oms-decision`'s existing
+`DecisionStudioService` publish/rollback path — nothing in this module calls `publish()` directly except the
+promotion gate running as the system principal, and only after replay + shadow/canary evidence and the tier-based
+autonomy check in `PromotionGuard` pass.
+REST: `/api/v1/learning/{learners,facts,proposals,objective,kill-switch,experiments}`. MCP: `learning_status`,
+`explain_policy_change` (both read-only).
 
 ## 4. UI (ui/, React + Vite + TypeScript)
 Pages: Login · Control Tower (pipeline heatmap, at-risk, exceptions inbox) · Orders (search, order view with line quantity statuses, holds, timeline, decisions with **Why** drawer) · Tasks (queues, claim/complete) · Returns · Policy Studio (decision list, version diff, YAML editor with structured fields, lint, impact diff, golden-set evaluation, approvals, rollout controls, kill switch) · State Models (list, YAML, validation report, versions) · Agents (registry, limits, mandates, evidence pack) · Analytics (KPI tiles, decision calibration curve) · Simulation (replay diff, batch run) · Settings (tenant config). Auth via `/api/v1/auth/login` JWT. Built assets copied to `backend/oms-app/src/main/resources/static` by `scripts/build-ui.sh`; Vite dev proxy to :8080.

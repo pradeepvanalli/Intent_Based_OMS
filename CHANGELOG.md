@@ -4,6 +4,24 @@ All notable changes to Intent OMS are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses semantic versioning.
 
 ## [Unreleased]
+- **Self-Optimizing Order Orchestration** (`oms-learning`, new module): closes the loop from outcome back to policy.
+  Every decision now logs propensity (`decision_record.context_features/arms/chosen_arm/propensity/policy_version`)
+  so past decisions can be fairly replayed against a new policy. Episodes are assembled from the existing event
+  ledger and joined to a typed outcome catalog (delivery, fulfilment, return, payment, contact, inventory); rewards
+  are computed from a tenant's versioned `ObjectiveProfile` and corrected as late outcomes land. Fast-loop parameter
+  learners (node reliability, lane transit times, a contextual bandit over the five sourcing policies, customer
+  preference facts, fraud-threshold tuning, decision-fabric band/calibration tuning) update typed facts in minutes,
+  no LLM involved. A slow-loop Analyst/Author/Critic pipeline (extends `oms-copilot`) raises typed hypotheses and
+  drafts policy changesets nightly, re-validated against the live artifact before ever being stored. Nothing is
+  live until it clears, in order: an off-policy replay evaluator (inverse-propensity and doubly-robust estimation
+  with a 95% confidence interval, extends `oms-simulation`), a shadow run, and a canary with a persistent holdout —
+  then a tiered promotion gate (T0 auto-promotes on positive evidence, T1 only at learner autonomy L3, T2 always
+  needs approval, T3 never autonomous) drives the real change through the existing decision publish/rollback path.
+  Governance: per-learner autonomy levels (default L1, recommend-only), weekly change budgets and max-step caps,
+  freeze windows, automatic rollback on guardrail breach, coverage and drift monitors that auto-pause learning on
+  silent data loss or a distribution shift, and crypto-shred propagation for deleted subjects. New Learning Console
+  (`/learning`) and two read-only MCP tools, `learning_status` and `explain_policy_change`. See
+  `docs/UC_SELF_OPTIMIZING_ORCHESTRATION.md`.
 - One-command trial and distribution: `scripts/try.sh` / `scripts/try.ps1` (Docker-only build-or-pull, health wait,
   login table, browser; `--reset`, `--down`, `--pull`), `scripts/doctor.sh` environment check, `make try|reset|down|
   doctor|helm-lint`, `docker-compose.quickstart.yml` for the published image, `.devcontainer/` for GitHub Codespaces

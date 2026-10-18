@@ -33,7 +33,8 @@ public class DecisionRecordRepository {
 
     static final String COLS = "id, decision, version, mode, subject_type, subject_id, correlation_id, layer, band, action, value::text as value, answers::text as answers, confidence, provider, " +
         "model_version, input_hash, state::text as state, input::text as input, rules_fired::text as rules_fired, reason_codes::text as reason_codes, latency_ms, cost_usd, input_tokens, requires_human, " +
-        "escalation_id, actor, details::text as details, overridden_value::text as overridden_value, override_reason, overridden_by, overridden_at, labels::text as labels, created_at";
+        "escalation_id, actor, details::text as details, overridden_value::text as overridden_value, override_reason, overridden_by, overridden_at, labels::text as labels, created_at, " +
+        "context_features::text as context_features, arms::text as arms, chosen_arm, propensity, policy_version";
 
     static final RowMapper<DecisionRecord> MAPPER = (rs, i) -> new DecisionRecord(
         rs.getString("id"), rs.getString("decision"), rs.getInt("version"), Mode.valueOf(rs.getString("mode")), rs.getString("subject_type"), rs.getString("subject_id"), rs.getString("correlation_id"),
@@ -41,7 +42,9 @@ public class DecisionRecordRepository {
         rs.getDouble("confidence"), rs.getString("provider"), rs.getString("model_version"), rs.getString("input_hash"), Json.readMap(rs.getString("state")), Json.readMap(rs.getString("input")),
         Json.read(rs.getString("rules_fired"), STRINGS), Json.read(rs.getString("reason_codes"), STRINGS), rs.getLong("latency_ms"), rs.getDouble("cost_usd"), rs.getInt("input_tokens"),
         rs.getBoolean("requires_human"), rs.getString("escalation_id"), rs.getString("actor"), Json.readMap(rs.getString("details")), readValue(rs.getString("overridden_value")),
-        rs.getString("override_reason"), rs.getString("overridden_by"), ts(rs.getTimestamp("overridden_at")), Json.readMap(rs.getString("labels")), rs.getTimestamp("created_at").toInstant());
+        rs.getString("override_reason"), rs.getString("overridden_by"), ts(rs.getTimestamp("overridden_at")), Json.readMap(rs.getString("labels")), rs.getTimestamp("created_at").toInstant(),
+        rs.getString("context_features") == null ? Map.of() : Json.readMap(rs.getString("context_features")), rs.getString("arms") == null ? List.of() : Json.read(rs.getString("arms"), STRINGS),
+        rs.getString("chosen_arm"), rs.getDouble("propensity"), rs.getObject("policy_version") == null ? null : rs.getInt("policy_version"));
 
     private static Object readValue(String json) { return json == null ? null : Json.read(json, Object.class); }
     private static Instant ts(Timestamp t) { return t == null ? null : t.toInstant(); }
@@ -49,8 +52,10 @@ public class DecisionRecordRepository {
     public void insert(DecisionRecord r) {
         jdbc.sql("""
             insert into decision_record(id, tenant_id, decision, version, mode, subject_type, subject_id, correlation_id, layer, band, action, value, answers, confidence, provider, model_version,
-              input_hash, state, input, rules_fired, reason_codes, latency_ms, cost_usd, input_tokens, requires_human, escalation_id, actor, details, labels, created_at)
-            values (:id, :t, :d, :v, :mode, :st, :sid, :corr, :layer, :band, :action, :value, :answers, :conf, :prov, :model, :hash, :state, :input, :rules, :reasons, :lat, :cost, :tok, :human, :esc, :actor, :details, :labels, :created)
+              input_hash, state, input, rules_fired, reason_codes, latency_ms, cost_usd, input_tokens, requires_human, escalation_id, actor, details, labels, created_at,
+              context_features, arms, chosen_arm, propensity, policy_version)
+            values (:id, :t, :d, :v, :mode, :st, :sid, :corr, :layer, :band, :action, :value, :answers, :conf, :prov, :model, :hash, :state, :input, :rules, :reasons, :lat, :cost, :tok, :human, :esc, :actor, :details, :labels, :created,
+              :ctx, :arms, :chosen, :propensity, :pv)
             """)
             .param("id", r.id()).param("t", TenantContext.require()).param("d", r.decision()).param("v", r.version()).param("mode", r.mode().name()).param("st", r.subjectType())
             .param("sid", r.subjectId()).param("corr", r.correlationId()).param("layer", r.layer().name()).param("band", r.band().name()).param("action", r.action())
@@ -58,6 +63,8 @@ public class DecisionRecordRepository {
             .param("hash", r.inputHash()).param("state", Jsonb.of(r.state())).param("input", Jsonb.of(r.input())).param("rules", Jsonb.of(r.rulesFired())).param("reasons", Jsonb.of(r.reasonCodes()))
             .param("lat", r.latencyMs()).param("cost", r.costUsd()).param("tok", r.inputTokens()).param("human", r.requiresHuman()).param("esc", r.escalationId()).param("actor", r.actor())
             .param("details", Jsonb.of(r.details())).param("labels", Jsonb.of(r.labels() == null ? Map.of() : r.labels())).param("created", Timestamp.from(r.createdAt()))
+            .param("ctx", Jsonb.of(r.contextFeatures() == null ? Map.of() : r.contextFeatures())).param("arms", Jsonb.of(r.arms() == null ? List.of() : r.arms()))
+            .param("chosen", r.chosenArm()).param("propensity", r.propensity()).param("pv", r.policyVersion())
             .update();
     }
 

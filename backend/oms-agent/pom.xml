@@ -19,6 +19,7 @@
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-returns</artifactId></dependency>
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-inventory</artifactId></dependency>
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-sourcing</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-learning</artifactId></dependency>
     <dependency><groupId>com.networknt</groupId><artifactId>json-schema-validator</artifactId></dependency>
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-testing</artifactId><scope>test</scope></dependency>
   </dependencies>

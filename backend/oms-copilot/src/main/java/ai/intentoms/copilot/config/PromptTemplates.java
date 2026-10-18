@@ -24,7 +24,8 @@ public class PromptTemplates {
     public static final List<String> REQUIRED = List.of(
         "system-config.md", "system-repair.md", "system-explain-change.md", "system-bootstrap.md", "system-ops.md", "system-ops-answer.md",
         "system-explain.md", "system-cs.md", "system-digest.md", "cel.md", "format-decision.md", "format-state-model.md", "format-order-type.md",
-        "format-sla.md", "format-playbook.md", "format-compliance.md", "format-tenant-config.md", "starter-blueprint.yaml");
+        "format-sla.md", "format-playbook.md", "format-compliance.md", "format-tenant-config.md", "starter-blueprint.yaml",
+        "system-analyst.md", "system-author.md", "system-critic.md");
 
     private final Map<String, String> templates = new LinkedHashMap<>();
     private final String source;

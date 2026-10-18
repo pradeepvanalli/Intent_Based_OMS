@@ -27,6 +27,7 @@
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-orchestration</artifactId></dependency>
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-copilot</artifactId></dependency>
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-integrations</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-learning</artifactId></dependency>
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-testing</artifactId><scope>test</scope></dependency>
   </dependencies>
   <build>

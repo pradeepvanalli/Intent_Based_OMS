@@ -562,9 +562,16 @@ public class DecisionRuntime implements DecisionService {
         details.put("preChecks", ev.preChecks);
         details.put("postChecks", ev.postChecks);
         details.put("mode", ev.opts.mode().name());
+        // SOO propensity logging (OC-01): this generic path makes one deterministic choice per call, so arms is the
+        // singleton actually chosen and propensity is 1.0. A learner that samples among several named arms (the
+        // FS-01 sourcing-policy bandit, for example) logs its own arms/chosenArm/propensity directly through
+        // DecisionRecordRepository instead of through this generic path, since bandit exploration is a different
+        // mechanism from the act/confirm/escalate confidence bands this runtime evaluates.
+        String chosenArm = ev.value == null ? null : String.valueOf(ev.value);
         DecisionRecord record = new DecisionRecord(ev.recordId, ev.def.name(), ev.def.version(), ev.opts.mode(), ev.opts.subjectType(), ev.opts.subjectId(), ev.opts.correlationId(),
             ev.layer, ev.band, ev.action, ev.value, ev.answers, ev.confidence, ev.provider, ev.modelVersion, ev.inputHash, ev.state, ev.input, ev.rulesFired, ev.reasonCodes, latency,
-            ev.costUsd, ev.inputTokens, ev.requiresHuman, ev.escalationId, ev.opts.actor().ref(), details, null, null, null, null, Map.of(), ev.startedAt);
+            ev.costUsd, ev.inputTokens, ev.requiresHuman, ev.escalationId, ev.opts.actor().ref(), details, null, null, null, null, Map.of(), ev.startedAt,
+            ev.state, chosenArm == null ? List.of() : List.of(chosenArm), chosenArm, 1.0, ev.def.version());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("decision", ev.def.name());
         payload.put("version", ev.def.version());

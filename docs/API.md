@@ -524,6 +524,35 @@ Accepted layouts: Shopify "Orders export" (`Name, Email, Created at, Lineitem qu
 
 The numbers above are illustrative; the figures for the bundled sample come from `MarginReplayIntegrationTest`. The UI page is `/replay`.
 
+## Self-Optimizing Order Orchestration (oms-learning)
+
+Closes the loop from outcome back to policy — see `docs/UC_SELF_OPTIMIZING_ORCHESTRATION.md` for the full
+mechanism. Read endpoints need `learning.read`; everything that changes a learner, a proposal's status, an
+experiment or the objective profile needs `learning.admin`.
+
+| Endpoint | Body / params | Notes |
+|---|---|---|
+| `GET /learning/learners` | | Every registered learner with its autonomy level, enabled flag and last run |
+| `PUT /learning/learners/{id}/autonomy` | `{autonomyLevel}` (`L0_OBSERVE`\|`L1_RECOMMEND`\|`L2_ACT_WITH_APPROVAL`\|`L3_AUTONOMOUS`) | Default is `L1_RECOMMEND` for every new learner in a fresh tenant |
+| `POST /learning/kill-switch` | `{learnerKey, enabled}` | Per-learner emergency stop |
+| `GET /learning/facts?subjectType=&subjectId=` | | Active learned facts for a subject (`CUSTOMER`\|`SEGMENT`\|`NODE`\|`LANE`\|`SKU`\|`AGENT`\|`DECISION`) |
+| `GET /learning/facts/{subjectType}/{subjectId}/{key}` | | One active fact by key |
+| `GET /learning/proposals?status=` | default `DRAFT` | The proposal queue, any status (`DRAFT`\|`EVALUATED`\|`APPROVED`\|`CANARY`\|`PROMOTED`\|`REJECTED`\|`ROLLED_BACK`) |
+| `GET /learning/proposals/{id}` | | One proposal: its changeset, hypothesis, critic review, evaluation report |
+| `POST /learning/proposals/{id}/evaluate` | | Runs the off-policy replay evaluator now (inverse-propensity + doubly-robust estimate, 95% confidence interval) |
+| `POST /learning/proposals/{id}/approve` | | 422 if the caller is the proposal's own author (separation of duties) |
+| `POST /learning/proposals/{id}/reject` | `{reason?}` | |
+| `POST /learning/proposals/{id}/promote` | | Runs the tiered promotion gate (`PromotionGuard`) and, if it passes, drives the real change through the decision studio's publish path or a parameter/fact update |
+| `GET /learning/experiments` · `POST /learning/experiments` | `{proposalId, mode, trafficShare}` | Shadow/canary experiments; enforces one active experiment per artifact |
+| `POST /learning/experiments/{id}/stop` | | |
+| `POST /learning/experiments/holdout` | | Starts or confirms the tenant's persistent holdout slice |
+| `GET /learning/objective` · `PUT /learning/objective` | `{weights, constraints?}` | The live `ObjectiveProfile` (section-7 reward weights); presets `margin_first`/`speed_first`/`balanced` |
+| `GET /learning/fairness/{decision}` | | Segment-level outcome parity report (GV-07) |
+| `POST /learning/gdpr/purge-customer/{customerId}` | | Crypto-shred propagation: invalidates that customer's learned facts |
+| `POST /learning/llm/analyst/run` | | Manual trigger for the nightly hypothesis-generation job |
+| `POST /learning/llm/author/{hypothesisId}` | | Drafts a `PolicyChangeset` from an open hypothesis |
+| `POST /learning/llm/critic/{proposalId}` | | Runs the critic review against a proposal's evaluation report |
+
 ## Agentic Control Tower (oms-orchestration)
 
 Diagnoses *why* a stuck order has stalled (`stuck_order_diagnosis`, see `docs/MODULE_NOTES.md`) and, within guardrails,

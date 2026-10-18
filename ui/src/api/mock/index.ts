@@ -9,6 +9,7 @@ import { registerReplayRoutes } from './replay';
 import { registerPlaygroundRoutes } from './playground';
 import { registerLaunchRoutes } from './launch';
 import { registerAutonomyRoutes } from './autonomy';
+import { registerLearningRoutes } from './learning';
 import {
   AGE_BUCKETS, PIPELINE_STATES, addDecisionRecord, ageBucket, agents, atRiskList, auditLog, config, daysAgo, decisionRecords, decisionSummaries, decisions, exceptions, hoursAgo, int, liveVersion, mandates, nextId, nodes, orders, parseDecisionYaml, parseStateModelYaml, queues, returns, rnd, round, stateModels, tasks, traces, usd, webhooks, NOW,
 } from './data';
@@ -32,7 +33,7 @@ function page<T>(items: T[], q: URLSearchParams): Page<T> {
 const actor = () => { const s = getSession(); return s.principal ? `user:${s.principal.id}` : 'user:anonymous'; };
 const DEMO_USERS: Record<string, string[]> = { admin: ['admin'], ops: ['ops_analyst'], cs: ['cs_rep'], risk: ['risk_analyst'], finance: ['finance_controller'], strategy: ['strategy_lead'] };
 const ROLE_PERMS: Record<string, string[]> = {
-  admin: ['*'], strategy_lead: ['order.read', 'decision.*', 'statemodel.*', 'analytics.read', 'simulation.run', 'task.read', 'exception.read', 'config.admin', 'margin.approve'],
+  admin: ['*'], strategy_lead: ['order.read', 'decision.*', 'statemodel.*', 'analytics.read', 'simulation.run', 'task.read', 'exception.read', 'config.admin', 'margin.approve', 'learning.*'],
   ops_analyst: ['order.read', 'order.modify', 'order.hold', 'order.release', 'order.bulk', 'task.*', 'exception.*', 'inventory.read', 'decision.read', 'decision.override', 'analytics.read'],
   cs_rep: ['order.read', 'order.modify', 'order.cancel', 'return.create', 'refund.issue', 'appeasement.issue', 'task.read', 'task.work', 'decision.read'],
   risk_analyst: ['order.read', 'return.decide', 'decision.read', 'decision.approve', 'decision.override', 'task.*', 'exception.read', 'agent.admin'],
@@ -452,6 +453,9 @@ registerPlaygroundRoutes({ on, problem, notFound, actor });
 
 /* ---- Agentic Control Tower (oms-orchestration autonomy) ---- */
 registerAutonomyRoutes({ on, problem });
+
+/* ---- Self-Optimizing Order Orchestration (oms-learning) ---- */
+registerLearningRoutes({ on, problem });
 
 /* ---- Dispatcher ---- */
 export async function mockRequest<T>(method: string, url: string, body?: unknown): Promise<T> {

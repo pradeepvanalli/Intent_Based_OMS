@@ -26,6 +26,7 @@ const Bootstrap = lazy(() => import('./pages/copilot/Bootstrap'));
 const Showcase = lazy(() => import('./pages/showcase/Showcase'));
 const Playground = lazy(() => import('./pages/playground/Playground'));
 const Track = lazy(() => import('./pages/track/Track'));
+const LearningConsole = lazy(() => import('./pages/learning/LearningConsole'));
 
 export default function App() {
   return (
@@ -52,6 +53,7 @@ export default function App() {
             <Route path="/simulation" element={<Simulation />} />
             <Route path="/replay" element={<MarginReplay />} />
             <Route path="/analytics" element={<Analytics />} />
+            <Route path="/learning" element={<LearningConsole />} />
             <Route path="/copilot" element={<Copilot />} />
             <Route path="/copilot/bootstrap" element={<Bootstrap />} />
             <Route path="/settings" element={<Settings />} />
