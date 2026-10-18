@@ -2,8 +2,14 @@ package ai.intentoms.learning.learner;
 
 import ai.intentoms.decision.model.DecisionRecord;
 import ai.intentoms.decision.record.DecisionRecordRepository;
-import ai.intentoms.learning.model.AutonomyLevel;
-import ai.intentoms.learning.store.LearnerRepository;
+import ai.intentoms.learning.governance.LearnerGovernance;
+import ai.intentoms.learning.model.FactKey;
+import ai.intentoms.learning.model.LearnedFact;
+import ai.intentoms.learning.model.SubjectType;
+import ai.intentoms.learning.model.TypedValue;
+import ai.intentoms.learning.store.LearnedFactRepository;
+import ai.intentoms.platform.ids.Ids;
+import ai.intentoms.platform.json.Json;
 import ai.intentoms.platform.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,33 +19,45 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
- * FD-07: detects drift in fraud feature distributions by comparing the confirmed-fraud rate this week against the
- * prior four weeks' baseline for the same decision; a swing past {@code driftThreshold} (default 2x or half,
- * whichever direction) pauses {@link FraudThresholdTuner} and {@link FraudAbuseHypothesisScanner}'s tenant-wide
- * autonomy to L0 (same pattern as {@code CoverageMonitor}) rather than letting them keep tuning against a baseline
- * that no longer reflects reality — a sale day or a new fraud pattern looks identical to noise without this check.
+ * FD-07: pauses the fraud learners when what they learn from stops looking like what they learned on, so a sale day
+ * or a new fraud pattern is not mistaken for noise and tuned against.
+ * <ul>
+ *   <li><b>Feature drift.</b> For {@code payment_risk}, the population stability index (PSI) of each input feature this
+ *       week against the prior four weeks (velocity, address/device/card linkage, billing mismatch, order value). The
+ *       largest PSI is recorded as a {@code FEATURE_DRIFT_PSI} fact on the decision; above
+ *       {@code oms.learning.fraud-drift-psi} (default 0.25, the usual "significant shift" line) the learners pause.</li>
+ *   <li><b>Label drift.</b> For every fraud decision, a confirmed-fraud rate this week at least
+ *       {@code oms.learning.fraud-drift-multiple} (default 2) times the baseline, or under half of it.</li>
+ * </ul>
+ * Pausing goes through {@link LearnerGovernance}, with the reason, so autonomy levels are kept and a person resumes.
  */
 @Component
 public class FraudDriftMonitor {
     private static final Logger log = LoggerFactory.getLogger(FraudDriftMonitor.class);
     private static final List<String> FRAUD_DECISIONS = List.of("payment_risk", "rto_risk", "address_risk", "return_risk");
     private static final List<String> GUARDED_LEARNERS = List.of(FraudThresholdTuner.KEY, FraudAbuseHypothesisScanner.KEY);
+    static final List<String> PSI_FEATURES = List.of("payment.velocity_1h", "payment.velocity_24h", "payment.address_linkage_count", "payment.device_linkage_count",
+        "payment.token_customer_count", "payment.billing_shipping_mismatch", "order.total");
+    static final int MIN_RECORDS = 50;
 
     private final DecisionRecordRepository decisionRecords;
-    private final LearnerRepository learners;
+    private final LearnedFactRepository facts;
+    private final LearnerGovernance governance;
 
-    @Value("${oms.learning.fraud-drift-multiple:2.0}") private double driftMultiple;
+    @Value("${oms.learning.fraud-drift-multiple:2.0}") private double driftMultiple = 2.0;
+    @Value("${oms.learning.fraud-drift-psi:0.25}") private double psiThreshold = 0.25;
 
-    private final ai.intentoms.learning.governance.LearnerGovernance governance;
-
-    public FraudDriftMonitor(DecisionRecordRepository decisionRecords, LearnerRepository learners, ai.intentoms.learning.governance.LearnerGovernance governance) {
+    public FraudDriftMonitor(DecisionRecordRepository decisionRecords, LearnedFactRepository facts, LearnerGovernance governance) {
         this.governance = governance;
         this.decisionRecords = decisionRecords;
-        this.learners = learners;
+        this.facts = facts;
     }
 
     @Scheduled(fixedDelayString = "${oms.learning.fraud-drift-sweep-ms:86400000}", initialDelayString = "${oms.learning.fraud-drift-sweep-ms:86400000}")
@@ -52,28 +70,96 @@ public class FraudDriftMonitor {
         for (String tenant : tenants) TenantContext.runAs(tenant, this::checkTenant);
     }
 
-    private void checkTenant() {
-        boolean drifted = false;
+    /** Result of one check, for tests and the run endpoint: max PSI per decision checked and why learners paused. */
+    public record DriftReport(Map<String, Double> featurePsi, String pausedFor) {}
+
+    public DriftReport checkTenant() {
+        Instant now = Instant.now();
+        Instant weekAgo = now.minus(Duration.ofDays(7));
+        Instant baselineStart = now.minus(Duration.ofDays(35));
+        String reason = null;
+
+        Map<String, Double> psi = featurePsi(records("payment_risk", baselineStart, weekAgo), records("payment_risk", weekAgo, now));
+        if (!psi.isEmpty()) {
+            var worst = psi.entrySet().stream().max(Map.Entry.comparingByValue()).orElseThrow();
+            recordPsi("payment_risk", worst.getValue());
+            if (worst.getValue() > psiThreshold) reason = String.format(Locale.ROOT, "fraud feature drift: %s PSI %.2f on payment_risk", worst.getKey(), worst.getValue());
+        }
         for (String decision : FRAUD_DECISIONS) {
-            Double baseline = confirmedRate(decision, Instant.now().minus(Duration.ofDays(35)), Instant.now().minus(Duration.ofDays(7)));
-            Double recent = confirmedRate(decision, Instant.now().minus(Duration.ofDays(7)), Instant.now());
+            if (reason != null) break;
+            Double baseline = confirmedRate(decision, baselineStart, weekAgo);
+            Double recent = confirmedRate(decision, weekAgo, now);
             if (baseline == null || recent == null || baseline < 0.01) continue;
             double ratio = recent / baseline;
-            if (ratio >= driftMultiple || ratio <= 1.0 / driftMultiple) {
-                log.warn("Fraud feature drift on {}: baseline rate {} -> recent rate {} (ratio {})", decision, baseline, recent, ratio);
-                drifted = true;
+            if (ratio >= driftMultiple || ratio <= 1.0 / driftMultiple)
+                reason = String.format(Locale.ROOT, "fraud label drift: confirmed rate on %s moved from %.1f%% to %.1f%%", decision, baseline * 100, recent * 100);
+        }
+        if (reason != null) {
+            log.warn("{}; pausing fraud learners", reason);
+            for (String key : GUARDED_LEARNERS) if (governance.gate(key).mayRun()) governance.pause(key, reason, "system:fraud-drift-monitor");
+        }
+        return new DriftReport(psi, reason);
+    }
+
+    /** PSI per feature, recent against baseline; empty when either window has too few decisions to judge. */
+    static Map<String, Double> featurePsi(List<Map<String, Object>> baseline, List<Map<String, Object>> recent) {
+        Map<String, Double> out = new LinkedHashMap<>();
+        if (baseline.size() < MIN_RECORDS || recent.size() < MIN_RECORDS) return out;
+        for (String f : PSI_FEATURES) out.put(f, psi(histogram(baseline, f), histogram(recent, f)));
+        return out;
+    }
+
+    /** Population stability index over shared buckets, with a small floor so an empty bucket does not divide by zero. */
+    static double psi(double[] expected, double[] actual) {
+        double e = 0, a = 0;
+        for (double x : expected) e += x;
+        for (double x : actual) a += x;
+        if (e == 0 || a == 0) return 0;
+        double s = 0;
+        for (int i = 0; i < expected.length; i++) {
+            double pe = Math.max(expected[i] / e, 1e-4), pa = Math.max(actual[i] / a, 1e-4);
+            s += (pa - pe) * Math.log(pa / pe);
+        }
+        return Math.round(s * 10000) / 10000d;
+    }
+
+    /** Counts become buckets 0, 1, 2, 3+; a flag false/true; order value 0-50-100-250-500-1000+. */
+    static double[] histogram(List<Map<String, Object>> inputs, String feature) {
+        boolean money = "order.total".equals(feature);
+        double[] h = new double[money ? 6 : 4];
+        for (Map<String, Object> in : inputs) {
+            Object v = Json.path(in, feature);
+            if (v == null) v = in.get(feature);
+            double x = v instanceof Boolean b ? (b ? 1 : 0) : v instanceof Number n ? n.doubleValue() : 0;
+            int bucket = money ? (x < 50 ? 0 : x < 100 ? 1 : x < 250 ? 2 : x < 500 ? 3 : x < 1000 ? 4 : 5) : (int) Math.min(3, Math.max(0, Math.floor(x)));
+            h[bucket]++;
+        }
+        return h;
+    }
+
+    private List<Map<String, Object>> records(String decision, Instant from, Instant to) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (int[] v : decisionRecords.activeVersions(decision, from)) {
+            for (DecisionRecord r : decisionRecords.recentLive(decision, v[0], from, 20_000)) {
+                if (r.createdAt() != null && !r.createdAt().isBefore(to)) continue;
+                if (r.input() != null) out.add(r.input());
             }
         }
-        if (!drifted) return;
-        for (String key : GUARDED_LEARNERS) {
-            if (!governance.gate(key).mayRun()) continue;
-            governance.pause(key, "fraud feature drift", "system:fraud-drift-monitor");
-        }
+        return out;
+    }
+
+    private void recordPsi(String decision, double value) {
+        Instant now = Instant.now();
+        var prev = facts.active(SubjectType.DECISION, decision, FactKey.FEATURE_DRIFT_PSI);
+        facts.supersede(SubjectType.DECISION, decision, FactKey.FEATURE_DRIFT_PSI, now);
+        facts.insert(new LearnedFact(Ids.prefixed("fact"), SubjectType.DECISION, decision, FactKey.FEATURE_DRIFT_PSI, new TypedValue.NumberValue(value),
+            1.0, 0, "fraud_drift_monitor", prev.map(f -> f.version() + 1).orElse(1), now, null, now));
     }
 
     @SuppressWarnings("unchecked")
     private Double confirmedRate(String decision, Instant from, Instant to) {
-        List<DecisionRecord> labelled = decisionRecords.labelledBetween(decision, 1, from, to);
+        List<DecisionRecord> labelled = new ArrayList<>();
+        for (int[] v : decisionRecords.activeVersions(decision, from)) labelled.addAll(decisionRecords.labelledBetween(decision, v[0], from, to));
         List<DecisionRecord> withLabel = labelled.stream().filter(r -> r.labels() != null && r.labels().get("fraud_outcome") instanceof Map).toList();
         if (withLabel.size() < 20) return null;
         long confirmed = withLabel.stream().filter(r -> Boolean.TRUE.equals(((Map<String, Object>) r.labels().get("fraud_outcome")).get("confirmed"))).count();

@@ -32,9 +32,9 @@ import java.util.List;
  * doc:</b> this writes a {@link LearnedFact} only — it never calls {@link AgentRegistry#update} itself. Trust-tier
  * changes stay a manual admin action; a human reads this fact and decides.
  *
- * <p>Scope note: dispute rate isn't included yet — disputes live in evidence packs / chargebacks, which aren't
- * queryable per-agent from here without a new aggregate query this pass didn't have time to build; mandate
- * compliance and injection-flag rate are real signals today, not placeholders.
+ * <p>Dispute rate: every chargeback on an order the agent placed under a mandate appends
+ * {@code agent.dispute_recorded} to the agent (finance's {@code ChargebackService}); disputes per mandate are
+ * published as a {@code DISPUTE_RATE} fact and lower the score by twice the rate, at most 0.5.
  */
 @Component
 public class AgentReputationLearner implements GovernedLearner {
@@ -77,23 +77,36 @@ public class AgentReputationLearner implements GovernedLearner {
             if (m.size() < 5) continue; // too little history to score meaningfully
             long compliant = m.stream().filter(mm -> !Boolean.FALSE.equals(mm.signatureValid()) && !Mandate.REVOKED.equals(mm.status())).count();
             double mandateScore = (double) compliant / m.size();
-            long flagged = events.load("agent", agent.id()).stream().filter(e -> "agent.injection_flagged".equals(e.type())).count();
+            var agentEvents = events.load("agent", agent.id());
+            long flagged = agentEvents.stream().filter(e -> "agent.injection_flagged".equals(e.type())).count();
+            long disputes = agentEvents.stream().filter(e -> "agent.dispute_recorded".equals(e.type())).count();
             double injectionPenalty = Math.min(0.5, flagged * 0.05);
-            double score = Math.max(0.0, Math.min(1.0, mandateScore - injectionPenalty));
-            writeFact(agent.id(), score, m.size());
+            double rate = disputeRate(disputes, m.size());
+            double score = score(mandateScore, injectionPenalty, rate);
+            writeFact(agent.id(), FactKey.DISPUTE_RATE, rate, m.size());
+            writeFact(agent.id(), FactKey.AGENT_REPUTATION, score, m.size());
         }
     }
 
-    private void writeFact(String agentId, double score, int sampleSize) {
-        List<LearnedFact> history = facts.history(SubjectType.AGENT, agentId, FactKey.AGENT_REPUTATION, 1);
-        facts.supersede(SubjectType.AGENT, agentId, FactKey.AGENT_REPUTATION, Instant.now());
-        facts.insert(new LearnedFact(Ids.prefixed("fact"), SubjectType.AGENT, agentId, FactKey.AGENT_REPUTATION, new TypedValue.NumberValue(score),
+    /** FD-05: chargebacks on the agent's orders per mandate it placed orders under. */
+    static double disputeRate(long disputes, int mandates) { return mandates == 0 ? 0 : Math.min(1.0, (double) disputes / mandates); }
+
+    /** Mandate compliance, minus up to 0.5 for injection hits, minus twice the dispute rate (capped at 0.5). */
+    static double score(double mandateScore, double injectionPenalty, double disputeRate) {
+        return Math.max(0.0, Math.min(1.0, mandateScore - injectionPenalty - Math.min(0.5, 2 * disputeRate)));
+    }
+
+    private void writeFact(String agentId, FactKey key, double value, int sampleSize) {
+        List<LearnedFact> history = facts.history(SubjectType.AGENT, agentId, key, 1);
+        facts.supersede(SubjectType.AGENT, agentId, key, Instant.now());
+        facts.insert(new LearnedFact(Ids.prefixed("fact"), SubjectType.AGENT, agentId, key, new TypedValue.NumberValue(value),
             Math.min(1.0, sampleSize / 30.0), sampleSize, LEARNER_KEY, history.isEmpty() ? 1 : history.get(0).version() + 1, Instant.now(), null, Instant.now()));
     }
 
     @Override
     public LearnerDescriptor descriptor() {
-        return LearnerDescriptor.of(KEY, "Agent reputation", "Scores each AI shopping agent on mandate compliance, prompt-injection hits and disputes. A person decides any trust change.", LearnerDescriptor.Loop.FAST, "FD-05");
+        return LearnerDescriptor.of(KEY, "Agent reputation", "Scores each AI shopping agent on mandate compliance, prompt-injection hits and disputes. A person decides any trust change.", LearnerDescriptor.Loop.FAST, "FD-05")
+            .feeds(ai.intentoms.learning.hooks.FraudFactFeatures.AGENT_REPUTATION, ai.intentoms.learning.hooks.FraudFactFeatures.AGENT_DISPUTE_RATE);
     }
 
     @Override public boolean runnable() { return true; }

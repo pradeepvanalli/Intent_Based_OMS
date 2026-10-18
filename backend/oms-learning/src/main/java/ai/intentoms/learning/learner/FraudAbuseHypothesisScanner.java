@@ -6,33 +6,44 @@ import ai.intentoms.learning.governance.LearnerGovernance;
 import ai.intentoms.decision.model.DecisionRecord;
 import ai.intentoms.decision.record.DecisionRecordRepository;
 import ai.intentoms.learning.model.Direction;
+import ai.intentoms.learning.model.FactKey;
 import ai.intentoms.learning.model.Hypothesis;
+import ai.intentoms.learning.model.LearnedFact;
+import ai.intentoms.learning.model.SubjectType;
+import ai.intentoms.learning.model.TypedValue;
 import ai.intentoms.learning.store.HypothesisRepository;
+import ai.intentoms.learning.store.LearnedFactRepository;
 import ai.intentoms.platform.ids.Ids;
+import ai.intentoms.platform.json.Json;
 import ai.intentoms.platform.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * FD-04: surfaces candidate abuse-rule hypotheses from real labeled history, for the analyst/author pipeline
- * (built elsewhere, extending oms-copilot) to turn into a reviewed {@code RuleAdd} changeset — this scanner never
- * authors rules or calls an LLM itself.
- *
- * <p><b>Scope cut, stated plainly:</b> the requirements doc's own example is "address-reuse rings," but oms-learning
- * has no reliable address/device identifier to group by yet (payment_risk's state carries linkage *counts*, not
- * the raw tokenized address/device id a ring-detection join needs, and oms-learning has no dependency on the
- * module that owns that data). What's implemented instead is a real, data-backed signal available today:
- * elevated confirmed-fraud rate concentrated in one order channel for a fraud decision, which is exactly the shape
- * of evidence a {@code RuleAdd} hypothesis needs. Wiring true identity-linkage clustering is a follow-up once a
- * fraud-signals table or a cross-module query exists.
+ * FD-04: finds abuse patterns in real history and raises them as hypotheses for a person (or the author pipeline) to
+ * turn into a reviewed {@code RuleAdd}; it never writes a rule or calls a model itself.
+ * <ul>
+ *   <li><b>Address-reuse rings.</b> Every {@code payment_risk} decision carries a non-reversible address token and the
+ *       customer. Over 30 days, an address used by several different customers is a classic reshipping ring: the
+ *       count is published as an {@code ADDRESS_REUSE_COUNT} fact on the address (the decision reads it once promoted
+ *       for live use), and at {@code oms.learning.fraud.ring-min-customers} (default 3) or more a hypothesis is raised
+ *       with the evidence, once per address while it is open.</li>
+ *   <li><b>Channel concentration.</b> A confirmed-fraud rate of 15% or more in one order channel for a fraud decision
+ *       (at least 20 labelled cases).</li>
+ * </ul>
  */
 @Component
 public class FraudAbuseHypothesisScanner implements GovernedLearner {
@@ -44,13 +55,16 @@ public class FraudAbuseHypothesisScanner implements GovernedLearner {
 
     private final DecisionRecordRepository decisionRecords;
     private final HypothesisRepository hypotheses;
-
+    private final LearnedFactRepository facts;
     private final LearnerGovernance governance;
 
-    public FraudAbuseHypothesisScanner(DecisionRecordRepository decisionRecords, HypothesisRepository hypotheses, LearnerGovernance governance) {
+    @Value("${oms.learning.fraud.ring-min-customers:3}") private int ringMinCustomers = 3;
+
+    public FraudAbuseHypothesisScanner(DecisionRecordRepository decisionRecords, HypothesisRepository hypotheses, LearnedFactRepository facts, LearnerGovernance governance) {
         this.governance = governance;
         this.decisionRecords = decisionRecords;
         this.hypotheses = hypotheses;
+        this.facts = facts;
     }
 
     @Scheduled(fixedDelayString = "${oms.learning.abuse-scan-ms:86400000}", initialDelayString = "${oms.learning.abuse-scan-ms:86400000}")
@@ -64,32 +78,104 @@ public class FraudAbuseHypothesisScanner implements GovernedLearner {
     }
 
     private void scanTenant() {
-        if (!governance.begin(KEY).mayPropose()) return;
+        LearnerGovernance.Gate gate = governance.begin(KEY);
+        if (!gate.mayRun()) return;
         governance.recordRun(KEY);
         Instant since = Instant.now().minus(Duration.ofDays(30));
+        // L0 observes: ring counts are still measured and published as facts (never used live at L0), but no hypothesis.
+        scanAddressRings(since, gate.mayPropose());
+        if (!gate.mayPropose()) return;
         for (String decision : FRAUD_DECISIONS) {
-            List<DecisionRecord> labelled = decisionRecords.labelledBetween(decision, currentVersionGuess(decision), since, Instant.now());
+            List<DecisionRecord> labelled = new ArrayList<>();
+            for (int v : versions(decision, since)) labelled.addAll(decisionRecords.labelledBetween(decision, v, since, Instant.now()));
             if (labelled.size() < MIN_SAMPLE) continue;
-            Map<String, List<DecisionRecord>> byChannel = labelled.stream()
-                .collect(Collectors.groupingBy(r -> String.valueOf(r.input() == null ? "unknown" : r.input().getOrDefault("order.channel", "unknown"))));
+            Map<String, List<DecisionRecord>> byChannel = labelled.stream().collect(Collectors.groupingBy(r -> String.valueOf(channel(r))));
             for (var entry : byChannel.entrySet()) {
                 List<DecisionRecord> group = entry.getValue();
                 if (group.size() < MIN_SAMPLE) continue;
                 long confirmed = group.stream().filter(r -> Boolean.TRUE.equals(fraudConfirmed(r))).count();
                 double rate = (double) confirmed / group.size();
                 if (rate < ELEVATED_RATE_THRESHOLD) continue;
-                raiseHypothesis(decision, entry.getKey(), rate, group.size());
+                raiseChannelHypothesis(decision, entry.getKey(), rate, group.size());
             }
         }
     }
 
-    private void raiseHypothesis(String decision, String channel, double rate, int n) {
+    /** Groups recent payment_risk decisions by address token; publishes the reuse count and raises ring hypotheses. */
+    void scanAddressRings(Instant since, boolean mayPropose) {
+        Map<String, Set<String>> customersByAddress = new LinkedHashMap<>();
+        Map<String, Integer> confirmedByAddress = new LinkedHashMap<>();
+        for (int v : versions("payment_risk", since)) {
+            for (DecisionRecord r : decisionRecords.recentLive("payment_risk", v, since, 20_000)) {
+                Object token = path(r, "address.token");
+                Object customer = path(r, "customer.ref");
+                if (token == null || customer == null) continue;
+                customersByAddress.computeIfAbsent(String.valueOf(token), k -> new HashSet<>()).add(String.valueOf(customer));
+                if (Boolean.TRUE.equals(fraudConfirmed(r))) confirmedByAddress.merge(String.valueOf(token), 1, Integer::sum);
+            }
+        }
+        Set<String> openRings = mayPropose ? openRingHypotheses() : Set.of();
+        int rings = 0;
+        for (var e : customersByAddress.entrySet()) {
+            int customers = e.getValue().size();
+            if (customers < 2) continue; // one customer at one address is the normal case: nothing to publish
+            publishReuseCount(e.getKey(), customers);
+            if (mayPropose && customers >= ringMinCustomers && !openRings.contains(e.getKey())) {
+                raiseRingHypothesis(e.getKey(), customers, confirmedByAddress.getOrDefault(e.getKey(), 0));
+                rings++;
+            }
+        }
+        if (rings > 0) log.info("Raised {} address-reuse ring hypotheses", rings);
+    }
+
+    private void publishReuseCount(String token, int customers) {
+        var active = facts.active(SubjectType.ADDRESS, token, FactKey.ADDRESS_REUSE_COUNT);
+        if (active.isPresent() && active.get().value() instanceof TypedValue.NumberValue n && n.value() == customers) return;
+        Instant now = Instant.now();
+        facts.supersede(SubjectType.ADDRESS, token, FactKey.ADDRESS_REUSE_COUNT, now);
+        facts.insert(new LearnedFact(Ids.prefixed("fact"), SubjectType.ADDRESS, token, FactKey.ADDRESS_REUSE_COUNT, new TypedValue.NumberValue(customers),
+            Math.min(1.0, customers / 5.0), customers, KEY, active.map(f -> f.version() + 1).orElse(1), now, null, now));
+    }
+
+    private Set<String> openRingHypotheses() {
+        Set<String> out = new HashSet<>();
+        for (Hypothesis h : hypotheses.byStatus("OPEN", 1000)) if (h.scope() != null && h.scope().get("addressToken") != null) out.add(String.valueOf(h.scope().get("addressToken")));
+        return out;
+    }
+
+    private void raiseRingHypothesis(String token, int customers, int confirmed) {
+        String rationale = customers + " different customers shipped to the same address in 30 days" + (confirmed > 0 ? ", " + confirmed + " confirmed fraud" : "")
+            + "; consider a rule holding orders to this address for review.";
+        Hypothesis h = new Hypothesis(Ids.prefixed("hyp"), Map.of("decision", "payment_risk", "addressToken", token, "pattern", "address_reuse_ring"),
+            "fraud_and_abuse_loss", Direction.DECREASE, Map.of("decision", "payment_risk", "lever", "ruleAdd", "addressToken", token),
+            Math.min(0.9, 0.3 + 0.1 * customers + 0.2 * Math.min(confirmed, 2)),
+            List.of("distinct_customers=" + customers, "confirmed_fraud=" + confirmed, "window_days=30"), rationale.length() > 280 ? rationale.substring(0, 280) : rationale,
+            Hypothesis.Status.OPEN, Instant.now());
+        hypotheses.insert(h);
+    }
+
+    private void raiseChannelHypothesis(String decision, String channel, double rate, int n) {
         Hypothesis h = new Hypothesis(Ids.prefixed("hyp"), Map.of("decision", decision, "channel", channel), "fraud_and_abuse_loss", Direction.DECREASE,
             Map.of("decision", decision, "lever", "ruleAdd"), Math.min(0.9, rate), List.of(),
             ("Confirmed-fraud rate for " + decision + " in channel " + channel + " is " + String.format("%.0f%%", rate * 100) + " over " + n + " labelled cases, above the "
                 + (int) (ELEVATED_RATE_THRESHOLD * 100) + "% floor."), Hypothesis.Status.OPEN, Instant.now());
         hypotheses.insert(h);
         log.info("Raised abuse hypothesis for {} in channel {} (rate {}, n={})", decision, channel, rate, n);
+    }
+
+    private List<Integer> versions(String decision, Instant since) {
+        return decisionRecords.activeVersions(decision, since).stream().map(a -> a[0]).toList();
+    }
+
+    private static Object channel(DecisionRecord r) {
+        Object c = path(r, "order.channel");
+        return c == null ? "unknown" : c;
+    }
+
+    private static Object path(DecisionRecord r, String dotted) {
+        if (r.input() == null) return null;
+        Object v = Json.path(r.input(), dotted);
+        return v != null ? v : r.input().get(dotted);
     }
 
     @SuppressWarnings("unchecked")
@@ -99,12 +185,10 @@ public class FraudAbuseHypothesisScanner implements GovernedLearner {
         return Boolean.TRUE.equals(((Map<String, Object>) m).get("confirmed"));
     }
 
-    /** decisionsWithRecords doesn't carry version; 1 covers every tenant's current decision YAMLs (version: 1 above). */
-    private static int currentVersionGuess(String decision) { return 1; }
-
     @Override
     public LearnerDescriptor descriptor() {
-        return LearnerDescriptor.of(KEY, "Abuse pattern finder", "Looks for new fraud and abuse patterns in confirmed cases and suggests rules for a person to review.", LearnerDescriptor.Loop.FAST, "FD-04").readsOutcomesOf("payment_risk", "return_risk", "rto_risk");
+        return LearnerDescriptor.of(KEY, "Abuse pattern finder", "Looks for new fraud and abuse patterns, such as one address shared by many customers, and suggests rules for a person to review.",
+            LearnerDescriptor.Loop.FAST, "FD-04").readsOutcomesOf("payment_risk", "return_risk", "rto_risk").feeds(ai.intentoms.learning.hooks.FraudFactFeatures.ADDRESS_REUSE);
     }
 
     @Override public boolean runnable() { return true; }
