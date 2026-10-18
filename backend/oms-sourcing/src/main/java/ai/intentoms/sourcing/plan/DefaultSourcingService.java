@@ -3,7 +3,15 @@ package ai.intentoms.sourcing.plan;
 import ai.intentoms.decision.model.DecisionOptions;
 import ai.intentoms.decision.model.DecisionResult;
 import ai.intentoms.decision.runtime.DecisionService;
+import ai.intentoms.learning.governance.ParameterResolver;
+import ai.intentoms.learning.learner.LaneDeliveryLearner;
+import ai.intentoms.learning.learner.NodeReliabilityLearner;
 import ai.intentoms.learning.learner.SourcingPolicyBandit;
+import ai.intentoms.learning.model.FactKey;
+import ai.intentoms.learning.model.SubjectType;
+import ai.intentoms.learning.model.TypedValue;
+import ai.intentoms.learning.store.LearnedFactCache;
+import ai.intentoms.platform.config.TenantConfigStore;
 import ai.intentoms.order.model.FulfilmentGroup;
 import ai.intentoms.order.model.IntentProfile;
 import ai.intentoms.order.model.MarginSnapshot;
@@ -64,6 +72,12 @@ import java.util.Set;
  *       through {@link OrderRepository#update}, every considered plan lands in {@code sourcing_plan}, and
  *       {@code order.sourced} is appended in the same transaction.</li>
  * </ol>
+ *
+ * <p>Self-optimizing hooks, each live only when promoted (see {@code ParameterResolver}): FS-01 the sourcing-policy
+ * bandit, offered only policies that clear the margin floor and would not deliver later than the default policy;
+ * FS-04 plan weights from {@code sourcing.weights} (a promoted {@code WeightChange} writes that key); FS-06 the
+ * learned per-node reject penalty ({@code sourcing.reject_penalty}); IU-03 a tie-break toward aged stock when another
+ * plan of the chosen policy costs about the same ({@code sourcing.aged_stock_tiebreak}).
  */
 @Service
 public class DefaultSourcingService implements SourcingService {
@@ -94,10 +108,20 @@ public class DefaultSourcingService implements SourcingService {
     private final Metrics metrics;
     private final AuthorizationService authz;
     private final SourcingPolicyBandit bandit;
+    private final ParameterResolver parameters;
+    private final LearnedFactCache facts;
+    private final TenantConfigStore config;
+
+    public static final String AGED_STOCK_PARAMETER = "sourcing.aged_stock_tiebreak";
+    public static final String AGED_STOCK_COST_PCT = "sourcing.aged_stock_tiebreak_cost_pct";
+    public static final String BANDIT_MAX_ETA_SLIP_DAYS = "sourcing.bandit.max_eta_slip_days";
 
     public DefaultSourcingService(OrderRepository orders, CandidateGenerator candidates, PlanBuilder planBuilder, SoftScorer softScorer, DecisionService decisions, NodeRegistry nodes,
                                   RateCardRepository rates, SourcingSettings settings, SourcingPlanRepository planRepo, EventStore events, TimeSource time, Metrics metrics, AuthorizationService authz,
-                                  SourcingPolicyBandit bandit) {
+                                  SourcingPolicyBandit bandit, ParameterResolver parameters, LearnedFactCache facts, TenantConfigStore config) {
+        this.parameters = parameters;
+        this.facts = facts;
+        this.config = config;
         this.orders = orders;
         this.candidates = candidates;
         this.planBuilder = planBuilder;
@@ -140,13 +164,15 @@ public class DefaultSourcingService implements SourcingService {
             if (active.isEmpty()) throw new ConflictException("Order " + orderId + " has no active fulfilment group to re-source" + (nodeId == null ? "" : " at node " + nodeId), Map.of("orderId", orderId));
             Set<String> rejectedNodes = new LinkedHashSet<>();
             Set<String> penalised = new HashSet<>();
-            double delta = settings.rejectPenalty();
+            Map<String, Double> deltas = new LinkedHashMap<>();
             for (FulfilmentGroup g : active) {
                 rejectedNodes.add(g.nodeId());
+                double delta = deltas.computeIfAbsent(g.nodeId(), this::rejectPenalty);
                 for (FulfilmentGroup.Allocation a : g.allocations()) {
                     if (penalised.add(g.nodeId() + "|" + a.sku())) nodes.penalise(g.nodeId(), a.sku(), delta, "store_reject: " + reason);
                 }
             }
+            double delta = deltas.values().stream().mapToDouble(Double::doubleValue).max().orElse(settings.rejectPenalty());
             Set<String> rejectedIds = new LinkedHashSet<>();
             List<FulfilmentGroup> groups = new ArrayList<>();
             for (FulfilmentGroup g : order.fulfilmentGroups()) {
@@ -168,6 +194,7 @@ public class DefaultSourcingService implements SourcingService {
             payload.put("rejectedNodes", List.copyOf(rejectedNodes));
             payload.put("rejectedGroupIds", List.copyOf(rejectedIds));
             payload.put("penaltyDelta", delta);
+            payload.put("penaltyByNode", deltas);
             payload.put("status", result.status().name());
             payload.put("planId", result.plan() == null ? "" : result.plan().id());
             payload.put("newGroupIds", result.plan() == null ? List.of() : orders.get(orderId).fulfilmentGroups().stream().filter(g -> result.plan().id().equals(g.sourcingPlanId())).map(FulfilmentGroup::id).toList());
@@ -216,6 +243,7 @@ public class DefaultSourcingService implements SourcingService {
             for (String p : FALLBACK_ORDER) { chosen = bestFor(run.plans(), p); if (chosen != null) { reasons.add("no " + policy + " plan is feasible; fell back to " + p); policy = p; break; } }
         }
         if (chosen == null) chosen = run.plans().get(0);
+        chosen = agedStockTieBreak(run, chosen, reasons);
         if (chosen.packageCount() > 1) chosen = splitAcceptability(order, run, chosen, actor, reasons);
         String recordId = run.soft().decisionRecordId();
         final SourcingPlan plan = chosen.withExplain("policyReasons", List.copyOf(reasons));
@@ -271,6 +299,10 @@ public class DefaultSourcingService implements SourcingService {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("planId", plan.id());
         payload.put("policy", plan.policy());
+        Map<String, String> categoryByLine = new HashMap<>();
+        for (SourcingRequest.RequestLine l : run.req().lines()) categoryByLine.put(l.lineId(), category(l));
+        Map<String, Integer> backlogByNode = new HashMap<>();
+        for (Candidate c : run.candidates()) backlogByNode.put(c.nodeId(), c.node().backlogUnits());
         payload.put("packages", plan.packages().stream().map(pk -> {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("nodeId", pk.nodeId());
@@ -278,8 +310,13 @@ public class DefaultSourcingService implements SourcingService {
             m.put("eta", String.valueOf(pk.eta()));
             m.put("onTime", pk.onTimeProbability());
             m.put("cost", pk.totalCost().amount());
+            m.put("skuClass", dominantCategory(pk, categoryByLine));
+            if (backlogByNode.containsKey(pk.nodeId())) m.put("backlogUnits", backlogByNode.get(pk.nodeId()));
             return m;
         }).toList());
+        String zip3 = LaneDeliveryLearner.zip3(run.req().destination().zip());
+        if (zip3 != null) payload.put("destinationZip3", zip3);
+        payload.put("shipMethod", Policies.PICKUP_CONSOLIDATED.equals(plan.policy()) ? SourcingRequest.METHOD_PICKUP : run.req().shipMethod());
         payload.put("totalCost", plan.totalCost().amount());
         payload.put("margin", plan.pnl().marginRatio());
         payload.put("contributionMargin", plan.pnl().contributionMargin());
@@ -313,17 +350,20 @@ public class DefaultSourcingService implements SourcingService {
         return applyBandit(order, run, policy, reasons, actor);
     }
 
-    /** FS-01: logs a sampled arm/propensity against the policies that actually clear the margin floor here, and
-     * only overrides the policy above when the bandit learner's autonomy is L2 or higher (see {@link
-     * SourcingPolicyBandit}) — below that it's pure observation and this method is a no-op on the returned policy. */
+    /** FS-01: logs a choice among the policies that clear the margin floor and keep the promise here, and only
+     * overrides the policy above when the bandit is promoted for live use (see {@link SourcingPolicyBandit}); otherwise
+     * it is pure observation and this method returns the default policy unchanged. */
     private String applyBandit(Order order, Run run, String defaultPolicy, List<String> reasons, Actor actor) {
-        List<String> eligible = bestPerPolicy(run.plans()).stream().filter(SourcingPlan::meetsMarginFloor).map(SourcingPlan::policy).toList();
+        List<String> eligible = banditArms(run.plans(), defaultPolicy, config.getInt(BANDIT_MAX_ETA_SLIP_DAYS, 0));
         if (eligible.isEmpty()) return defaultPolicy;
         Map<String, Object> context = new LinkedHashMap<>();
         context.put("channel", order.channel());
         context.put("intentPolicy", order.intent() == null ? null : order.intent().policy());
         context.put("customerTier", order.customer() == null ? null : order.customer().tier());
         context.put("lineCount", order.lines() == null ? 0 : order.lines().size());
+        context.put("basketUnits", run.req().lines().stream().mapToInt(SourcingRequest.RequestLine::qty).sum());
+        context.put("destinationZip", run.req().destination().zip());
+        context.put("destinationState", run.req().destination().state());
         try {
             SourcingPolicyBandit.Choice choice = bandit.choose(order.id(), eligible, defaultPolicy, context, actor.ref());
             if (choice.acted() && !choice.policy().equals(defaultPolicy) && eligible.contains(choice.policy())) {
@@ -334,6 +374,90 @@ public class DefaultSourcingService implements SourcingService {
             log.warn("Sourcing policy bandit unavailable for order {}: {}", order.id(), e.getMessage());
         }
         return defaultPolicy;
+    }
+
+    /**
+     * FS-01 arms: the best plan of each policy that clears the margin floor and would not deliver later than the
+     * default policy's best plan (plus {@code sourcing.bandit.max_eta_slip_days}). Exploration never trades the
+     * promise or the margin for information.
+     */
+    static List<String> banditArms(List<SourcingPlan> plans, String defaultPolicy, int maxSlipDays) {
+        List<SourcingPlan> best = bestPerPolicy(plans);
+        SourcingPlan reference = bestFor(plans, defaultPolicy);
+        java.time.LocalDate latest = reference == null || reference.latestEta() == null ? null : reference.latestEta().plusDays(Math.max(0, maxSlipDays));
+        return best.stream().filter(SourcingPlan::meetsMarginFloor)
+            .filter(p -> latest == null || p.latestEta() == null || !p.latestEta().isAfter(latest))
+            .map(SourcingPlan::policy).toList();
+    }
+
+    /** FS-06: the penalty a reject at this node earns, learned per node once promoted, else {@code sourcing.reject_penalty}. */
+    double rejectPenalty(String nodeId) {
+        double fallback = settings.rejectPenalty();
+        try {
+            Double learned = facts.active(SubjectType.NODE, nodeId, FactKey.NODE_REJECT_PENALTY)
+                .filter(f -> f.value() instanceof TypedValue.NumberValue).map(f -> ((TypedValue.NumberValue) f.value()).value()).orElse(null);
+            double v = parameters.resolve(NodeReliabilityLearner.REJECT_PENALTY_PARAMETER, fallback, learned);
+            return v > 0 ? v : fallback;
+        } catch (RuntimeException e) {
+            return fallback;
+        }
+    }
+
+    /**
+     * IU-03: when another plan of the same policy costs within {@code sourcing.aged_stock_tiebreak_cost_pct} (default
+     * 3%) of the chosen one, keeps the margin floor and delivers no later, prefer the plan that ships the oldest stock
+     * (unit-weighted {@code STOCK_AGE_DAYS} per SKU at node). Only while {@code sourcing.aged_stock_tiebreak} is
+     * promoted for live use.
+     */
+    private SourcingPlan agedStockTieBreak(Run run, SourcingPlan chosen, List<String> reasons) {
+        try {
+            if (!parameters.isLive(AGED_STOCK_PARAMETER)) return chosen;
+            double pct = config.getDouble(AGED_STOCK_COST_PCT, 0.03);
+            double chosenCost = chosen.totalCost().amount().doubleValue();
+            double chosenAge = stockAge(chosen);
+            SourcingPlan best = chosen;
+            double bestAge = chosenAge;
+            for (SourcingPlan p : run.plans()) {
+                if (p == chosen || !p.policy().equals(chosen.policy())) continue;
+                if (chosen.meetsMarginFloor() && !p.meetsMarginFloor()) continue;
+                if (chosen.latestEta() != null && p.latestEta() != null && p.latestEta().isAfter(chosen.latestEta())) continue;
+                if (p.totalCost().amount().doubleValue() > chosenCost * (1 + pct)) continue;
+                double age = stockAge(p);
+                if (age > bestAge + 1.0) { best = p; bestAge = age; }
+            }
+            if (best == chosen) return chosen;
+            reasons.add(String.format(java.util.Locale.ROOT, "aged-stock tie-break: plan %s ships stock %.0f days old vs %.0f at about the same cost", best.id(), bestAge, chosenAge));
+            return best.withExplain("agedStockTieBreak", Map.of("replacedPlanId", chosen.id(), "stockAgeDays", bestAge, "replacedStockAgeDays", chosenAge, "costTolerance", pct));
+        } catch (RuntimeException e) {
+            log.debug("Aged-stock tie-break skipped: {}", e.toString());
+            return chosen;
+        }
+    }
+
+    private double stockAge(SourcingPlan plan) {
+        double sum = 0;
+        int units = 0;
+        for (PlanPackage pk : plan.packages()) {
+            for (Allocation a : pk.allocations()) {
+                double age = facts.active(SubjectType.SKU_NODE, a.sku() + "|" + pk.nodeId(), FactKey.STOCK_AGE_DAYS)
+                    .filter(f -> f.value() instanceof TypedValue.NumberValue).map(f -> ((TypedValue.NumberValue) f.value()).value()).orElse(0.0);
+                sum += age * a.qty();
+                units += a.qty();
+            }
+        }
+        return units == 0 ? 0 : sum / units;
+    }
+
+    static String category(SourcingRequest.RequestLine l) {
+        Object c = l.attributes().get("category");
+        return c == null || String.valueOf(c).isBlank() ? "default" : String.valueOf(c).toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /** The SKU class carrying most units in the package (FS-02). */
+    static String dominantCategory(PlanPackage pk, Map<String, String> categoryByLine) {
+        Map<String, Integer> units = new HashMap<>();
+        for (Allocation a : pk.allocations()) units.merge(categoryByLine.getOrDefault(a.lineId(), "default"), a.qty(), Integer::sum);
+        return units.entrySet().stream().max(Map.Entry.<String, Integer>comparingByValue().thenComparing(Map.Entry.comparingByKey())).map(Map.Entry::getKey).orElse("default");
     }
 
     /** T2 {@code split_acceptability}: a confident "no" (act band) on a multi-package plan falls back to ship_complete when available. */

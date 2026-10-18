@@ -49,6 +49,32 @@ public class NodeReliabilityStatRepository {
         return new Posterior(onA / (onA + onB), rjA / (rjA + rjB), ((Number) r.get("sample_size")).intValue());
     }
 
+    /**
+     * Posterior pooled over rows: every day part and SKU class of the node when both filters are null, one SKU class
+     * across its day parts when only {@code skuClass} is set. Each row carries a Beta(1,1) prior, removed before pooling.
+     */
+    public Posterior pooled(String nodeId, String skuClass) {
+        var row = jdbc.sql("""
+            select coalesce(sum(on_time_alpha - 1), 0) as oa, coalesce(sum(on_time_beta - 1), 0) as ob, coalesce(sum(reject_alpha - 1), 0) as ra,
+                   coalesce(sum(reject_beta - 1), 0) as rb, coalesce(sum(sample_size), 0) as n
+            from node_reliability_stat where tenant_id = :t and node_id = :n and (cast(:sc as text) is null or sku_class = :sc)
+            """).param("t", TenantContext.require()).param("n", nodeId).param("sc", skuClass).query().singleRow();
+        double oa = num(row.get("oa")) + 1, ob = num(row.get("ob")) + 1, ra = num(row.get("ra")) + 1, rb = num(row.get("rb")) + 1;
+        int n = (int) num(row.get("n"));
+        if (n == 0 && oa + ob == 2) return new Posterior(0.9, 0.05, 0);
+        return new Posterior(oa / (oa + ob), ra / (ra + rb), n);
+    }
+
+    /** FS-06: the fleet-wide reject rate, the yardstick a node's own reject rate is compared with. */
+    public double fleetRejectMean() {
+        var row = jdbc.sql("select coalesce(sum(reject_alpha - 1), 0) as ra, coalesce(sum(reject_beta - 1), 0) as rb from node_reliability_stat where tenant_id = :t")
+            .param("t", TenantContext.require()).query().singleRow();
+        double ra = num(row.get("ra")) + 1, rb = num(row.get("rb")) + 1;
+        return ra / (ra + rb);
+    }
+
+    private static double num(Object o) { return o instanceof Number n ? n.doubleValue() : 0.0; }
+
     public List<String> nodesWithStats() {
         String t = TenantContext.require();
         return jdbc.sql("select distinct node_id from node_reliability_stat where tenant_id = :t").param("t", t).query(String.class).list();

@@ -1,6 +1,6 @@
 # SLA breach risk (PRD section 9, FR-MON-02). Score 0-4 per open order, tier T1; feeds proactive re-promise.
 decision: sla_breach_risk
-version: 1
+version: 2
 owner: control-tower
 tier: T1
 provider: jev
@@ -16,11 +16,12 @@ state:
     - node.backlog_units
     - node.reject_rate
     - node.minutes_to_cutoff
+    - node.breach_probability
     - carrier.on_time_rate_7d
 questions:
   breach_risk:
     type: score
-    instructions: How likely is this order to miss its delivery promise?
+    instructions: How likely is this order to miss its delivery promise? Use the node's learned backlog breach probability when given.
     feeds: proactive_repromise
     criteria:
       - Very unlikely to breach, well ahead of promise with healthy node and carrier

@@ -1,7 +1,7 @@
 # Node on-time likelihood (PRD section 9). Score per candidate node, composite-weighted with cost efficiency (FR-DEC-04),
 # two-stage top-K when more than 255 candidates (FR-DEC-05). Tier T1. Input: candidates[] (one map per node).
 decision: sourcing_node_score
-version: 1
+version: 2
 owner: fulfilment-ops
 tier: T1
 provider: jev
@@ -13,6 +13,8 @@ state:
     - order.destination_state
     - order.ship_method
     - order.line_count
+    - order.sku_class
+    - order.day_part
     - candidates[].id
     - candidates[].type
     - candidates[].backlog_units
@@ -21,10 +23,12 @@ state:
     - candidates[].minutes_to_cutoff
     - candidates[].distance_km
     - candidates[].cost_usd
+    - candidates[].on_time_rate
+    - candidates[].breach_probability
 questions:
   on_time:
     type: score
-    instructions: Can this node ship on time given its backlog, reject rate, staffing and cutoff?
+    instructions: Can this node ship on time given its backlog, reject rate, staffing and cutoff, and its observed on-time rate and backlog breach probability when given?
     feeds: sourcing_composite
     criteria:
       - Very unlikely to ship on time, backlog far beyond capacity or past cutoff

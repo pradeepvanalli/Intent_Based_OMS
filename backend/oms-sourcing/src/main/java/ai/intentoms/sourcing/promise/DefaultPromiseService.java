@@ -3,6 +3,16 @@ package ai.intentoms.sourcing.promise;
 import ai.intentoms.finance.model.Money;
 import ai.intentoms.inventory.model.Atp;
 import ai.intentoms.inventory.service.InventoryService;
+import ai.intentoms.learning.governance.ParameterResolver;
+import ai.intentoms.learning.learner.LaneDeliveryLearner;
+import ai.intentoms.learning.learner.NodeAssignmentRepository;
+import ai.intentoms.learning.learner.PromiseBufferLearner;
+import ai.intentoms.learning.model.FactKey;
+import ai.intentoms.learning.model.LearnedFact;
+import ai.intentoms.learning.model.SubjectType;
+import ai.intentoms.learning.model.TypedValue;
+import ai.intentoms.learning.store.LearnedFactCache;
+import ai.intentoms.platform.config.TenantConfigStore;
 import ai.intentoms.platform.error.ValidationException;
 import ai.intentoms.platform.observability.Metrics;
 import ai.intentoms.platform.tenant.TenantContext;
@@ -44,6 +54,13 @@ import java.util.Optional;
  * no single node covers everything the promise is the latest of the per-sku best nodes; with no stock anywhere the date
  * is today + {@code sourcing.backorder_lead_days} with on-time 0.5 and no node. Cached in Caffeine (TTL 30 s) and in the
  * optional {@link PromiseCacheL2}. Simulation overrides (closed nodes, carrier outage) apply when set.
+ *
+ * <p>Learned inputs (each served only when its parameter family is promoted for live use, else the static value):
+ * FS-03 transit days from the lane's observed P50 ({@code promise.lane_transit_days}; lane = carrier x origin x
+ * destination ZIP3, falling back to carrier x origin; the carrier for a service comes from
+ * {@code sourcing.service_carriers} or, failing that, the carrier the node most often uses for it); CX-01 the lane's
+ * calibration offset added to the stated on-time probability ({@code promise.lane_calibration}); CX-02 a per-channel
+ * buffer added to the date ({@code promise.buffer_days}, static value from the same tenant config key).
  */
 @Service
 public class DefaultPromiseService implements PromiseService {
@@ -58,8 +75,18 @@ public class DefaultPromiseService implements PromiseService {
     private final Metrics metrics;
     private final Duration ttl;
     private final Cache<String, Promise> cache;
+    private final LearnedFactCache facts;
+    private final ParameterResolver parameters;
+    private final NodeAssignmentRepository assignments;
+    private final TenantConfigStore config;
+    private final Cache<String, Optional<String>> carriers = Caffeine.newBuilder().expireAfterWrite(Duration.ofMinutes(10)).maximumSize(10_000).build();
 
-    public DefaultPromiseService(NodeRegistry nodes, InventoryService inventory, RateCardRepository rates, SourcingSettings settings, PromiseCacheL2 l2, TimeSource time, Metrics metrics, SourcingProperties props) {
+    public DefaultPromiseService(NodeRegistry nodes, InventoryService inventory, RateCardRepository rates, SourcingSettings settings, PromiseCacheL2 l2, TimeSource time, Metrics metrics, SourcingProperties props,
+                                 LearnedFactCache facts, ParameterResolver parameters, NodeAssignmentRepository assignments, TenantConfigStore config) {
+        this.facts = facts;
+        this.parameters = parameters;
+        this.assignments = assignments;
+        this.config = config;
         this.nodes = nodes;
         this.inventory = inventory;
         this.rates = rates;
@@ -107,6 +134,7 @@ public class DefaultPromiseService implements PromiseService {
         SimulationOverrides sim = SimulationContext.current();
         GeoPoint dest = ZipGeo.locate(r.destinationZip(), r.destinationState(), "US");
         boolean pickup = SourcingRequest.METHOD_PICKUP.equalsIgnoreCase(r.shipMethod());
+        String zip3 = LaneDeliveryLearner.zip3(r.destinationZip());
         Map<String, Integer> wanted = new HashMap<>();
         for (PromiseRequest.PromiseLine l : r.lines()) wanted.merge(l.sku(), l.qty(), Integer::sum);
         int totalUnits = wanted.values().stream().mapToInt(Integer::intValue).sum();
@@ -133,7 +161,7 @@ public class DefaultPromiseService implements PromiseService {
                 if (avail >= e.getValue()) covered.add(e.getKey()); else coversAll = false;
             }
             if (covered.isEmpty()) continue;
-            NodeOption opt = option(card, node, dest, r.shipMethod(), weight, now, today, sim, pickup);
+            NodeOption opt = option(card, node, dest, zip3, r.shipMethod(), weight, now, today, sim, pickup);
             if (coversAll) full.add(opt);
             for (String sku : covered) bestPerSku.merge(sku, opt, DefaultPromiseService::better);
         }
@@ -147,24 +175,78 @@ public class DefaultPromiseService implements PromiseService {
             LocalDate date = Transit.eta(today, settings.backorderLeadDays(), settings.businessDaysOnly());
             return new Promise(date, 0.5, null, r.shipMethod(), false, 0, List.of());
         }
+        int buffer = pickup ? 0 : bufferDays(r.channel());
         List<Promise.PromiseOption> alternatives = new ArrayList<>();
         if (!pickup) {
             for (String service : card.services()) {
                 if (service.equalsIgnoreCase(r.shipMethod())) continue;
                 if (SourcingRequest.METHOD_SAME_DAY.equals(service) && (!chosen.node().has(Node.CAP_SAME_DAY) || chosen.distanceKm() > 40)) continue;
-                NodeOption alt = option(card, chosen.node(), dest, service, weight, now, today, sim, false);
-                alternatives.add(new Promise.PromiseOption(service, alt.eta(), alt.onTime(), chosen.node().id(), alt.cost().subtract(chosen.cost())));
+                NodeOption alt = option(card, chosen.node(), dest, zip3, service, weight, now, today, sim, false);
+                alternatives.add(new Promise.PromiseOption(service, buffered(alt.eta(), buffer), alt.onTime(), chosen.node().id(), alt.cost().subtract(chosen.cost())));
             }
             alternatives.sort((a, b) -> a.date().compareTo(b.date()));
         }
-        return new Promise(chosen.eta(), chosen.onTime(), chosen.node().id(), r.shipMethod(), false, 0, alternatives);
+        return new Promise(buffered(chosen.eta(), buffer), chosen.onTime(), chosen.node().id(), r.shipMethod(), false, 0, alternatives);
     }
 
-    private NodeOption option(RateCard card, Node node, GeoPoint dest, String method, double weightKg, Instant now, LocalDate today, SimulationOverrides sim, boolean pickup) {
+    /** CX-02: whole days of padding for this channel's promise. */
+    int bufferDays(String channel) {
+        double staticBuffer = config.getDouble(PromiseBufferLearner.PARAMETER, 0.0);
+        Double learned = number(SubjectType.SEGMENT, PromiseBufferLearner.segment(channel), FactKey.PROMISE_BUFFER_DAYS, 1)
+            .or(() -> number(SubjectType.SEGMENT, PromiseBufferLearner.segment(null), FactKey.PROMISE_BUFFER_DAYS, 1)).orElse(null);
+        Double served = parameters.explain(PromiseBufferLearner.PARAMETER, staticBuffer, learned).value();
+        return served == null ? 0 : (int) Math.max(0, Math.round(served));
+    }
+
+    private LocalDate buffered(LocalDate eta, int buffer) {
+        return buffer <= 0 || eta == null ? eta : Transit.eta(eta, buffer, settings.businessDaysOnly());
+    }
+
+    /** FS-03: the carrier a service ships with from this node (tenant map first, then what shipments show). */
+    String carrierFor(String service, String nodeId) {
+        try {
+            Object mapped = config.getMap("sourcing.service_carriers").get(service);
+            if (mapped != null) return String.valueOf(mapped);
+            return carriers.get(TenantContext.require() + "|" + service + "|" + nodeId, k -> assignments.usualCarrier(service, nodeId)).orElse(null);
+        } catch (RuntimeException e) {
+            return null; // no carrier knowledge: the rate card's transit stands
+        }
+    }
+
+    /** A lane fact for the ZIP3 lane when it has enough samples, else for the carrier x origin lane. */
+    private Optional<Double> laneNumber(String carrier, String nodeId, String zip3, FactKey key, int minSamples) {
+        if (carrier == null) return Optional.empty();
+        for (String lane : LaneDeliveryLearner.lanesFor(carrier, nodeId, zip3)) {
+            Optional<Double> v = number(SubjectType.LANE, lane, key, minSamples);
+            if (v.isPresent()) return v;
+        }
+        return Optional.empty();
+    }
+
+    private Optional<Double> number(SubjectType st, String subjectId, FactKey key, int minSamples) {
+        try {
+            Optional<LearnedFact> f = facts.active(st, subjectId, key);
+            return f.filter(x -> x.sampleSize() >= minSamples && x.value() instanceof TypedValue.NumberValue).map(x -> ((TypedValue.NumberValue) x.value()).value());
+        } catch (RuntimeException e) {
+            return Optional.empty(); // learning unavailable: the static promise still works
+        }
+    }
+
+    private NodeOption option(RateCard card, Node node, GeoPoint dest, String zip3, String method, double weightKg, Instant now, LocalDate today, SimulationOverrides sim, boolean pickup) {
         double distance = dest.distanceKm(node.lat(), node.lon());
         RateCard.Quote q = card.quote(pickup ? RateCard.PICKUP : method, distance, weightKg);
-        int transit = (pickup ? 0 : q.transitDays() + dest.transitPenaltyDays() + sim.extraTransitDays()) + Transit.cutoffDelayDays(node, now);
+        int carrierTransit = pickup ? 0 : q.transitDays() + dest.transitPenaltyDays();
+        String carrier = pickup ? null : carrierFor(method, node.id());
+        if (!pickup) {
+            Optional<Double> p50 = laneNumber(carrier, node.id(), zip3, FactKey.LANE_TRANSIT_DAYS_P50, 5);
+            if (p50.isPresent()) carrierTransit = (int) Math.ceil(parameters.resolve(LaneDeliveryLearner.TRANSIT_PARAMETER, carrierTransit, p50.get()) - 1e-9);
+        }
+        int transit = carrierTransit + (pickup ? 0 : sim.extraTransitDays()) + Transit.cutoffDelayDays(node, now);
         double onTime = clamp(card.onTimeProbability(transit, node.reliability()) * (1 - node.penalty()) + sim.onTimeDelta());
+        if (!pickup) {
+            Optional<Double> offset = laneNumber(carrier, node.id(), zip3, FactKey.LANE_CALIBRATION_OFFSET, 10);
+            if (offset.isPresent()) onTime = clamp(onTime + parameters.resolve(LaneDeliveryLearner.CALIBRATION_PARAMETER, 0.0, offset.get()));
+        }
         return new NodeOption(node, distance, transit, round(onTime), q.cost(), Transit.eta(today, transit, settings.businessDaysOnly()));
     }
 

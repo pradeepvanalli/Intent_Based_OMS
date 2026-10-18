@@ -99,6 +99,9 @@ public class SoftScorer {
         order.put("destination_state", req.destination().state() == null ? "" : req.destination().state());
         order.put("ship_method", req.shipMethod());
         order.put("line_count", req.lines().size());
+        // FS-02: the SKU class carrying most units and the day part, so learned reliability can be that specific.
+        order.put("sku_class", dominantCategory(req));
+        order.put("day_part", ai.intentoms.learning.learner.NodeReliabilityLearner.dayPart(now));
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("order", order);
         input.put("candidates", cands);
@@ -139,6 +142,12 @@ public class SoftScorer {
             return new SoftScores(Map.of(), r.recordId(), r.layer().name(), r.band().name(), "none", notes);
         }
         return new SoftScores(scores, r.recordId(), r.layer().name(), r.band().name(), source, notes);
+    }
+
+    static String dominantCategory(SourcingRequest req) {
+        Map<String, Integer> units = new LinkedHashMap<>();
+        for (var l : req.lines()) units.merge(DefaultSourcingService.category(l), l.qty(), Integer::sum);
+        return units.entrySet().stream().max(Map.Entry.<String, Integer>comparingByValue().thenComparing(Map.Entry.comparingByKey())).map(Map.Entry::getKey).orElse("default");
     }
 
     /** Lowest ranked score for candidates outside the returned ranking (they were scored lower than every ranked node). */

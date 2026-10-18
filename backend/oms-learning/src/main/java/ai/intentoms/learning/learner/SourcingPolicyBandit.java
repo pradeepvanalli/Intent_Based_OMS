@@ -75,7 +75,9 @@ public class SourcingPolicyBandit implements GovernedLearner {
      */
     public Choice choose(String orderId, List<String> eligiblePolicies, String defaultPolicy, Map<String, Object> context, String actorRef) {
         LearnerGovernance.Gate gate = governance.begin(LEARNER_KEY);
-        Map<String, Double> weights = currentWeights(eligiblePolicies);
+        String bucket = bucket(context);
+        WeightSource source = currentWeights(eligiblePolicies, bucket);
+        Map<String, Double> weights = source.weights();
         // NF-04 (determinism): the draw is seeded once and the seed is stored on the record, so replaying it with the
         // same weights reproduces the same sampled arm.
         long seed = RANDOM.nextLong();
@@ -87,8 +89,11 @@ public class SourcingPolicyBandit implements GovernedLearner {
 
         String recordId = Ids.prefixed("dr");
         Map<String, Object> ctx = new LinkedHashMap<>(context);
+        ctx.put("bucket", bucket);
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("acted", acted);
+        details.put("bucket", bucket);
+        details.put("weightsFrom", source.from());
         details.put("autonomyLevel", gate.level().name());
         details.put("gate", gate.reason());
         details.put("appliedPolicy", applied);
@@ -136,23 +141,56 @@ public class SourcingPolicyBandit implements GovernedLearner {
         return sample(eligiblePolicies, weights, true, new Random(seed));
     }
 
-    /** Equal weight over eligible arms, overridden per-arm by the learned SOURCING_POLICY_PROPENSITY fact when present. */
-    private Map<String, Double> currentWeights(List<String> eligible) {
+    /**
+     * FS-01 context bucket: channel x intent x basket size x region. Basket size is 1, 2-3 or 4+ units; region is the
+     * destination ZIP's first digit (US postal regions), else the state, else "any".
+     */
+    public static String bucket(Map<String, Object> context) {
+        String channel = val(context.get("channel"), "any");
+        String intent = val(context.get("intentPolicy"), "none");
+        int units = context.get("basketUnits") instanceof Number n ? n.intValue() : context.get("lineCount") instanceof Number l ? l.intValue() : 1;
+        String basket = units <= 1 ? "1" : units <= 3 ? "2-3" : "4+";
+        String zip = val(context.get("destinationZip"), "");
+        String digits = zip.replaceAll("[^0-9]", "");
+        String region = !digits.isEmpty() ? "z" + digits.charAt(0) : val(context.get("destinationState"), "any");
+        return channel + "|" + intent + "|" + basket + "|" + region;
+    }
+
+    public static String bucketSubject(String bucket) { return "bandit:" + bucket; }
+
+    private static String val(Object o, String dflt) { return o == null || String.valueOf(o).isBlank() ? dflt : String.valueOf(o); }
+
+    record WeightSource(Map<String, Double> weights, String from) {}
+
+    /** The bucket's learned weights, else the pooled learned weights, else uniform over the eligible arms. */
+    private WeightSource currentWeights(List<String> eligible, String bucket) {
         Map<String, Double> uniform = new LinkedHashMap<>();
         for (String p : eligible) uniform.put(p, 1.0 / eligible.size());
-        var fact = facts.active(SubjectType.SEGMENT, "default", FactKey.SOURCING_POLICY_PROPENSITY);
-        if (fact.isEmpty() || !(fact.get().value() instanceof TypedValue.ListValue lv)) return uniform;
-        // Stored as alternating "policy:weight" labels, e.g. ["ship_complete:0.4", "split_up_to_k:0.2", ...]
+        for (String subject : List.of(bucketSubject(bucket), "default")) {
+            var fact = facts.active(SubjectType.SEGMENT, subject, FactKey.SOURCING_POLICY_PROPENSITY);
+            if (fact.isEmpty() || !(fact.get().value() instanceof TypedValue.ListValue lv)) continue;
+            Map<String, Double> weights = normalise(parseWeights(lv.values()), eligible);
+            if (weights != null) return new WeightSource(weights, subject + "@v" + fact.get().version());
+        }
+        return new WeightSource(uniform, "uniform");
+    }
+
+    /** Stored as "policy:weight" labels, e.g. ["ship_complete:0.4", "split_up_to_k:0.2", ...]. */
+    static Map<String, Double> parseWeights(List<String> labels) {
         Map<String, Double> learned = new LinkedHashMap<>();
-        for (String label : lv.values()) {
-            int i = label.indexOf(':');
+        for (String label : labels) {
+            int i = label.lastIndexOf(':');
             if (i < 0) continue;
             try { learned.put(label.substring(0, i), Double.parseDouble(label.substring(i + 1))); } catch (NumberFormatException ignored) {}
         }
+        return learned;
+    }
+
+    private static Map<String, Double> normalise(Map<String, Double> learned, List<String> eligible) {
         Map<String, Double> weights = new LinkedHashMap<>();
         double total = 0;
         for (String p : eligible) { double w = learned.getOrDefault(p, 0.05); weights.put(p, w); total += w; }
-        if (total <= 0) return uniform;
+        if (total <= 0) return null;
         for (var e : weights.entrySet()) e.setValue(e.getValue() / total);
         return weights;
     }

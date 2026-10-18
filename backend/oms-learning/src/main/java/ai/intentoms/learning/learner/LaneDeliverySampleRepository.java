@@ -6,15 +6,21 @@ import org.springframework.stereotype.Repository;
 
 import java.util.List;
 
-/** Raw per-delivery lane samples (FS-03, CX-01). Aggregated on read; see V1601 for the lane_key granularity note. */
+/** Raw per-delivery lane samples (FS-03, CX-01), one per (lane, order, node). Aggregated on read, newest samples first. */
 @Repository
 public class LaneDeliverySampleRepository {
     private final JdbcClient jdbc;
     public LaneDeliverySampleRepository(JdbcClient jdbc) { this.jdbc = jdbc; }
 
-    public void record(String laneKey, double transitDays, boolean onTime) {
-        jdbc.sql("insert into lane_delivery_sample(tenant_id, lane_key, transit_days, on_time) values (:t, :k, :d, :ot)")
-            .param("t", TenantContext.require()).param("k", laneKey).param("d", transitDays).param("ot", onTime).update();
+    public void record(String laneKey, double transitDays, boolean onTime) { record(laneKey, transitDays, onTime, null, null, null); }
+
+    /** Returns false when this order and node were already sampled for the lane. */
+    public boolean record(String laneKey, double transitDays, boolean onTime, Double statedOnTime, String orderId, String nodeId) {
+        return jdbc.sql("""
+            insert into lane_delivery_sample(tenant_id, lane_key, transit_days, on_time, stated_on_time, order_id, node_id) values (:t, :k, :d, :ot, :st, :o, :n)
+            on conflict (tenant_id, lane_key, order_id, node_id) where order_id is not null do nothing
+            """).param("t", TenantContext.require()).param("k", laneKey).param("d", transitDays).param("ot", onTime).param("st", statedOnTime)
+            .param("o", orderId).param("n", nodeId).update() == 1;
     }
 
     /** Most recent transit-day samples for a lane, newest first, capped so this stays O(1)-ish even on a busy lane. */
@@ -24,13 +30,19 @@ public class LaneDeliverySampleRepository {
             .param("t", t).param("k", laneKey).param("lim", limit).query(Double.class).list();
     }
 
-    public record OnTimeStats(long total, long onTimeCount) {}
+    /** {@code statedSamples}/{@code meanStated}: the samples that carried the on-time probability promised for them. */
+    public record OnTimeStats(long total, long onTimeCount, long statedSamples, double meanStated, long onTimeOfStated) {
+        public OnTimeStats(long total, long onTimeCount) { this(total, onTimeCount, 0, 0, 0); }
+    }
 
     public OnTimeStats onTimeStats(String laneKey, int sampleLimit) {
-        String t = TenantContext.require();
-        var rows = jdbc.sql("select on_time from (select on_time from lane_delivery_sample where tenant_id = :t and lane_key = :k order by observed_at desc limit :lim) s")
-            .param("t", t).param("k", laneKey).param("lim", sampleLimit).query(Boolean.class).list();
-        return new OnTimeStats(rows.size(), rows.stream().filter(Boolean::booleanValue).count());
+        var r = jdbc.sql("""
+            select count(*) as n, count(*) filter (where on_time) as ot, count(stated_on_time) as ns, coalesce(avg(stated_on_time), 0) as ms,
+                   count(*) filter (where on_time and stated_on_time is not null) as ots
+            from (select on_time, stated_on_time from lane_delivery_sample where tenant_id = :t and lane_key = :k order by observed_at desc limit :lim) s
+            """).param("t", TenantContext.require()).param("k", laneKey).param("lim", sampleLimit).query().singleRow();
+        return new OnTimeStats(((Number) r.get("n")).longValue(), ((Number) r.get("ot")).longValue(), ((Number) r.get("ns")).longValue(),
+            ((Number) r.get("ms")).doubleValue(), ((Number) r.get("ots")).longValue());
     }
 
     public List<String> lanesWithSamples() {
