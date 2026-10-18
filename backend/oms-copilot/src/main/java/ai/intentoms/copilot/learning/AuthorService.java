@@ -140,8 +140,7 @@ public class AuthorService {
         proposals.insert(p);
         hypotheses.updateStatus(hypothesisId, Hypothesis.Status.DRAFTED);
         audit.record("author", FEATURE, "hypothesis", hypothesisId, LearningSchemas.CHANGESET, PROMPT, prompt, "ok", p.proposalId());
-        events.proposalDrafted(p.proposalId(), Actor.system("author"), Map.of("hypothesisId", hypothesisId, "target", changeset.target().toString(), "changeCount", changes.size(),
-            "schemaHash", LearningLlmAudit.schemaHash(LearningSchemas.CHANGESET)));
+        // proposal.drafted is recorded by ProposalRepository.insert (GV-04); the schema hash is on the audit row above.
         return Optional.of(p);
     }
 

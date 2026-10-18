@@ -14,6 +14,7 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 /**
  * GV-01 / GV-03: the one place that says whether a learner may run, propose, or feed a live decision right now.
@@ -95,35 +96,52 @@ public class LearnerGovernance {
         return new Gate(learnerKey, true, s.autonomyLevel(), "ok");
     }
 
-    // ---- changes (all invalidate the cached gates for this tenant)
+    // ---- changes (all invalidate the cached gates for this tenant and are ledger events, GV-04)
+
+    private ai.intentoms.learning.event.LearningEvents events;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setEvents(ai.intentoms.learning.event.LearningEvents events) { this.events = events; }
 
     public LearnerState setAutonomy(String learnerKey, AutonomyLevel level, String by) {
+        AutonomyLevel before = learners.getOrCreate(learnerKey).autonomyLevel();
         learners.setAutonomy(learnerKey, level, by, Instant.now());
         invalidate();
+        if (events != null) events.learnerAutonomyChanged(learnerKey, actor(by), Map.of("learner", learnerKey, "from", before.name(), "to", level.name()));
         return learners.getOrCreate(learnerKey);
     }
 
     public LearnerState setEnabled(String learnerKey, boolean enabled, String by) {
         learners.killSwitch(learnerKey, enabled, by, Instant.now());
         invalidate();
+        if (events != null) events.learnerSwitched(learnerKey, actor(by), Map.of("learner", learnerKey, "enabled", enabled));
         return learners.getOrCreate(learnerKey);
     }
 
     /** GV-03: pause or resume all learning for this tenant; live paths fall back to their last stable values. */
-    public void setTenantKillSwitch(boolean paused) {
+    public void setTenantKillSwitch(boolean paused) { setTenantKillSwitch(paused, "system:learning-governance"); }
+
+    public void setTenantKillSwitch(boolean paused, String by) {
         config.set(TENANT_KILL_SWITCH, paused);
         invalidate();
+        if (events != null) events.tenantKillSwitch(actor(by), Map.of("paused", paused));
     }
 
     public void pause(String learnerKey, String reason, String by) {
         learners.pause(learnerKey, reason, by, Instant.now());
         metrics.count("oms.learning.learner.auto_paused", "learner", learnerKey, "reason", reason);
         invalidate();
+        if (events != null) events.learnerPaused(learnerKey, actor(by), Map.of("learner", learnerKey, "reason", reason));
     }
 
     public void resume(String learnerKey, String by) {
         learners.resume(learnerKey, by, Instant.now());
         invalidate();
+        if (events != null) events.learnerResumed(learnerKey, actor(by), Map.of("learner", learnerKey));
+    }
+
+    private static ai.intentoms.platform.ledger.Actor actor(String by) {
+        return ai.intentoms.platform.ledger.Actor.parse(by == null || by.isBlank() ? "system:learning-governance" : by);
     }
 
     public List<LearnerState> states() {

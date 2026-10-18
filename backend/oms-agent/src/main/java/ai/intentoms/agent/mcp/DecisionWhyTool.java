@@ -11,7 +11,8 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.Map;
 
-/** {@code decision_why}: customer-safe explanation of a decision record (FR-AGT-01, FR-XAI-04); tier-0 ownership via the record's subject. */
+/** {@code decision_why}: customer-safe explanation of a decision record (FR-AGT-01, FR-XAI-04), including the
+ * customer-safe learned context of XP-05 ({@link CustomerSafeTraceView#learnedContext()}); tier-0 ownership via the record's subject. */
 @Component
 public class DecisionWhyTool implements McpTool {
     private final DecisionService decisions;
@@ -23,7 +24,7 @@ public class DecisionWhyTool implements McpTool {
     }
 
     @Override public String name() { return "decision_why"; }
-    @Override public String description() { return "Why a decision was made, in customer-safe form: value, band, action, layer, reason codes and the questions answered. Internal economics and risk data are withheld."; }
+    @Override public String description() { return "Why a decision was made, in customer-safe form: value, band, action, layer, reason codes, the questions answered and learnedContext, plain sentences naming the learned knowledge it took into account (XP-05). Internal economics, risk data and learned values are withheld."; }
     @Override public boolean readOnly() { return true; }
     @Override public String orderIdOf(Map<String, Object> args) { return null; }
 

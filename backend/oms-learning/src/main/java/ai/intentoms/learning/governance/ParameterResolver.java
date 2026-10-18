@@ -81,13 +81,31 @@ public class ParameterResolver {
     public void promote(String parameter, String learnerKey, Double min, Double max, Double maxStep, String proposalId, String by) {
         live.promote(parameter, learnerKey, min, max, maxStep, proposalId, by, Instant.now());
         invalidate(parameter);
+        if (events != null) {
+            Map<String, Object> p = new LinkedHashMap<>();
+            p.put("parameter", parameter);
+            p.put("status", "LIVE");
+            p.put("learner", learnerKey);
+            p.put("min", min);
+            p.put("max", max);
+            p.put("maxStep", maxStep);
+            p.put("proposalId", proposalId);
+            events.liveParameterChanged(parameter, ai.intentoms.platform.ledger.Actor.parse(by), p);
+        }
     }
 
     public boolean revoke(String parameter, String by) {
         boolean r = live.revoke(parameter, by, Instant.now());
         invalidate(parameter);
+        if (r && events != null) events.liveParameterChanged(parameter, ai.intentoms.platform.ledger.Actor.parse(by), Map.of("parameter", parameter, "status", "REVOKED"));
         return r;
     }
+
+    private ai.intentoms.learning.event.LearningEvents events;
+
+    /** GV-04: live-use promotion and revocation are ledger events. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setEvents(ai.intentoms.learning.event.LearningEvents events) { this.events = events; }
 
     private Resolution fallback(String parameter, Double staticValue, Double learned, String reason) {
         metrics.count("oms.learning.parameter.served", "parameter", parameter, "source", "static");

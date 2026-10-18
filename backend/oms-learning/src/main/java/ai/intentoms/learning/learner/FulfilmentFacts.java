@@ -1,18 +1,15 @@
 package ai.intentoms.learning.learner;
 
-import ai.intentoms.learning.event.LearningEvents;
 import ai.intentoms.learning.model.FactKey;
 import ai.intentoms.learning.model.LearnedFact;
 import ai.intentoms.learning.model.SubjectType;
 import ai.intentoms.learning.model.TypedValue;
 import ai.intentoms.learning.store.LearnedFactRepository;
 import ai.intentoms.platform.ids.Ids;
-import ai.intentoms.platform.ledger.Actor;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -23,11 +20,9 @@ import java.util.Optional;
 @Component
 public class FulfilmentFacts {
     private final LearnedFactRepository facts;
-    private final LearningEvents events;
 
-    public FulfilmentFacts(LearnedFactRepository facts, LearningEvents events) {
+    public FulfilmentFacts(LearnedFactRepository facts) {
         this.facts = facts;
-        this.events = events;
     }
 
     /**
@@ -61,6 +56,5 @@ public class FulfilmentFacts {
         int version = prev.map(f -> f.version() + 1).orElse(1);
         facts.supersede(st, subjectId, key, now);
         facts.insert(new LearnedFact(Ids.prefixed("fact"), st, subjectId, key, value, Math.min(1.0, sampleSize / 30.0), sampleSize, learner, version, now, null, now));
-        events.factLearned(subjectId, Actor.system(learner), Map.of("subjectType", st.name(), "factKey", key.name(), "version", version, "sampleSize", sampleSize));
     }
 }

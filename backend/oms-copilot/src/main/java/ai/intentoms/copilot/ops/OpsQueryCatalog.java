@@ -99,6 +99,24 @@ public class OpsQueryCatalog {
             "select o.id as order_id, o.channel, o.channel_order_id, o.order_type, o.status, o.customer_ref, o.grand_total, o.primary_node_id as node_id, o.placed_at from orders o where o.tenant_id = :tenant{filters} order by o.placed_at desc limit :limit",
             List.of(customer, new Param("orderId", ParamType.CUSTOMER_REF, false, " and (o.id = :orderId or o.channel_order_id = :orderId)", "Order id or channel order id"), state, limit),
             List.of("find order", "lookup", "customer", "order id", "orders for"), "Show the orders for customer cust-jane");
+
+        // XP-06: the self-optimizing layer's tables.
+        add("learning_proposals_by_status", "Learning proposals counted by status with the oldest one in each",
+            "select p.status, count(*) as proposals, min(p.created_at) as oldest, count(distinct p.target_ref) as targets from proposal p where p.tenant_id = :tenant and p.created_at >= now() - make_interval(hours => :hours) group by p.status order by proposals desc",
+            List.of(new Param("hours", ParamType.HOURS, false, null, "Look-back window in hours (default 720)")), List.of("proposal", "proposals", "pending change", "learning queue", "awaiting review"), "How many learning proposals are waiting for review?");
+        add("learning_recent_promotions", "Changes the learning layer promoted or rolled back, newest first",
+            "select p.proposal_id, p.target_ref, p.tier, p.status, coalesce(p.approved_by, 'automatic') as approved_by, p.promoted_at, p.rolled_back_at, p.rolled_back_reason from proposal p where p.tenant_id = :tenant and (p.promoted_at >= now() - make_interval(hours => :hours) or p.rolled_back_at >= now() - make_interval(hours => :hours)) order by coalesce(p.rolled_back_at, p.promoted_at) desc limit :limit",
+            List.of(new Param("hours", ParamType.HOURS, false, null, "Look-back window in hours (default 720)"), limit), List.of("promoted", "promotion", "rolled back", "rollback", "what changed", "learning changed"), "What did learning promote this month?");
+        add("learner_status", "Every learner with its autonomy level, on/off switch, pause reason and last run",
+            "select l.learner_key, l.autonomy_level, l.enabled, l.paused_reason, l.last_run_at, l.max_promotions_per_week from learner l where l.tenant_id = :tenant order by l.learner_key",
+            List.of(), List.of("learner", "learners", "autonomy", "paused", "kill switch"), "Which learners are paused?");
+        add("episode_outcome_coverage", "Episodes per decision with how many have an outcome, are mature, and their mean reward",
+            "select e.decision_name, count(*) as episodes, count(*) filter (where exists (select 1 from outcome o where o.tenant_id = e.tenant_id and o.episode_id = e.episode_id)) as with_outcome, count(*) filter (where e.status = 'MATURE') as mature, round(avg(e.reward)::numeric, 4) as mean_reward from episode e where e.tenant_id = :tenant and e.created_at >= now() - make_interval(hours => :hours){filters} group by e.decision_name order by episodes desc",
+            List.of(new Param("hours", ParamType.HOURS, false, null, "Look-back window in hours (default 720)"), new Param("decisionName", ParamType.DECISION, false, " and e.decision_name = :decisionName", "Decision name")),
+            List.of("episode", "episodes", "coverage", "reward", "outcomes"), "What is the outcome coverage per decision?");
+        add("learned_facts_by_key", "Active learned facts counted by subject type and fact key, with the latest update",
+            "select f.subject_type, f.fact_key, count(*) as active_facts, max(f.created_at) as last_updated, round(avg(f.sample_size)::numeric, 1) as avg_sample_size from learned_fact f where f.tenant_id = :tenant and f.valid_to is null group by f.subject_type, f.fact_key order by active_facts desc",
+            List.of(), List.of("learned fact", "facts", "learned", "posterior", "node reliability"), "Which learned facts do we have?");
     }
 
     private void add(String name, String description, String sql, List<Param> params, List<String> keywords, String example) {
@@ -135,7 +153,10 @@ public class OpsQueryCatalog {
         return new BoundQuery(t, sql, bound);
     }
 
-    private static int defaultHours(String template) { return template.equals("returns_by_timing") || template.equals("decision_band_mix") ? 168 : 24; }
+    private static int defaultHours(String template) {
+        if (template.startsWith("learning_") || template.equals("episode_outcome_coverage")) return 720;
+        return template.equals("returns_by_timing") || template.equals("decision_band_mix") ? 168 : 24;
+    }
 
     static Object coerce(Param p, Object v) {
         String s = String.valueOf(v).trim();

@@ -46,13 +46,18 @@ public class LearningController {
     private final ai.intentoms.learning.service.RewardMaturityService rewardMaturity;
     private final ai.intentoms.learning.promotion.PromotionService promotion;
     private final ai.intentoms.learning.promotion.GuardrailBreachMonitor guardrails;
+    private final ai.intentoms.learning.service.ObjectiveService objectiveService;
+    private final ai.intentoms.learning.event.LearningEvents events;
 
     public LearningController(LearnerRepository learners, LearnedFactRepository facts, ProposalRepository proposals, ObjectiveProfileRepository objectives, AuthorizationService authz,
                               ai.intentoms.learning.governance.LearnerGovernance governance, ai.intentoms.learning.governance.LearnerRegistry registry,
                               ai.intentoms.learning.governance.LiveParameterRepository liveParameters, ai.intentoms.learning.service.CoverageMonitor coverage,
                               ai.intentoms.platform.config.TenantConfigStore config, List<ai.intentoms.learning.governance.GovernedLearner> learnerBeans,
                               ai.intentoms.learning.service.RewardMaturityService rewardMaturity, ai.intentoms.learning.promotion.PromotionService promotion,
-                              ai.intentoms.learning.promotion.GuardrailBreachMonitor guardrails) {
+                              ai.intentoms.learning.promotion.GuardrailBreachMonitor guardrails, ai.intentoms.learning.service.ObjectiveService objectiveService,
+                              ai.intentoms.learning.event.LearningEvents events) {
+        this.objectiveService = objectiveService;
+        this.events = events;
         this.learnerBeans = learnerBeans;
         this.rewardMaturity = rewardMaturity;
         this.promotion = promotion;
@@ -148,7 +153,7 @@ public class LearningController {
     @RequiresPermission(Permissions.LEARNING_ADMIN)
     public KillSwitchState killSwitch(@RequestBody KillSwitch body) {
         if (body == null) throw new ValidationException("body is required");
-        if (body.learnerKey() == null || body.learnerKey().isBlank() || "*".equals(body.learnerKey())) governance.setTenantKillSwitch(!body.enabled());
+        if (body.learnerKey() == null || body.learnerKey().isBlank() || "*".equals(body.learnerKey())) governance.setTenantKillSwitch(!body.enabled(), actorRef());
         else { descriptor(body.learnerKey()); governance.setEnabled(body.learnerKey(), body.enabled(), actorRef()); }
         return killSwitchState();
     }
@@ -204,13 +209,20 @@ public class LearningController {
         String by = actorRef();
         if (by.equals(p.createdBy())) throw new ValidationException("The author of a proposal cannot approve it themselves");
         proposals.approve(id, by, Instant.now());
+        events.proposalApproved(id, ai.intentoms.platform.ledger.Actor.parse(by), Map.of("target", p.changeset().target().toString(), "tier", p.tier().name(), "author", p.createdBy()));
         return proposals.get(id);
     }
 
     @PostMapping("/proposals/{id}/reject")
     @RequiresPermission(Permissions.LEARNING_ADMIN)
     public Proposal reject(@PathVariable String id, @RequestBody(required = false) Map<String, String> body) {
-        proposals.reject(id, body == null ? null : body.get("reason"), Instant.now());
+        Proposal p = proposals.get(id);
+        String reason = body == null ? null : body.get("reason");
+        proposals.reject(id, reason, Instant.now());
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("target", p.changeset().target().toString());
+        payload.put("reason", reason);
+        events.proposalRejected(id, ai.intentoms.platform.ledger.Actor.parse(actorRef()), payload);
         return proposals.get(id);
     }
 
@@ -220,18 +232,25 @@ public class LearningController {
         return objectives.live().orElseGet(() -> new ObjectiveProfile(0, ObjectiveProfile.Status.DRAFT, ObjectiveWeights.preset("balanced"), Map.of(), null, null, "system", Instant.now()));
     }
 
+    /** XP-07: submitting weights creates a DRAFT; it goes live only through {@link #approveObjective} by another person. */
     @PutMapping("/objective")
     @RequiresPermission(Permissions.LEARNING_ADMIN)
     public ObjectiveProfile setObjective(@RequestBody ObjectiveUpdate body) {
         if (body == null || body.weights() == null) throw new ValidationException("weights is required");
-        int v = objectives.nextVersion();
-        String by = actorRef();
-        Instant now = Instant.now();
-        ObjectiveProfile p = new ObjectiveProfile(v, ObjectiveProfile.Status.APPROVED, body.weights(), body.constraints() == null ? Map.of() : body.constraints(), by, now, by, now);
-        objectives.insert(p);
-        objectives.approve(v, by, now);
-        return p;
+        return objectiveService.draft(body.weights(), body.constraints(), actorRef(), null, "manual", Map.of());
     }
+
+    @GetMapping("/objective/drafts")
+    @RequiresPermission(Permissions.LEARNING_READ)
+    public List<ObjectiveProfile> objectiveDrafts() { return objectiveService.drafts(); }
+
+    @GetMapping("/objective/history")
+    @RequiresPermission(Permissions.LEARNING_READ)
+    public List<ObjectiveProfile> objectiveHistory(@RequestParam(value = "limit", defaultValue = "20") int limit) { return objectiveService.history(Math.max(1, Math.min(limit, 100))); }
+
+    @PostMapping("/objective/{version}/approve")
+    @RequiresPermission(Permissions.LEARNING_ADMIN)
+    public ObjectiveProfile approveObjective(@PathVariable int version) { return objectiveService.approve(version, actorRef()); }
 
     private String actorRef() { return authz.requirePrincipal().actorRef(); }
 }

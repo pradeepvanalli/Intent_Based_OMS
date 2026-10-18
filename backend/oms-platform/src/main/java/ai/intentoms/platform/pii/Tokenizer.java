@@ -100,9 +100,16 @@ public class Tokenizer {
         return raw;
     }
 
-    /** Crypto-shred: rotate the key so all historical tokens become unlinkable. */
+    /** Crypto-shred: rotate the key so all historical tokens become unlinkable, then tell listeners (GV-06) so data
+     * derived from those tokens is deleted too. */
     public void shred(String tenant) {
         jdbc.sql("update tenant_key set active = false, retired_at = now() where tenant_id = :t and purpose = 'pii'").param("t", tenant).update();
         keys.remove(tenant);
+        if (publisher != null) publisher.publishEvent(new PiiShreddedEvent(tenant, null, "system:tokenizer", java.time.Instant.now()));
     }
+
+    private org.springframework.context.ApplicationEventPublisher publisher;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setPublisher(org.springframework.context.ApplicationEventPublisher publisher) { this.publisher = publisher; }
 }
