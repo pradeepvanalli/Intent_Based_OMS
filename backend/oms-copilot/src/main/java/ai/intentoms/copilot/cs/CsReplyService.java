@@ -10,6 +10,7 @@ import ai.intentoms.decision.model.DecisionRecord;
 import ai.intentoms.decision.model.DecisionResult;
 import ai.intentoms.decision.runtime.DecisionService;
 import ai.intentoms.finance.payment.Refund;
+import ai.intentoms.order.contact.CustomerContactService;
 import ai.intentoms.order.model.FulfilmentGroup;
 import ai.intentoms.order.model.Order;
 import ai.intentoms.order.model.OrderLine;
@@ -56,14 +57,17 @@ public class CsReplyService {
     private final PromptTemplates templates;
     private final AuthorizationService authz;
     private final TimeSource time;
+    private final CustomerContactService contacts;
 
-    public CsReplyService(OrderService orders, DecisionService decisions, CopilotLlmClient llm, PromptTemplates templates, AuthorizationService authz, TimeSource time) {
+    public CsReplyService(OrderService orders, DecisionService decisions, CopilotLlmClient llm, PromptTemplates templates, AuthorizationService authz, TimeSource time,
+                          CustomerContactService contacts) {
         this.orders = orders;
         this.decisions = decisions;
         this.llm = llm;
         this.templates = templates;
         this.authz = authz;
         this.time = time;
+        this.contacts = contacts;
     }
 
     public CsDraft draft(String orderId, String customerMessage, String intentHint) {
@@ -71,6 +75,7 @@ public class CsReplyService {
         OrderView view = orders.view(orderId);
         Map<String, Object> classification = classify(view, customerMessage, intentHint);
         String intent = String.valueOf(classification.get("intent"));
+        recordWismo(orderId, intent, customerMessage);
         Map<String, Object> facts = facts(view);
         Map<String, Object> slots = slots(view, facts);
         if (llm.available()) {
@@ -96,6 +101,20 @@ public class CsReplyService {
             }
         }
         return new CsDraft(template(view, intent, slots, facts), List.copyOf(slotsUsed(slots)), slots, DISCLAIMER, classification, false, null, "no model key configured", facts);
+    }
+
+    /**
+     * OC-03: a customer asking where their order is counts against the decisions that shaped it (the reward's contact
+     * term). Recorded once per message (the message hash is the contact's external id), so re-drafting the same
+     * message does not count twice. Never fails the draft.
+     */
+    private void recordWismo(String orderId, String intent, String message) {
+        if (!"wismo".equals(intent)) return;
+        try {
+            contacts.record(orderId, new CustomerContactService.Contact("wismo", "cs", "cs_copilot", "cs-msg:" + ai.intentoms.platform.json.Json.sha256(message).substring(0, 16)));
+        } catch (RuntimeException e) {
+            log.warn("Could not record WISMO contact for order {}: {}", orderId, e.toString());
+        }
     }
 
     private Map<String, Object> classify(OrderView view, String message, String hint) {
