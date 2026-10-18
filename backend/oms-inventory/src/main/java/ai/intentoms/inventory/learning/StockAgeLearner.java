@@ -129,7 +129,7 @@ public class StockAgeLearner implements GovernedLearner {
     @Override
     public LearnerDescriptor descriptor() {
         return LearnerDescriptor.of(KEY, "Stock age", "Tracks how long stock has sat at each location and flags stock that has stopped selling, so orders can be sent to use it up first.",
-            LearnerDescriptor.Loop.FAST, "IU-03").features("inventory_position.received_at", "inventory_reservation");
+            LearnerDescriptor.Loop.FAST, "IU-03").features("inventory_position.received_at", "inventory_reservation").feeds("sourcing.aged_stock_tiebreak");
     }
 
     @Override public boolean runnable() { return true; }

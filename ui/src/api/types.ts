@@ -249,6 +249,8 @@ export interface LearnerView {
   outcomeDecisions: string[]; liveParameters: string[]; autonomyLevel: AutonomyLevel; enabled: boolean; paused: boolean;
   pausedReason?: string | null; running: boolean; gateReason: string; maxPromotionsPerWeek: number; maxStep?: number | null;
   lastRunAt?: string | null; updatedBy?: string | null; updatedAt?: string | null;
+  /** True for batch learners that support "Run now"; event-driven learners update as events arrive. */
+  runnable?: boolean;
 }
 /** @deprecated the learner list returns {@link LearnerView}. */
 export type LearnerState = LearnerView;

@@ -83,7 +83,8 @@ public class LearningController {
     /** A learner as people see it: what it is (descriptor) plus how it is governed right now (state and gate). */
     public record LearnerView(String learnerKey, String displayName, String summary, String loop, String requirement, List<String> outcomeDecisions,
                               List<String> liveParameters, AutonomyLevel autonomyLevel, boolean enabled, boolean paused, String pausedReason,
-                              boolean running, String gateReason, int maxPromotionsPerWeek, Double maxStep, Instant lastRunAt, String updatedBy, Instant updatedAt) {}
+                              boolean running, String gateReason, int maxPromotionsPerWeek, Double maxStep, Instant lastRunAt, String updatedBy, Instant updatedAt,
+                              boolean runnable) {}
 
     @GetMapping("/learners")
     @RequiresPermission(Permissions.LEARNING_READ)
@@ -172,12 +173,16 @@ public class LearningController {
         return registry.descriptor(key).orElseThrow(() -> new ai.intentoms.platform.error.NotFoundException("No learner '" + key + "'"));
     }
 
+    private boolean runnable(String key) {
+        return learnerBeans.stream().anyMatch(l -> l.descriptor().key().equals(key) && l.runnable());
+    }
+
     private LearnerView view(ai.intentoms.learning.governance.LearnerDescriptor d, LearnerState s) {
         LearnerState st = s == null ? LearnerState.defaultFor(d.key(), d.defaultAutonomy()) : s;
         var gate = governance.gate(d.key());
         return new LearnerView(d.key(), d.displayName(), d.summary(), d.loop().name(), d.requirement(), d.outcomeDecisions(), d.liveParameters(),
             st.autonomyLevel(), st.enabled(), st.paused(), st.pausedReason(), gate.mayRun(), gate.reason(), st.maxPromotionsPerWeek(), st.maxStep(),
-            st.lastRunAt(), st.updatedBy(), st.updatedAt());
+            st.lastRunAt(), st.updatedBy(), st.updatedAt(), runnable(d.key()));
     }
 
     @GetMapping("/facts")

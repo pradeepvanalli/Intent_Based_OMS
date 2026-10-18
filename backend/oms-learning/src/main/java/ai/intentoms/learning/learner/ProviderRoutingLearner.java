@@ -177,7 +177,8 @@ public class ProviderRoutingLearner implements GovernedLearner {
 
     @Override
     public LearnerDescriptor descriptor() {
-        return LearnerDescriptor.of(KEY, "AI provider routing", "Finds the cheapest AI provider that is just as accurate for each decision.", LearnerDescriptor.Loop.FAST, "DF-05").feeds("decision.provider");
+        return LearnerDescriptor.of(KEY, "AI provider routing", "Finds the cheapest AI provider that is just as accurate for each decision.", LearnerDescriptor.Loop.FAST, "DF-05");
+        // Routing goes live as a promoted config change (learning.provider_route.<decision>), not as a learned live value.
     }
 
     @Override public boolean runnable() { return true; }

@@ -80,7 +80,7 @@ function LearnerRow({ learner: l, metrics, canAdmin, canConfigure }: { learner: 
   const run = useMutation({ mutationFn: () => learningApi.runLearner(l.learnerKey), onSuccess: () => { toast.ok(`${l.displayName} ran`, 'Anything it found shows up under Changes.'); invalidate(); qc.invalidateQueries({ queryKey: ['learning', 'proposals'] }); } });
 
   const status = l.running ? { tone: 'ok', text: 'Running' } : l.paused ? { tone: 'warn', text: gateWords(l.gateReason) } : !l.enabled ? { tone: 'neutral', text: 'Switched off' } : { tone: 'warn', text: gateWords(l.gateReason) };
-  const runnable = !EVENT_DRIVEN.has(l.learnerKey);
+  const runnable = l.runnable ?? !EVENT_DRIVEN.has(l.learnerKey);
 
   return (
     <div className="learner-row" data-testid={`learner-${l.learnerKey}`}>
