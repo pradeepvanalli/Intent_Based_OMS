@@ -106,4 +106,19 @@ class HumanTaskServiceTest extends WorkflowTestBase {
         var claimedByMe = tasks.listMine(java.util.Set.of(), "cs-user", "CLAIMED", 0, 500).items();
         assertThat(claimedByMe).extracting(HumanTask::id).contains(other.id());
     }
+
+    @org.springframework.beans.factory.annotation.Autowired ai.intentoms.workflow.api.QueueController queueController;
+
+    /** The queue list carries live open / claimed / overdue counts and an ISO SLA, including queues with no config row. */
+    @Test
+    void queueListCarriesLiveCounts() {
+        String q = "adhoc_" + System.nanoTime();
+        tasks.create(TaskRequest.of("review", q, "One"));
+        HumanTask two = tasks.create(TaskRequest.of("review", q, "Two"));
+        tasks.claim(two.id(), "someone");
+        var view = queueController.list().stream().filter(v -> v.name().equals(q)).findFirst().orElseThrow();
+        assertThat(view.openCount()).isEqualTo(1);
+        assertThat(view.claimedCount()).isEqualTo(1);
+        assertThat(view.slaDefault()).startsWith("PT");
+    }
 }

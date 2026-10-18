@@ -19,14 +19,35 @@ import java.util.Set;
 @RequestMapping("/api/v1/queues")
 public class QueueController {
     private final TaskQueueService queues;
+    private final ai.intentoms.workflow.task.HumanTaskService tasks;
 
-    public QueueController(TaskQueueService queues) { this.queues = queues; }
+    public QueueController(TaskQueueService queues, ai.intentoms.workflow.task.HumanTaskService tasks) {
+        this.queues = queues;
+        this.tasks = tasks;
+    }
+
+    /**
+     * A queue with its live load: {@code slaDefault} as an ISO-8601 duration, open / claimed / overdue counts. Queues
+     * that have open work but no configuration row are listed too (with the default SLA), so no task is invisible.
+     */
+    public record QueueView(String name, int defaultSlaMinutes, String slaDefault, String escalationQueue, Set<String> skills, String description,
+                            long openCount, long claimedCount, long overdueCount) {}
 
     public record QueueRequest(Integer defaultSlaMinutes, String escalationQueue, Set<String> skills, String description) {}
 
     @GetMapping
     @RequiresPermission(Permissions.TASK_READ)
-    public List<TaskQueue> list() { return queues.list(); }
+    public List<QueueView> list() {
+        java.util.Map<String, long[]> counts = tasks.queueCounts();
+        java.util.Map<String, TaskQueue> byName = new java.util.TreeMap<>();
+        queues.list().forEach(q -> byName.put(q.name(), q));
+        counts.keySet().forEach(n -> byName.computeIfAbsent(n, k -> new TaskQueue(k, 0, null, Set.of(), null)));
+        return byName.values().stream().map(q -> {
+            long[] c = counts.getOrDefault(q.name(), new long[3]);
+            return new QueueView(q.name(), q.defaultSlaMinutes(), java.time.Duration.ofMinutes(q.defaultSlaMinutes()).toString(), q.escalationQueue(),
+                q.skills(), q.description(), c[0], c[1], c[2]);
+        }).toList();
+    }
 
     @GetMapping("/{name}")
     @RequiresPermission(Permissions.TASK_READ)

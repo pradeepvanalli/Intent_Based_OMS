@@ -193,6 +193,20 @@ public class JdbcHumanTaskService implements HumanTaskService {
     }
 
     @Override
+    public Map<String, long[]> queueCounts() {
+        Map<String, long[]> out = new java.util.TreeMap<>();
+        jdbc.sql("""
+            select queue,
+                   count(*) filter (where status = 'OPEN') as open_count,
+                   count(*) filter (where status = 'CLAIMED') as claimed_count,
+                   count(*) filter (where sla_due_at < now()) as overdue_count
+            from human_task where tenant_id = :t and status in ('OPEN', 'CLAIMED') group by queue
+            """).param("t", TenantContext.require()).query().listOfRows().forEach(r -> out.put((String) r.get("queue"),
+                new long[]{((Number) r.get("open_count")).longValue(), ((Number) r.get("claimed_count")).longValue(), ((Number) r.get("overdue_count")).longValue()}));
+        return out;
+    }
+
+    @Override
     public Page<HumanTask> listMine(java.util.Set<String> queues, String assignee, String status, int offset, int limit) {
         int off = Math.max(0, offset);
         int lim = limit <= 0 || limit > 500 ? 50 : limit;

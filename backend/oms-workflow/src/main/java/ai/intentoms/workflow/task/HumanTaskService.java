@@ -28,6 +28,9 @@ public interface HumanTaskService {
 
     Page<HumanTask> list(TaskQuery q);
 
+    /** Per queue: open, claimed and overdue (open or claimed past its SLA) task counts. */
+    java.util.Map<String, long[]> queueCounts();
+
     /** Tasks in any of {@code queues} (null = every queue) or assigned to {@code assignee}, optionally by status. */
     Page<HumanTask> listMine(java.util.Set<String> queues, String assignee, String status, int offset, int limit);
 
