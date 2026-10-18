@@ -15,15 +15,19 @@ import { Switch, Textarea, Select, Input } from '../Form';
 import { JsonTree, KeyValue, LayerStepper, ProbBar, ScorePips } from '../Misc';
 import { ErrorState, Loading } from '../States';
 import { IconCheck, IconClose, IconSparkle } from '../Icons';
+import { useTechnical } from '../../lib/technical';
+import { CustomerLearnedContext, LearningSection } from './LearningSection';
+import '../../pages/learning/learning.css';
 
 export function WhyDrawer({ recordId, onClose }: { recordId: string | null; onClose: () => void }) {
   const [customer, setCustomer] = useState(false);
+  const [technical, setTechnical] = useTechnical();
   const q = useQuery({ queryKey: ['why', recordId, customer ? 'customer' : 'internal'], queryFn: () => decisionRecordsApi.why(recordId!, customer ? 'customer' : 'internal'), enabled: !!recordId });
   return (
     <Drawer open={!!recordId} onClose={onClose} width={680}
       title={<span className="row gap3">Why<span className="id muted">{recordId}</span></span>}
       subtitle={q.data ? <span className="row wrap gap3"><span>{q.data.definition.name} <span className="mono">v{q.data.definition.version}</span></span><TierBadge tier={q.data.definition.tier} /><BandBadge band={q.data.band} /><LayerBadge layer={q.data.record.layer} /><Badge tone="outline">{q.data.record.mode}</Badge></span> : undefined}
-      footer={<><Switch label="Customer-safe view" checked={customer} onChange={setCustomer} /><span className="grow" /><Button onClick={onClose}>Close</Button></>}>
+      footer={<><Switch label="Customer-safe view" checked={customer} onChange={setCustomer} />{!customer && <Switch label="Technical details" checked={technical} onChange={setTechnical} />}<span className="grow" /><Button onClick={onClose}>Close</Button></>}>
       {q.isLoading && <Loading label="Loading trace…" />}
       {q.isError && <ErrorState error={q.error} retry={() => q.refetch()} />}
       {q.data && <WhyBody trace={q.data} customer={customer} />}
@@ -75,6 +79,8 @@ export function WhyBody({ trace, customer }: { trace: DecisionTrace; customer: b
         </section>
       )}
 
+      {!customer && <LearningSection learning={trace.learning} />}
+      {customer && <CustomerLearnedContext sentences={trace.learnedContext} />}
       {!customer && <LearnedContext subjectType={r.subjectType} subjectId={r.subjectId} />}
 
       <section>
@@ -182,7 +188,7 @@ function LearnedContext({ subjectType, subjectId }: { subjectType?: string | nul
   if (!enabled || (q.data && q.data.length === 0)) return null;
   return (
     <section>
-      <div className="section-title">Learned context</div>
+      <div className="section-title">What has been learned about this {subjectType?.toLowerCase().replace(/_/g, ' ')} today</div>
       {q.isLoading && <Loading inline label="Loading learned facts…" />}
       {q.data && q.data.length > 0 && (
         <div className="subtle-list small">

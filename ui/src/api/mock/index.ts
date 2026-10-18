@@ -345,8 +345,26 @@ on('GET', '/api/v1/decision-records/:id/why', ({ params, query }): DecisionTrace
     override: r.overridden ? { by: 'user:ops', at: r.evaluatedAt, value: r.overrideValue, reason: r.overrideReason ?? '' } : null, label: r.label ? { label: r.label, at: new Date().toISOString(), by: 'user:ops' } : null,
     explanation: audience === 'customer' ? undefined : `${r.decision.replace(/_/g, ' ')} v${r.version} ${r.layer === 'L0_RULE' ? `was settled by rule '${t?.rulesFired[0]}' without a model call` : `was answered by ${r.provider} with confidence ${r.confidence}, which falls in the ${r.band} band for a ${def?.tier} decision`}. Outcome: ${label}. (Generated from the trace; not a source of truth.)`,
     customerSafeExplanation: audience === 'customer' ? `We chose "${label}" for this order based on the delivery options available and your order details. Internal cost and risk information is not shown.` : undefined, audience,
+    learning: audience === 'customer' ? null : mockLearning(r.decision, r.confidence),
+    learnedContext: audience === 'customer' && r.decision === 'sourcing_node_score' ? ['We picked the location that has recently shipped on time most often for orders like yours.'] : [],
   };
 });
+/** XP-03 mock: what learning contributed to a decision, in the shape TraceBuilder.learning produces. */
+function mockLearning(decision: string, confidence: number): DecisionTrace['learning'] {
+  if (decision === 'sourcing_node_score') return {
+    learnedFacts: [
+      { subjectType: 'NODE', subjectId: 'DC-NV', factKey: 'NODE_REJECT_RATE', version: 14, learned: 0.031, served: 0.031, source: 'LEARNED', reason: 'promoted for live use' },
+      { subjectType: 'NODE', subjectId: 'ST-CHI-01', factKey: 'NODE_ON_TIME_RATE', version: 9, learned: 0.71, served: 0.8, source: 'LEARNED', reason: 'limited to max step from static value' },
+      { subjectType: 'NODE', subjectId: 'ST-CHI-01', factKey: 'NODE_BACKLOG_BREACH_CURVE', version: 3, learned: 0.12, served: null, source: 'STATIC', reason: 'not promoted for live use' },
+    ], learnedFactsServed: 2, policyVersion: 4, usedLearning: true,
+  };
+  if (decision === 'fulfilment_intent') return {
+    learnedFacts: [{ subjectType: 'CUSTOMER', subjectId: 'cust_tok_8a1', factKey: 'SPLIT_TOLERANCE', version: 6, learned: 0.82, served: null, source: 'STATIC', reason: 'not promoted for live use' }],
+    learnedFactsServed: 0, policyVersion: 3, rawConfidence: Math.min(1, confidence + 0.06), calibratedConfidence: confidence, calibration: { curveVersion: 2 },
+    experiment: { experimentId: 'exp_canary1', arm: 'canary', version: 4 }, usedLearning: true,
+  };
+  return null;
+}
 function redact(obj: Record<string, unknown>): Record<string, unknown> { const out: Record<string, unknown> = {}; for (const [k, v] of Object.entries(obj)) { if (/margin|cost|risk|history|penalty|health|cogs|fraud|not_received|return_rate/i.test(k)) continue; out[k] = v && typeof v === 'object' && !Array.isArray(v) ? redact(v as Record<string, unknown>) : v; } return out; }
 on('POST', '/api/v1/decision-records/:id/label', ({ params, body }) => { const r = findRecord(params.id); r.label = String(body.label); return undefined; });
 on('POST', '/api/v1/decision-records/:id/override', ({ params, body }) => { const r = findRecord(params.id); if (!body.reason) problem(422, 'validation_failed', 'Override reason is required (GR-13)', { fields: { reason: 'required' } }); r.overridden = true; r.overrideValue = body.newValue; r.overrideReason = String(body.reason); auditLog.unshift({ id: auditLog.length + 1000, at: new Date().toISOString(), actor: actor(), action: 'decision.override', object_type: 'decision_record', object_id: r.id, reason: r.overrideReason }); return r; });

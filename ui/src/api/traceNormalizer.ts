@@ -1,4 +1,4 @@
-import type { Answer, Band, DecisionRecord, DecisionTrace, Layer, TraceCheck, TraceLayerStep, TraceQuestion, TraceRule } from './types';
+import type { Answer, Band, DecisionRecord, DecisionTrace, DecisionTraceLearning, Layer, TraceCheck, TraceLayerStep, TraceQuestion, TraceRule } from './types';
 
 type Raw = Record<string, unknown>;
 const obj = (v: unknown): Raw => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Raw) : {});
@@ -72,6 +72,8 @@ export function normalizeTrace(raw: unknown, audience: 'internal' | 'customer' =
     override: overrideValue != null ? { by: str(t.overriddenBy ?? details.overriddenBy, 'unknown'), at: str(t.overriddenAt ?? details.overriddenAt), value: overrideValue, reason: str(t.overrideReason ?? details.overrideReason) } : null,
     label: labelKeys.length ? { label: labelKeys[0], at: str(obj(labels[labelKeys[0]]).at), by: str(obj(labels[labelKeys[0]]).by, 'unknown') } : null,
     explanation: t.explanation == null ? undefined : str(t.explanation), customerSafeExplanation: t.customerSafeExplanation == null ? undefined : str(t.customerSafeExplanation), audience,
+    learning: t.learning && typeof t.learning === 'object' ? { ...(t.learning as DecisionTraceLearning), learnedFacts: arr(obj(t.learning).learnedFacts) as DecisionTraceLearning['learnedFacts'] } : null,
+    learnedContext: arr(t.learnedContext).map(String),
   };
 }
 
