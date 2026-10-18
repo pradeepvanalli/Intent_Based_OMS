@@ -113,9 +113,11 @@ class GovernanceEventsIntegrationTest extends PostgresTestBase {
         governance.setTenantKillSwitch(true, "user:tester");
         assertThat(types("tenant-kill-switch")).contains("learning.kill_switch_changed");
 
-        parameters.promote("sourcing.node_on_time_rate", "node_reliability", 0.5, 0.99, 0.2, null, "user:tester");
-        parameters.revoke("sourcing.node_on_time_rate", "user:tester");
-        assertThat(types("parameter:sourcing.node_on_time_rate")).containsExactly("parameter.live_changed", "parameter.live_changed");
+        String family = "test.family_" + Ids.shortId();
+        parameters.promote(family, "node_reliability", 0.5, 0.99, 0.2, null, "user:tester");
+        parameters.revoke(family, "user:tester");
+        assertThat(types("parameter:" + family)).containsExactly("parameter.live_changed", "parameter.live_changed");
+        assertThat(events("parameter:" + family)).map(e -> Json.readMap((String) e.get("payload")).get("status")).containsExactly("LIVE", "REVOKED");
     }
 
     @Test
