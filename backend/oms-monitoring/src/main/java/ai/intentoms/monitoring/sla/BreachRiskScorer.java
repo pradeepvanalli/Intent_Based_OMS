@@ -6,6 +6,14 @@ import ai.intentoms.decision.model.DecisionResult;
 import ai.intentoms.decision.model.Invocation;
 import ai.intentoms.decision.model.Layer;
 import ai.intentoms.decision.runtime.DecisionService;
+import ai.intentoms.learning.governance.ParameterResolver;
+import ai.intentoms.learning.hooks.NodeReliabilityFeatures;
+import ai.intentoms.learning.learner.BacklogBreachCurve;
+import ai.intentoms.learning.learner.WarnEarlyThresholdLearner;
+import ai.intentoms.learning.model.FactKey;
+import ai.intentoms.learning.model.SubjectType;
+import ai.intentoms.learning.model.TypedValue;
+import ai.intentoms.learning.store.LearnedFactCache;
 import ai.intentoms.monitoring.config.MonitoringProperties;
 import ai.intentoms.platform.config.TenantConfigStore;
 import ai.intentoms.platform.json.Json;
@@ -43,6 +51,12 @@ import java.util.Optional;
  * {@code order.risk_scored} is appended only when the level changes so the timeline stays readable.
  * Node signals come from the sourcing {@code node} table when it exists; otherwise zeros (the decision then leans on
  * order and carrier signals only).
+ *
+ * <p>Learned inputs: FS-05 the node's backlog-to-breach probability at its current backlog
+ * ({@code node.breach_probability}, live only when {@code sourcing.node_backlog_breach} is promoted). CX-03: when a
+ * score first reaches the warn-early threshold ({@code monitoring.warn_early_threshold}: the learned value once
+ * promoted, else the tenant's {@code cx.warn_early_threshold}, else none), {@code order.delay_warning} is appended and
+ * the orchestration layer re-promises and tells the customer before the promise is missed.
  */
 @Service
 public class BreachRiskScorer implements RiskLookup {
@@ -61,9 +75,15 @@ public class BreachRiskScorer implements RiskLookup {
     private final MonitoringProperties props;
     private final JdbcClient jdbc;
     private volatile Boolean nodeTablePresent;
+    private final LearnedFactCache facts;
+    private final ParameterResolver parameters;
+
+    public static final String DELAY_WARNING = "order.delay_warning";
 
     public BreachRiskScorer(OrderRiskRepository risks, DecisionService decisions, EventStore events, TenantConfigStore config, TimeSource time, Metrics metrics,
-                            MonitoringProperties props, JdbcClient jdbc) {
+                            MonitoringProperties props, JdbcClient jdbc, LearnedFactCache facts, ParameterResolver parameters) {
+        this.facts = facts;
+        this.parameters = parameters;
         this.risks = risks;
         this.decisions = decisions;
         this.events = events;
@@ -134,6 +154,7 @@ public class BreachRiskScorer implements RiskLookup {
             batch.add(new Invocation(DECISION, input, DecisionOptions.live("order", (String) r.get("id"), ACTOR)));
         }
         if (batch.isEmpty()) return out;
+        ParameterResolver.Resolution warnAt = warnEarlyThreshold();
         List<DecisionResult> results = metrics.time("oms.monitoring.risk_decide", () -> decisions.decideAll(batch));
         for (int i = 0; i < decided.size(); i++) {
             Map<String, Object> r = decided.get(i);
@@ -156,9 +177,52 @@ public class BreachRiskScorer implements RiskLookup {
                 metrics.count("oms.monitoring.risk_level_changed", "level", level.key());
             }
             metrics.count("oms.monitoring.risk_scored", "level", level.key());
+            Integer prevScore = r.get("prev_score") instanceof Number ps ? ps.intValue() : null;
+            if (crossedWarnEarly(warnAt.value(), prevScore, score)) {
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("score", score);
+                payload.put("threshold", warnAt.value());
+                payload.put("thresholdSource", warnAt.source());
+                payload.put("reasons", risk.reasons());
+                payload.put("decisionRecordId", res.recordId() == null ? "" : res.recordId());
+                events.append("order", orderId, new NewEvent(DELAY_WARNING, payload, ACTOR).withCorrelation(orderId, res.recordId()));
+                metrics.count("oms.monitoring.delay_warning", "source", warnAt.source());
+            }
             out.add(risk);
         }
         return out;
+    }
+
+    /** CX-03: warn once, when the score first reaches the threshold (not again while it stays above). */
+    static boolean crossedWarnEarly(Double threshold, Integer previousScore, int score) {
+        if (threshold == null) return false;
+        return score >= threshold && (previousScore == null || previousScore < threshold);
+    }
+
+    /** The learned warn-early threshold when promoted for live use, else the tenant's static {@code cx.warn_early_threshold}, else none. */
+    ParameterResolver.Resolution warnEarlyThreshold() {
+        Double staticValue = config.get(WarnEarlyThresholdLearner.STATIC_KEY).map(v -> v instanceof Number n ? n.doubleValue() : Double.valueOf(String.valueOf(v))).orElse(null);
+        Double learned = null;
+        try {
+            learned = facts.active(SubjectType.DECISION, DECISION, FactKey.WARN_EARLY_THRESHOLD)
+                .filter(f -> f.value() instanceof TypedValue.NumberValue).map(f -> ((TypedValue.NumberValue) f.value()).value()).orElse(null);
+        } catch (RuntimeException e) {
+            log.debug("Warn-early threshold fact unavailable: {}", e.toString());
+        }
+        return parameters.explain(WarnEarlyThresholdLearner.PARAMETER, staticValue, learned);
+    }
+
+    /** FS-05: the node's learned breach probability at this backlog, when promoted for live use. */
+    Double learnedBreachProbability(String nodeId, double backlogUnits) {
+        try {
+            var curve = facts.active(SubjectType.NODE, nodeId, FactKey.NODE_BACKLOG_BREACH_CURVE).map(BacklogBreachCurve::parse).orElse(List.of());
+            Double p = BacklogBreachCurve.at(curve, backlogUnits).orElse(null);
+            if (p == null) return null;
+            ParameterResolver.Resolution r = parameters.explain(NodeReliabilityFeatures.BACKLOG_BREACH, null, p);
+            return r.learnedServed() ? r.value() : null;
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     /**
@@ -174,6 +238,7 @@ public class BreachRiskScorer implements RiskLookup {
         node.computeIfPresent("backlog_units", (k, v) -> v instanceof Number n ? Math.floor(n.doubleValue() / 10) * 10 : v);
         node.computeIfPresent("reject_rate", (k, v) -> v instanceof Number n ? Math.round(n.doubleValue() * 100) / 100.0 : v);
         node.computeIfPresent("minutes_to_cutoff", (k, v) -> v instanceof Number n ? Math.floor(n.doubleValue() / 60) * 60 : v);
+        node.computeIfPresent("breach_probability", (k, v) -> v instanceof Number n ? Math.round(n.doubleValue() * 20) / 20.0 : v);
         Map<String, Object> material = new LinkedHashMap<>(input);
         material.put("order", order);
         material.put("node", node);
@@ -226,7 +291,8 @@ public class BreachRiskScorer implements RiskLookup {
         node.put("backlog_units", 0);
         node.put("reject_rate", 0.0);
         node.put("minutes_to_cutoff", 0);
-        if (nodeId == null || !nodeTablePresent()) return node;
+        if (nodeId == null) return node;
+        if (!nodeTablePresent()) return withBreachProbability(nodeId, node);
         try {
             Optional<String> def = jdbc.sql("select definition::text from node where tenant_id = :t and id = :id").param("t", TenantContext.require()).param("id", nodeId)
                 .query(String.class).optional();
@@ -248,6 +314,12 @@ public class BreachRiskScorer implements RiskLookup {
         } catch (RuntimeException e) {
             log.debug("Node signals unavailable for {}: {}", nodeId, e.toString());
         }
+        return withBreachProbability(nodeId, node);
+    }
+
+    private Map<String, Object> withBreachProbability(String nodeId, Map<String, Object> node) {
+        Double breach = learnedBreachProbability(nodeId, ((Number) node.get("backlog_units")).doubleValue());
+        if (breach != null) node.put("breach_probability", Math.round(breach * 10_000) / 10_000d);
         return node;
     }
 
