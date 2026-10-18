@@ -2,7 +2,7 @@
 # Demo settings: provider jev with heuristic fallback so the demo runs without API keys; minAccuracyInActBand relaxed to 0.6.
 # Production values: minAccuracyInActBand 0.90, maxCalibrationError 0.05, fallbackProvider llm.structured.
 decision: fulfilment_intent
-version: 1
+version: 2
 owner: omnichannel-strategy
 tier: T1
 provider: jev
@@ -16,6 +16,11 @@ state:
     - order.intent_choices
     - customer.tier
     - customer.history.split_acceptance_rate
+    - customer.facts.split_tolerance
+    - customer.facts.speed_vs_cost
+    - customer.facts.pickup_preference
+    - customer.facts.preferred_contact_channel
+    - customer.facts.segment
 questions:
   intent:
     type: choice

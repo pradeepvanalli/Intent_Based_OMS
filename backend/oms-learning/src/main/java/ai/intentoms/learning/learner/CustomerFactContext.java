@@ -1,37 +1,61 @@
 package ai.intentoms.learning.learner;
 
+import ai.intentoms.learning.model.FactKey;
 import ai.intentoms.learning.model.LearnedFact;
 import ai.intentoms.learning.model.SubjectType;
 import ai.intentoms.learning.model.TypedValue;
-import ai.intentoms.learning.store.LearnedFactRepository;
+import ai.intentoms.learning.store.LearnedFactCache;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
- * CI-05: merges a customer's and their segment's active learned facts into a decision's typed input/state map as
- * {@code customer.facts.&lt;FACT_KEY&gt;} entries — never raw order/return history, only the already-typed fact
- * values. {@code DecisionRuntime} takes a plain {@code Map<String, Object>} input built by the caller (there's no
- * separate "DecisionContext" builder stage to hook into), so the clean, safe extension point is here: a caller like
- * {@code IntentService} or sourcing calls {@link #merge} on its own input map right before invoking
- * {@code DecisionService.decide(...)}, rather than this module reaching into the decision runtime itself.
+ * CI-05: a customer's learned facts in the typed shape decisions read: {@code customer.facts.<key>} with lower-case keys
+ * ({@code split_tolerance}, {@code speed_vs_cost}, {@code pickup_preference}, {@code preferred_contact_channel},
+ * {@code segment}). Only already-typed fact values, never raw order or return history. Reads go through the learned-fact
+ * cache, so a live decision never waits on the database for them.
  */
 @Component
 public class CustomerFactContext {
-    private final LearnedFactRepository facts;
-    public CustomerFactContext(LearnedFactRepository facts) { this.facts = facts; }
+    /** The facts a decision may see, in the order they are listed on the decision record. */
+    public static final List<FactKey> DECISION_FACTS = List.of(FactKey.SPLIT_TOLERANCE, FactKey.SPEED_VS_COST, FactKey.PICKUP_PREFERENCE,
+        FactKey.PREFERRED_CONTACT_CHANNEL, FactKey.SEGMENT_MEMBERSHIP);
 
-    public Map<String, Object> merge(Map<String, Object> input, String customerRef) {
-        if (customerRef == null || customerRef.isBlank()) return input;
-        Map<String, Object> out = new LinkedHashMap<>(input == null ? Map.of() : input);
-        for (LearnedFact f : facts.activeForSubject(SubjectType.CUSTOMER, customerRef)) {
-            out.put("customer.facts." + f.factKey().name(), scalar(f.value()));
-        }
+    private final LearnedFactCache facts;
+
+    public CustomerFactContext(LearnedFactCache facts) { this.facts = facts; }
+
+    /** Field name under {@code customer.facts} for a fact key. */
+    public static String field(FactKey key) {
+        return key == FactKey.SEGMENT_MEMBERSHIP ? "segment" : key.name().toLowerCase(Locale.ROOT);
+    }
+
+    /** Active facts of one customer, by fact key (absent keys omitted). */
+    public Map<FactKey, LearnedFact> facts(String customerRef) {
+        Map<FactKey, LearnedFact> out = new LinkedHashMap<>();
+        if (customerRef == null || customerRef.isBlank()) return out;
+        for (FactKey k : DECISION_FACTS) facts.active(SubjectType.CUSTOMER, customerRef, k).ifPresent(f -> out.put(k, f));
         return out;
     }
 
-    private static Object scalar(TypedValue v) {
+    /** A copy of {@code input} with {@code customer.facts} filled from every active fact (no live-use gating; see CustomerFeatures). */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> merge(Map<String, Object> input, String customerRef) {
+        Map<String, Object> out = new LinkedHashMap<>(input == null ? Map.of() : input);
+        Map<FactKey, LearnedFact> found = facts(customerRef);
+        if (found.isEmpty()) return out;
+        Map<String, Object> customer = out.get("customer") instanceof Map<?, ?> m ? new LinkedHashMap<>((Map<String, Object>) m) : new LinkedHashMap<>();
+        Map<String, Object> f = new LinkedHashMap<>();
+        found.forEach((k, v) -> f.put(field(k), scalar(v.value())));
+        customer.put("facts", f);
+        out.put("customer", customer);
+        return out;
+    }
+
+    public static Object scalar(TypedValue v) {
         return switch (v) {
             case TypedValue.NumberValue n -> n.value();
             case TypedValue.BoolValue b -> b.value();

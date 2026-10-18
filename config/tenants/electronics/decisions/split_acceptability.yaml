@@ -2,7 +2,7 @@
 # bundle_ship_complete orders (the type does not list it); for everything else the model weighs the stated intent,
 # history and whether the second box would be an accessory for a device in the first.
 decision: split_acceptability
-version: 1
+version: 2
 owner: omnichannel-strategy
 tier: T2
 provider: jev
@@ -17,6 +17,11 @@ state:
     - customer.tier
     - customer.history.split_acceptance_rate
     - customer.history.split_complaints
+    - customer.facts.split_tolerance
+    - customer.facts.speed_vs_cost
+    - customer.facts.pickup_preference
+    - customer.facts.preferred_contact_channel
+    - customer.facts.segment
     - plan_options[].packages
     - plan_options[].eta
     - plan_options[].cost_delta
