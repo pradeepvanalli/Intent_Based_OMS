@@ -1,7 +1,7 @@
 JAVA_HOME ?= /opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
 export JAVA_HOME
 
-.PHONY: help try reset down logs doctor infra build test run ui demo load clean docker helm-lint
+.PHONY: help try reset down logs doctor infra build test run ui demo load clean docker helm-lint e2e
 
 help:             ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -37,6 +37,9 @@ ui:               ## build the React UI into the backend static folder
 
 run: infra        ## run the service locally on :8080
 	cd backend/oms-app && mvn -q spring-boot:run
+
+e2e:              ## Playwright end-to-end suite on a fresh e2e database (scripts/e2e.sh; ARGS="--skip-build" to reuse the build)
+	./scripts/e2e.sh $(ARGS)
 
 demo:             ## drive the demo scenario against a running service
 	./scripts/demo.sh

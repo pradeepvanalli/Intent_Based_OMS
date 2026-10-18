@@ -11,7 +11,8 @@
     "lint": "eslint .",
     "typecheck": "tsc -b",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "e2e": "playwright test -c e2e/playwright.config.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.0",
@@ -22,6 +23,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
+    "@playwright/test": "1.56.1",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
     "@testing-library/user-event": "^14.5.2",

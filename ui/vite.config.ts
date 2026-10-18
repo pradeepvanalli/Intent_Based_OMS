@@ -21,5 +21,6 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     env: { VITE_MOCK: '1' },
     css: false,
+    exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
   },
 });
