@@ -71,23 +71,33 @@ public class CoverageMonitor {
 
     private void sweepTenant(Instant since) {
         Instant observedBefore = Instant.now().minus(Duration.ofDays(lagDays));
+        // A learner is judged by the worst-covered decision it reads: one healthy decision must not resume a learner
+        // another decision's gap paused.
+        java.util.Map<String, Double> worst = new java.util.TreeMap<>();
+        java.util.Map<String, String> worstDecision = new java.util.HashMap<>();
         for (String decision : registry.outcomeDecisions()) {
             long[] c = episodes.coverage(decision, since, observedBefore);
             if (c[0] < minEpisodes) continue; // too few mature-enough episodes to judge either way
             double coverage = (double) c[1] / c[0];
             lastCoverage.put(TenantContext.require() + "|" + decision, coverage);
             metrics.count("oms.learning.coverage", coverage, "decision", decision);
-            String reason = String.format(java.util.Locale.ROOT, "%s for %s is %.0f%% (floor %.0f%%)", REASON_PREFIX, decision, coverage * 100, threshold * 100);
+            if (coverage < threshold) metrics.count("oms.learning.coverage.breach", "decision", decision);
             for (String learner : registry.learnersReadingOutcomesOf(decision)) {
-                var gate = governance.gate(learner);
-                if (coverage < threshold && gate.mayRun()) {
-                    log.warn("{}; pausing learner {}", reason, learner);
-                    governance.pause(learner, reason, ACTOR);
-                    metrics.count("oms.learning.coverage.breach", "decision", decision);
-                } else if (coverage >= threshold && !gate.mayRun() && gate.reason().startsWith("paused: " + REASON_PREFIX)) {
-                    governance.resume(learner, ACTOR);
+                if (coverage < worst.getOrDefault(learner, Double.MAX_VALUE)) {
+                    worst.put(learner, coverage);
+                    worstDecision.put(learner, decision);
                 }
             }
         }
+        worst.forEach((learner, coverage) -> {
+            var gate = governance.gate(learner);
+            if (coverage < threshold && gate.mayRun()) {
+                String reason = String.format(java.util.Locale.ROOT, "%s for %s is %.0f%% (floor %.0f%%)", REASON_PREFIX, worstDecision.get(learner), coverage * 100, threshold * 100);
+                log.warn("{}; pausing learner {}", reason, learner);
+                governance.pause(learner, reason, ACTOR);
+            } else if (coverage >= threshold && !gate.mayRun() && gate.reason().startsWith("paused: " + REASON_PREFIX)) {
+                governance.resume(learner, ACTOR);
+            }
+        });
     }
 }
