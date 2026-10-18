@@ -5,6 +5,8 @@ import ai.intentoms.decision.model.DecisionOptions;
 import ai.intentoms.decision.model.DecisionResult;
 import ai.intentoms.decision.model.Tier;
 import ai.intentoms.decision.runtime.DecisionService;
+import ai.intentoms.inventory.model.Atp;
+import ai.intentoms.inventory.service.InventoryService;
 import ai.intentoms.monitoring.playbook.PlaybookService;
 import ai.intentoms.order.model.FulfilmentGroup;
 import ai.intentoms.order.model.Order;
@@ -55,9 +57,11 @@ public class MonitoringEventSubscriber implements EventSubscriber {
     private final OrderRepository orders;
     private final TimeSource time;
     private final Metrics metrics;
+    private final InventoryService inventory;
 
     public MonitoringEventSubscriber(ExceptionService exceptions, PlaybookService playbooks, DecisionService decisions, DecisionDefinitionRepository definitions,
-                                     OrderRepository orders, TimeSource time, Metrics metrics) {
+                                     OrderRepository orders, TimeSource time, Metrics metrics, InventoryService inventory) {
+        this.inventory = inventory;
         this.exceptions = exceptions;
         this.playbooks = playbooks;
         this.decisions = decisions;
@@ -126,7 +130,7 @@ public class MonitoringEventSubscriber implements EventSubscriber {
         input.put("line", lineMap);
         input.put("order", orderMap);
         input.put("customer", Map.of("tier", order.map(o -> o.customer() == null || o.customer().tier() == null ? "standard" : o.customer().tier()).orElse("standard")));
-        input.put("network", Map.of("atp_elsewhere", 0));
+        input.put("network", Map.of("atp_elsewhere", atpElsewhere(line.map(OrderLine::sku).orElse(null), nodeOf(orderId, lineId))));
         try {
             DecisionResult r = decisions.decide(decision, input, DecisionOptions.live(exc.aggregateType(), exc.aggregateId(), ACTOR));
             exceptions.attachDecision(exc.id(), r, Map.of("onBreachDecision", decision));
@@ -175,6 +179,22 @@ public class MonitoringEventSubscriber implements EventSubscriber {
         int version = e.payload().get("version") instanceof Number n ? n.intValue() : 0;
         Tier tier = definitions.find(name, version).map(r -> r.definition().tier()).orElse(null);
         if (tier == Tier.T2 || tier == Tier.T3) metrics.count("oms.monitoring.decision_escalations", "decision", name == null ? "" : name, "tier", tier.name());
+    }
+
+    /**
+     * IU-06: units of the SKU available to promise at every node other than the line's own (previously hardcoded to 0,
+     * so {@code backorder_next_action} could never see that re-sourcing was possible). Negative nodes count as zero.
+     */
+    int atpElsewhere(String sku, String excludeNode) {
+        if (sku == null || sku.isBlank()) return 0;
+        try {
+            int total = 0;
+            for (Atp a : inventory.atp(sku)) if (!a.nodeId().equals(excludeNode)) total += Math.max(0, a.available());
+            return total;
+        } catch (RuntimeException e) {
+            log.warn("ATP lookup for {} failed, reporting none elsewhere: {}", sku, e.toString());
+            return 0;
+        }
     }
 
     /** Node of the line's fulfilment group (or the order's primary node) when known. */
