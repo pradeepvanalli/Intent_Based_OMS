@@ -16,7 +16,8 @@ PORT="${OMS_PORT:-8095}"
 DB="${E2E_DB:-oms_e2e}"
 JAVA_HOME="${JAVA_HOME:-/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home}"
 JAVA="$JAVA_HOME/bin/java"
-RESULTS="$ROOT/ui/e2e/.results"
+# The service jar and log live outside Playwright's output folder, which Playwright empties at the start of a run.
+RESULTS="$ROOT/ui/e2e/.service"
 BUILD=1 KEEP=0 REUSE=0 PW_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -63,7 +64,7 @@ if [ "$REUSE" = 0 ]; then
   say "fresh database $DB"
   docker exec "$PG" psql -q -U oms -d postgres -c "drop database if exists $DB with (force)" -c "create database $DB" >/dev/null
 
-  say "booting the service on :$PORT with the e2e profile (log: ui/e2e/.results/app.log)"
+  say "booting the service on :$PORT with the e2e profile (log: ui/e2e/.service/app.log)"
   OMS_DB_URL="jdbc:postgresql://localhost:5440/$DB" OMS_PORT="$PORT" OMS_CONFIG_DIR="$ROOT/config" \
     "$JAVA" -Xmx1536m -jar "$RESULTS/intent-oms-e2e.jar" --spring.profiles.active=e2e > "$RESULTS/app.log" 2>&1 &
   APP_PID=$!
@@ -93,7 +94,7 @@ done
 
 say "running Playwright"
 set +e
-(cd "$ROOT/ui" && E2E_BASE_URL="$BASE" npx playwright test -c e2e/playwright.config.ts ${PW_ARGS[@]+"${PW_ARGS[@]}"})
+(cd "$ROOT/ui" && E2E_BASE_URL="$BASE" E2E_SERVICE_LOG="$RESULTS/app.log" npx playwright test -c e2e/playwright.config.ts ${PW_ARGS[@]+"${PW_ARGS[@]}"})
 CODE=$?
 set -e
 say "HTML report: ui/e2e/report/index.html (npx playwright show-report ui/e2e/report)"

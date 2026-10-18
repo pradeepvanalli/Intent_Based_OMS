@@ -56,9 +56,11 @@ export function LearnersTab({ canAdmin, canConfigure, killSwitch }: { canAdmin: 
 
       {groups.map(([title, ls]) => {
         const area = LEARNER_AREAS.find((a) => a.title === title);
+        // aria-labelledby takes space-separated ids, so the id must not contain spaces.
+        const headingId = `area-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
         return (
-          <section key={title} className="area" aria-labelledby={`area-${title}`}>
-            <div className="area-title"><h3 id={`area-${title}`}>{title}</h3>{area && <span className="small muted">{area.caption}</span>}</div>
+          <section key={title} className="area" aria-labelledby={headingId}>
+            <div className="area-title"><h3 id={headingId}>{title}</h3>{area && <span className="small muted">{area.caption}</span>}</div>
             {ls.map((l) => <LearnerRow key={l.learnerKey} learner={l} metrics={byMetric.get(l.learnerKey)} canAdmin={canAdmin} canConfigure={canConfigure} />)}
           </section>
         );
