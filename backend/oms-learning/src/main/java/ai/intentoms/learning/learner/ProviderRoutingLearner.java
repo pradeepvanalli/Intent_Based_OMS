@@ -118,8 +118,14 @@ public class ProviderRoutingLearner implements GovernedLearner {
         if (fallbackSample < minSample || fallbackAcc < primaryAcc - accuracyTolerance) return false;
 
         if (hasPendingProposal(name)) return false;
-        PolicyChange change = new PolicyChange.ParameterChange("provider", def.provider(), def.fallbackProvider());
-        PolicyChangeset changeset = new PolicyChangeset(new ArtifactRef("decision", name), def.version(), List.of(change), null, PolicyChangeset.RiskTier.valueOf(def.tier().name()));
+        // Promoted as a routing overlay (config:learning.provider_route.<decision>) read by PromotedProviderRouter: the
+        // decision keeps its own provider chain behind the routed one, and rollback or a paused learner restores it.
+        String routeKey = ai.intentoms.learning.hooks.PromotedProviderRouter.KEY_PREFIX + name;
+        PolicyChange change = new PolicyChange.ParameterChange(routeKey, def.provider(), def.fallbackProvider());
+        PolicyChangeset changeset = new PolicyChangeset(new ArtifactRef("config", routeKey), def.version(), List.of(change),
+            String.format(java.util.Locale.ROOT, "%s answers %s as accurately (%.3f vs %.3f on %d labelled cases) at $%.5f vs $%.5f per call",
+                def.fallbackProvider(), name, fallbackAcc, primaryAcc, fallbackSample, fallbackCost, primaryCost),
+            PolicyChangeset.RiskTier.valueOf(def.tier().name()));
         Proposal p = new Proposal(Ids.prefixed("prop"), changeset, null, PolicyChangeset.RiskTier.valueOf(def.tier().name()), ProposalStatus.DRAFT, null, null,
             Actor.system(LEARNER).ref(), Instant.now(), Instant.now(), null, null, null, null, null, null, null, null);
         proposals.insert(p);
@@ -165,7 +171,9 @@ public class ProviderRoutingLearner implements GovernedLearner {
             new TypedValue.NumberValue(costPerCall), 1.0, 0, LEARNER, version, now, null, now));
     }
 
-    private boolean hasPendingProposal(String name) { return proposals.existsOpenFor("decision:" + name); }
+    private boolean hasPendingProposal(String name) {
+        return proposals.existsOpenFor("config:" + ai.intentoms.learning.hooks.PromotedProviderRouter.KEY_PREFIX + name);
+    }
 
     @Override
     public LearnerDescriptor descriptor() {
