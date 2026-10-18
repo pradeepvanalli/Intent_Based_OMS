@@ -1,10 +1,9 @@
 package ai.intentoms.learning.service;
 
 import ai.intentoms.decision.record.DecisionRecordRepository;
-import ai.intentoms.learning.model.AutonomyLevel;
-import ai.intentoms.learning.model.LearnerState;
+import ai.intentoms.learning.governance.LearnerGovernance;
+import ai.intentoms.learning.governance.LearnerRegistry;
 import ai.intentoms.learning.store.EpisodeRepository;
-import ai.intentoms.learning.store.LearnerRepository;
 import ai.intentoms.platform.observability.Metrics;
 import ai.intentoms.platform.tenant.TenantContext;
 import org.slf4j.Logger;
@@ -16,30 +15,37 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * OC-07: a data-quality monitor that pauses learning automatically when outcome coverage drops below a threshold
- * (default 80%) — the failure mode this guards is "webhooks stop arriving, outcomes look all good" (requirements
- * doc §11, Silent data loss): a learner updating on an ever-shrinking, biased sample of episodes is worse than one
- * that's paused and honest about it. Scope: per-tenant, every enabled learner is paused together when any tracked
- * decision's coverage breaches the floor, since this build doesn't yet know which decisions feed which learner one
- * for one — safe to narrow to per-learner scope once that mapping exists.
+ * OC-07: pauses learning when outcome coverage drops below a threshold (default 80%), the guard against "webhooks
+ * stop arriving, outcomes look all good" (requirements doc §11, silent data loss). Coverage per decision = episodes
+ * old enough that an outcome should have arrived (created between the window start and now minus the observation
+ * lag, default 3 days) that have at least one outcome. Only decisions some learner reads are checked, and a breach
+ * pauses only those learners, with the reason recorded; when coverage recovers, learners this monitor paused resume.
  */
 @Component
 public class CoverageMonitor {
     private static final Logger log = LoggerFactory.getLogger(CoverageMonitor.class);
+    static final String ACTOR = "system:coverage-monitor";
+    static final String REASON_PREFIX = "outcome coverage";
 
     private final EpisodeRepository episodes;
-    private final LearnerRepository learners;
+    private final LearnerRegistry registry;
+    private final LearnerGovernance governance;
     private final DecisionRecordRepository decisionRecords;
     private final Metrics metrics;
+    private final ConcurrentHashMap<String, Double> lastCoverage = new ConcurrentHashMap<>();
 
     @Value("${oms.learning.coverage-threshold:0.8}") private double threshold;
-    @Value("${oms.learning.coverage-window-days:7}") private int windowDays;
+    @Value("${oms.learning.coverage-window-days:14}") private int windowDays;
+    @Value("${oms.learning.coverage-lag-days:3}") private int lagDays;
+    @Value("${oms.learning.coverage-min-episodes:20}") private int minEpisodes;
 
-    public CoverageMonitor(EpisodeRepository episodes, LearnerRepository learners, DecisionRecordRepository decisionRecords, Metrics metrics) {
+    public CoverageMonitor(EpisodeRepository episodes, LearnerRegistry registry, LearnerGovernance governance, DecisionRecordRepository decisionRecords, Metrics metrics) {
         this.episodes = episodes;
-        this.learners = learners;
+        this.registry = registry;
+        this.governance = governance;
         this.decisionRecords = decisionRecords;
         this.metrics = metrics;
     }
@@ -55,27 +61,32 @@ public class CoverageMonitor {
         for (String tenant : tenants) TenantContext.runAs(tenant, () -> sweepTenant(since));
     }
 
+    /** Latest measured coverage per decision for the current tenant (Learning Console, OC-07 card). */
+    public java.util.Map<String, Double> latest() {
+        String prefix = TenantContext.require() + "|";
+        java.util.Map<String, Double> out = new java.util.TreeMap<>();
+        lastCoverage.forEach((k, v) -> { if (k.startsWith(prefix)) out.put(k.substring(prefix.length()), v); });
+        return out;
+    }
+
     private void sweepTenant(Instant since) {
-        List<String> decisions = decisionRecords.decisionsWithRecords(since);
-        boolean breach = false;
-        for (String decision : decisions) {
-            long total = episodes.countSince(decision, since);
-            if (total < 10) continue; // too few episodes yet to judge coverage either way
-            long withOutcome = episodes.forDecisionSince(decision, since, 10_000).stream()
-                .filter(e -> e.status() != ai.intentoms.learning.model.EpisodeStatus.OPEN).count();
-            double coverage = (double) withOutcome / total;
+        Instant observedBefore = Instant.now().minus(Duration.ofDays(lagDays));
+        for (String decision : registry.outcomeDecisions()) {
+            long[] c = episodes.coverage(decision, since, observedBefore);
+            if (c[0] < minEpisodes) continue; // too few mature-enough episodes to judge either way
+            double coverage = (double) c[1] / c[0];
+            lastCoverage.put(TenantContext.require() + "|" + decision, coverage);
             metrics.count("oms.learning.coverage", coverage, "decision", decision);
-            if (coverage < threshold) {
-                log.warn("Outcome coverage for decision {} is {} (threshold {}); pausing learners for this tenant", decision, coverage, threshold);
-                breach = true;
-            }
-        }
-        if (!breach) return;
-        metrics.count("oms.learning.coverage.breach", "tenant", TenantContext.require());
-        for (LearnerState s : learners.all()) {
-            if (s.enabled() && s.autonomyLevel() != AutonomyLevel.L0_OBSERVE) {
-                learners.setAutonomy(s.learnerKey(), AutonomyLevel.L0_OBSERVE, "system:coverage-monitor", Instant.now());
-                metrics.count("oms.learning.learner.auto_paused", "learner", s.learnerKey(), "reason", "coverage");
+            String reason = String.format(java.util.Locale.ROOT, "%s for %s is %.0f%% (floor %.0f%%)", REASON_PREFIX, decision, coverage * 100, threshold * 100);
+            for (String learner : registry.learnersReadingOutcomesOf(decision)) {
+                var gate = governance.gate(learner);
+                if (coverage < threshold && gate.mayRun()) {
+                    log.warn("{}; pausing learner {}", reason, learner);
+                    governance.pause(learner, reason, ACTOR);
+                    metrics.count("oms.learning.coverage.breach", "decision", decision);
+                } else if (coverage >= threshold && !gate.mayRun() && gate.reason().startsWith("paused: " + REASON_PREFIX)) {
+                    governance.resume(learner, ACTOR);
+                }
             }
         }
     }

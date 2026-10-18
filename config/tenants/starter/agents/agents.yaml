@@ -17,7 +17,7 @@ agents:
     owner: "Internal operations agent"
     protocol: mcp
     trustTier: 3
-    allowedActions: [order_get, order_search, order_modify, task_list, task_complete, decision_why, inventory_check]
+    allowedActions: [order_get, order_search, order_modify, task_list, task_complete, decision_why, inventory_check, learning_status, explain_policy_change]
     maxOrderValueUsd: 0
     maxRefundUsd: 0
     ratePerMinute: 600

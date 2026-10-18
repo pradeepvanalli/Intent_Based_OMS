@@ -46,6 +46,12 @@ public final class Json {
         try { return MAPPER.writeValueAsString(o); } catch (JsonProcessingException e) { throw new IllegalArgumentException(e); }
     }
 
+    /** Writes against a declared type. Needed for collections of a polymorphic type: an erased {@code List} loses the
+     * element type's {@code @JsonTypeInfo}, so the type id would be dropped and the value could not be read back. */
+    public static String write(Object o, TypeReference<?> type) {
+        try { return MAPPER.writerFor(type).writeValueAsString(o); } catch (JsonProcessingException e) { throw new IllegalArgumentException(e); }
+    }
+
     public static <T> T read(String json, Class<T> type) {
         try { return MAPPER.readValue(json, type); } catch (IOException e) { throw new IllegalArgumentException("Bad JSON for " + type.getSimpleName() + ": " + e.getMessage(), e); }
     }

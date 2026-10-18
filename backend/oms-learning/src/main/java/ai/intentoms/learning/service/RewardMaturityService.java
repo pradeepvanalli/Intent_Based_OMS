@@ -10,46 +10,54 @@ import ai.intentoms.learning.model.OutcomeRecord;
 import ai.intentoms.learning.store.EpisodeRepository;
 import ai.intentoms.learning.store.ObjectiveProfileRepository;
 import ai.intentoms.learning.store.OutcomeRepository;
+import ai.intentoms.platform.config.TenantConfigStore;
 import ai.intentoms.platform.ledger.Actor;
 import ai.intentoms.platform.observability.Metrics;
 import ai.intentoms.platform.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
- * OC-04: moves episodes OPEN -&gt; PROVISIONAL as soon as a reward can be estimated, then re-corrects and moves them
- * PROVISIONAL -&gt; MATURE once the longest outcome-maturity window has elapsed (defaults: delivery 14d, return 45d,
- * chargeback 120d — this service runs maturity at the longest of the three, 120 days, since any outcome up to then
- * can still correct the reward; see {@link RewardCalculator} for exactly which terms are currently correctable
- * from ledger data alone).
+ * OC-04: rewards are provisional first and corrected as outcomes mature. An episode moves OPEN -&gt; PROVISIONAL as
+ * soon as its first outcome lands, is recomputed whenever another outcome arrives, and moves to MATURE once every
+ * reward term that carries weight in the live objective is mature: a delivery-driven term (on time, fill, cost,
+ * split, aged stock) is mature as soon as its outcome arrives or the delivery window closes; contacts and fraud loss
+ * only when their own window closes, since a complaint or chargeback can still come. Windows come from
+ * {@link MaturityWindows} (tenant config). The sweep only touches episodes with something new to do, newest outcome
+ * work first, so a large backlog of idle episodes never starves recent ones. An episode that matures with no outcome
+ * at all gets a null reward (and so counts against OC-07 coverage) instead of a made-up zero.
  */
 @Component
 public class RewardMaturityService {
     private static final Logger log = LoggerFactory.getLogger(RewardMaturityService.class);
+    private static final Set<String> CLOSE_ON_EVIDENCE = Set.of("otd", "fill", "cost", "split", "inv");
+    private static final int BATCH = 500;
+    private static final int MAX_BATCHES = 20;
 
     private final EpisodeRepository episodes;
     private final OutcomeRepository outcomes;
     private final ObjectiveProfileRepository objectives;
     private final DecisionRecordRepository decisionRecords;
+    private final TenantConfigStore config;
     private final LearningEvents events;
     private final Metrics metrics;
 
-    @Value("${oms.learning.maturity-window-days:120}") private int maturityWindowDays;
-
     public RewardMaturityService(EpisodeRepository episodes, OutcomeRepository outcomes, ObjectiveProfileRepository objectives,
-                                  DecisionRecordRepository decisionRecords, LearningEvents events, Metrics metrics) {
+                                  DecisionRecordRepository decisionRecords, TenantConfigStore config, LearningEvents events, Metrics metrics) {
         this.episodes = episodes;
         this.outcomes = outcomes;
         this.objectives = objectives;
         this.decisionRecords = decisionRecords;
+        this.config = config;
         this.events = events;
         this.metrics = metrics;
     }
@@ -61,36 +69,50 @@ public class RewardMaturityService {
 
     public int sweepOnce() {
         int processed = 0;
-        List<String> tenants = TenantContext.current().map(List::of).orElseGet(() -> decisionRecords.tenantsWithRecords(Instant.now().minus(Duration.ofDays(maturityWindowDays + 1))));
-        for (String tenant : tenants) {
-            processed += TenantContext.supplyAs(tenant, this::sweepTenant);
-        }
+        List<String> tenants = TenantContext.current().map(List::of).orElseGet(() -> decisionRecords.tenantsWithRecords(Instant.now().minus(Duration.ofDays(400))));
+        for (String tenant : tenants) processed += TenantContext.supplyAs(tenant, this::sweepTenant);
         return processed;
     }
 
     private int sweepTenant() {
         ObjectiveWeights weights = objectives.live().map(ObjectiveProfile::weights).orElseGet(() -> ObjectiveWeights.preset("balanced"));
-        List<Episode> candidates = episodes.openOrProvisional(500);
+        MaturityWindows windows = MaturityWindows.forTenant(config);
         Instant now = Instant.now();
+        Duration fullyMature = RewardCalculator.TERMS.stream().filter(t -> RewardCalculator.weight(weights, t) != 0)
+            .map(windows::forTerm).max(Duration::compareTo).orElse(windows.longest());
         int n = 0;
-        for (Episode ep : candidates) {
-            List<OutcomeRecord> outs = outcomes.forEpisode(ep.episodeId());
-            boolean matureNow = ep.createdAt().plus(Duration.ofDays(maturityWindowDays)).isBefore(now);
-            if (outs.isEmpty() && !matureNow) continue;
-            Map<String, Double> components = RewardCalculator.components(outs);
-            double reward = RewardCalculator.compute(components, weights);
-            EpisodeStatus status = matureNow ? EpisodeStatus.MATURE : EpisodeStatus.PROVISIONAL;
-            Instant maturedAt = matureNow ? now : null;
-            episodes.updateStatusAndReward(ep.episodeId(), status, reward, components, maturedAt);
-            metrics.count("oms.learning.episode.status_changed", "decision", ep.decisionName(), "to", status.name());
-            if (matureNow) {
-                events.episodeMatured(ep.episodeId(), Actor.system("reward-maturity"),
-                    Map.of("decision", ep.decisionName(), "orderId", String.valueOf(ep.orderId()), "reward", reward, "components", components));
-                metrics.count("oms.learning.reward", reward, "decision", ep.decisionName());
-            }
-            n++;
+        for (int batch = 0; batch < MAX_BATCHES; batch++) {
+            List<Episode> due = episodes.dueForReward(now.minus(fullyMature), BATCH);
+            for (Episode ep : due) { process(ep, weights, windows, now); n++; }
+            if (due.size() < BATCH) break;
         }
         metrics.count("oms.learning.reward_maturity.episodes_processed", n, "tenant", TenantContext.require());
         return n;
+    }
+
+    void process(Episode ep, ObjectiveWeights weights, MaturityWindows windows, Instant now) {
+        List<OutcomeRecord> outs = outcomes.forEpisode(ep.episodeId());
+        Set<String> scored = RewardCalculator.scoredTerms(outs);
+        boolean mature = true;
+        Map<String, Double> components = new LinkedHashMap<>(RewardCalculator.components(outs));
+        for (String term : RewardCalculator.TERMS) {
+            if (RewardCalculator.weight(weights, term) == 0) continue;
+            boolean windowClosed = !ep.createdAt().plus(windows.forTerm(term)).isAfter(now);
+            if (!windowClosed && !(CLOSE_ON_EVIDENCE.contains(term) && scored.contains(term))) mature = false;
+        }
+        Double reward = outs.isEmpty() ? null : RewardCalculator.compute(components, weights);
+        EpisodeStatus status = mature ? EpisodeStatus.MATURE : outs.isEmpty() ? EpisodeStatus.OPEN : EpisodeStatus.PROVISIONAL;
+        episodes.updateStatusAndReward(ep.episodeId(), status, reward, components, mature ? now : null);
+        if (status != ep.status()) metrics.count("oms.learning.episode.status_changed", "decision", ep.decisionName(), "to", status.name());
+        if (mature) {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("decision", ep.decisionName());
+            payload.put("orderId", String.valueOf(ep.orderId()));
+            payload.put("reward", reward);
+            payload.put("components", components);
+            payload.put("scoredTerms", List.copyOf(scored));
+            events.episodeMatured(ep.episodeId(), Actor.system("reward-maturity"), payload);
+            if (reward != null) metrics.count("oms.learning.reward", reward, "decision", ep.decisionName());
+        }
     }
 }

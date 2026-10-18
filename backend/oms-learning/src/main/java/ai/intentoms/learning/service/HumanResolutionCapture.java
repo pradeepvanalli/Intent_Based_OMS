@@ -1,5 +1,6 @@
 package ai.intentoms.learning.service;
 
+import ai.intentoms.decision.record.DecisionEscalationRepository;
 import ai.intentoms.decision.record.DecisionRecordRepository;
 import ai.intentoms.platform.ledger.Event;
 import ai.intentoms.platform.ledger.EventSubscriber;
@@ -10,7 +11,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.Map;
 
 /**
@@ -28,10 +31,12 @@ public class HumanResolutionCapture implements EventSubscriber {
 
     private final HumanTaskService tasks;
     private final DecisionRecordRepository decisionRecords;
+    private final DecisionEscalationRepository escalations;
 
-    public HumanResolutionCapture(HumanTaskService tasks, DecisionRecordRepository decisionRecords) {
+    public HumanResolutionCapture(HumanTaskService tasks, DecisionRecordRepository decisionRecords, DecisionEscalationRepository escalations) {
         this.tasks = tasks;
         this.decisionRecords = decisionRecords;
+        this.escalations = escalations;
     }
 
     @Override public List<String> eventTypePrefixes() { return List.of("task.completed"); }
@@ -45,11 +50,16 @@ public class HumanResolutionCapture implements EventSubscriber {
             HumanTask task = tasks.get(String.valueOf(e.payload().get("taskId")));
             Map<String, Object> taskPayload = task.payload() == null ? Map.of() : task.payload();
             String recordId = str(details.getOrDefault("recordId", taskPayload.get("recordId")));
-            if (recordId == null) return;
             String outcome = str(e.payload().get("outcome"));
             String reason = str(e.payload().get("reason"));
             String by = e.actor() == null ? "system:task" : e.actor().ref();
-            decisionRecords.label(recordId, "human_resolution", Map.of("action", outcome == null ? "" : outcome, "reasonCode", reason == null ? "" : reason, "resolvedBy", by));
+            Map<String, Object> label = Map.of("action", outcome == null ? "" : outcome, "reasonCode", reason == null ? "" : reason, "resolvedBy", by);
+            // The anchor record plus every re-evaluation linked to the same task: the person answered the question for
+            // all of them, and each is a labelled outcome the learners (OC-06, DF-03) should see.
+            Set<String> records = new LinkedHashSet<>();
+            if (recordId != null) records.add(recordId);
+            escalations.forTask(task.id()).forEach(esc -> records.add(esc.recordId()));
+            for (String r : records) decisionRecords.label(r, "human_resolution", label);
         } catch (RuntimeException ex) {
             log.warn("Human-resolution capture failed for task.completed event {}: {}", e.id(), ex.toString());
         } finally {

@@ -177,10 +177,17 @@ public class DemoSeeder {
     }
 
     @EventListener(ApplicationReadyEvent.class)
+    @org.springframework.core.annotation.Order(100)
     public void onReady() {
         if (!enabled) { log.info("Demo seed disabled (oms.demo.seed=false)"); return; }
         try { run(); } catch (RuntimeException e) { log.error("Demo seed failed: {}", e.toString(), e); }
+        if (publisher != null) publisher.publishEvent(new DemoSeedCompletedEvent(tenantIds));
     }
+
+    private org.springframework.context.ApplicationEventPublisher publisher;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setPublisher(org.springframework.context.ApplicationEventPublisher publisher) { this.publisher = publisher; }
 
     /** The configured tenant ids (first one is the default folder for the no-argument seed methods). */
     public List<String> tenantIds() { return tenantIds; }

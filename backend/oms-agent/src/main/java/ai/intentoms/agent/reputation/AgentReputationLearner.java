@@ -1,5 +1,8 @@
 package ai.intentoms.agent.reputation;
 
+import ai.intentoms.learning.governance.GovernedLearner;
+import ai.intentoms.learning.governance.LearnerDescriptor;
+import ai.intentoms.learning.governance.LearnerGovernance;
 import ai.intentoms.agent.mandate.Mandate;
 import ai.intentoms.agent.mandate.MandateRepository;
 import ai.intentoms.agent.registry.AgentIdentity;
@@ -34,7 +37,8 @@ import java.util.List;
  * compliance and injection-flag rate are real signals today, not placeholders.
  */
 @Component
-public class AgentReputationLearner {
+public class AgentReputationLearner implements GovernedLearner {
+    public static final String KEY = "agent_reputation";
     private static final Logger log = LoggerFactory.getLogger(AgentReputationLearner.class);
     public static final String LEARNER_KEY = "agent_reputation";
 
@@ -44,7 +48,10 @@ public class AgentReputationLearner {
     private final LearnedFactRepository facts;
     private final DecisionRecordRepository decisionRecords;
 
-    public AgentReputationLearner(AgentRegistry agents, MandateRepository mandates, EventStore events, LearnedFactRepository facts, DecisionRecordRepository decisionRecords) {
+    private final LearnerGovernance governance;
+
+    public AgentReputationLearner(AgentRegistry agents, MandateRepository mandates, EventStore events, LearnedFactRepository facts, DecisionRecordRepository decisionRecords, LearnerGovernance governance) {
+        this.governance = governance;
         this.agents = agents;
         this.mandates = mandates;
         this.events = events;
@@ -63,6 +70,8 @@ public class AgentReputationLearner {
     }
 
     private void sweepTenant() {
+        if (!governance.begin(KEY).mayRun()) return;
+        governance.recordRun(KEY);
         for (AgentIdentity agent : agents.list()) {
             List<Mandate> m = mandates.forAgent(agent.id());
             if (m.size() < 5) continue; // too little history to score meaningfully
@@ -81,4 +90,13 @@ public class AgentReputationLearner {
         facts.insert(new LearnedFact(Ids.prefixed("fact"), SubjectType.AGENT, agentId, FactKey.AGENT_REPUTATION, new TypedValue.NumberValue(score),
             Math.min(1.0, sampleSize / 30.0), sampleSize, LEARNER_KEY, history.isEmpty() ? 1 : history.get(0).version() + 1, Instant.now(), null, Instant.now()));
     }
+
+    @Override
+    public LearnerDescriptor descriptor() {
+        return LearnerDescriptor.of(KEY, "Agent reputation", "Scores each AI shopping agent on mandate compliance, prompt-injection hits and disputes. A person decides any trust change.", LearnerDescriptor.Loop.FAST, "FD-05");
+    }
+
+    @Override public boolean runnable() { return true; }
+
+    @Override public void runNow() { sweepOnce(); }
 }

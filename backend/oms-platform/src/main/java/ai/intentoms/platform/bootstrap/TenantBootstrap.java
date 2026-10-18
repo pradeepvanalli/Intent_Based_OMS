@@ -32,6 +32,7 @@ public class TenantBootstrap {
     }
 
     @EventListener(ApplicationReadyEvent.class)
+    @Order(1) // Spring 6.2 reads listener order from the method, not the class
     public void bootstrap() {
         for (String spec : props.devUsers()) {
             String[] p = spec.split(":");

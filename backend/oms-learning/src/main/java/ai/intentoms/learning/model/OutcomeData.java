@@ -23,9 +23,14 @@ public sealed interface OutcomeData {
     @JsonIgnoreProperties(ignoreUnknown = true)
     record DeliveryOutcome(boolean onTime, long lateByHours, boolean damaged, boolean lost) implements OutcomeData {}
 
-    /** How the fulfillment plan actually played out: split count, node(s) used, a store reject if any. */
+    /**
+     * How the fulfillment plan actually played out: split count, node(s) used, a store reject if any, and the figures
+     * the §7 fill and cost terms need (units ordered vs shipped, fulfilment cost, order value). A zero figure means the
+     * producer did not report it, and the matching reward term stays unscored rather than being guessed.
+     */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record FulfillmentOutcome(int packageCount, boolean splitFeasibleButAvoided, java.util.List<String> nodeIds, boolean storeRejected) implements OutcomeData {}
+    record FulfillmentOutcome(int packageCount, boolean splitFeasibleButAvoided, java.util.List<String> nodeIds, boolean storeRejected,
+                              int unitsOrdered, int unitsShipped, double fulfillmentCost, double orderValue) implements OutcomeData {}
 
     /** A return against this order/line (maturity window: 45 days). */
     @JsonIgnoreProperties(ignoreUnknown = true)

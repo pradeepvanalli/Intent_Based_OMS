@@ -1,5 +1,8 @@
 package ai.intentoms.learning.learner;
 
+import ai.intentoms.learning.governance.GovernedLearner;
+import ai.intentoms.learning.governance.LearnerDescriptor;
+import ai.intentoms.learning.governance.LearnerGovernance;
 import ai.intentoms.decision.definition.DecisionDefinitionRepository;
 import ai.intentoms.decision.model.DecisionDefinition;
 import ai.intentoms.decision.model.DecisionRecord;
@@ -31,7 +34,8 @@ import java.util.stream.Collectors;
  * value.
  */
 @Component
-public class OverrideToRuleLearner {
+public class OverrideToRuleLearner implements GovernedLearner {
+    public static final String KEY = "override_to_rule";
     private static final Logger log = LoggerFactory.getLogger(OverrideToRuleLearner.class);
     private static final String HUMAN_RESOLUTION_LABEL = "human_resolution";
 
@@ -43,7 +47,10 @@ public class OverrideToRuleLearner {
     @Value("${oms.learning.df04.min-agreement:0.9}") private double minAgreement;
     @Value("${oms.learning.df04.window-days:90}") private int windowDays;
 
-    public OverrideToRuleLearner(DecisionDefinitionRepository definitions, DecisionRecordRepository decisionRecords, HypothesisRepository hypotheses) {
+    private final LearnerGovernance governance;
+
+    public OverrideToRuleLearner(DecisionDefinitionRepository definitions, DecisionRecordRepository decisionRecords, HypothesisRepository hypotheses, LearnerGovernance governance) {
+        this.governance = governance;
         this.definitions = definitions;
         this.decisionRecords = decisionRecords;
         this.hypotheses = hypotheses;
@@ -62,6 +69,8 @@ public class OverrideToRuleLearner {
     }
 
     private int sweepTenant() {
+        if (!governance.begin(KEY).mayPropose()) return 0;
+        governance.recordRun(KEY);
         int n = 0;
         Instant since = Instant.now().minus(Duration.ofDays(windowDays));
         for (String name : definitions.names()) {
@@ -111,4 +120,13 @@ public class OverrideToRuleLearner {
         log.info("DF-04 hypothesis {}: {} overrides, {}% agreement on \"{}\" for {}", h.hypothesisId(), group.size(), Math.round(agreement * 100), top, decisionName);
         return true;
     }
+
+    @Override
+    public LearnerDescriptor descriptor() {
+        return LearnerDescriptor.of(KEY, "Override-to-rule finder", "Spots cases people override the same way again and again and suggests a rule for them.", LearnerDescriptor.Loop.FAST, "DF-04");
+    }
+
+    @Override public boolean runnable() { return true; }
+
+    @Override public void runNow() { sweepOnce(); }
 }

@@ -12,6 +12,10 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+    # Each module owns a version range (docs/ARCHITECTURE.md §2), so a new migration in an older module's range
+    # (e.g. decision V402) is numbered below migrations an existing database already applied (learning V1601).
+    # Without out-of-order, Flyway refuses to start such a database.
+    out-of-order: true
   threads:
     virtual:
       enabled: true

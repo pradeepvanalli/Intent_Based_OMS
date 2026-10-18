@@ -1,5 +1,8 @@
 package ai.intentoms.learning.learner;
 
+import ai.intentoms.learning.governance.GovernedLearner;
+import ai.intentoms.learning.governance.LearnerDescriptor;
+import ai.intentoms.learning.governance.LearnerGovernance;
 import ai.intentoms.decision.definition.DecisionDefinitionRepository;
 import ai.intentoms.decision.model.DecisionDefinition;
 import ai.intentoms.decision.model.DecisionRecord;
@@ -41,7 +44,8 @@ import java.util.Set;
  * produce one.
  */
 @Component
-public class RuleUtilizationLearner {
+public class RuleUtilizationLearner implements GovernedLearner {
+    public static final String KEY = "rule_utilization";
     private static final Logger log = LoggerFactory.getLogger(RuleUtilizationLearner.class);
 
     private final DecisionDefinitionRepository definitions;
@@ -51,7 +55,10 @@ public class RuleUtilizationLearner {
     @Value("${oms.learning.df07.window-days:30}") private int windowDays;
     @Value("${oms.learning.df07.min-sample:100}") private int minSample;
 
-    public RuleUtilizationLearner(DecisionDefinitionRepository definitions, DecisionRecordRepository decisionRecords, HypothesisRepository hypotheses) {
+    private final LearnerGovernance governance;
+
+    public RuleUtilizationLearner(DecisionDefinitionRepository definitions, DecisionRecordRepository decisionRecords, HypothesisRepository hypotheses, LearnerGovernance governance) {
+        this.governance = governance;
         this.definitions = definitions;
         this.decisionRecords = decisionRecords;
         this.hypotheses = hypotheses;
@@ -70,6 +77,8 @@ public class RuleUtilizationLearner {
     }
 
     private int sweepTenant() {
+        if (!governance.begin(KEY).mayPropose()) return 0;
+        governance.recordRun(KEY);
         int n = 0;
         for (String name : definitions.names()) {
             try { if (sweepDecision(name)) n++; } catch (RuntimeException e) { log.warn("Rule-utilization check failed for {}: {}", name, e.toString()); }
@@ -109,4 +118,13 @@ public class RuleUtilizationLearner {
         return hypotheses.byStatus("OPEN", 500).stream().anyMatch(h -> key.equals(h.lever().get("groupKey")))
             || hypotheses.byStatus("DRAFTED", 500).stream().anyMatch(h -> key.equals(h.lever().get("groupKey")));
     }
+
+    @Override
+    public LearnerDescriptor descriptor() {
+        return LearnerDescriptor.of(KEY, "Unused rule finder", "Finds rules that never fire, or that the model now beats, and suggests retiring them.", LearnerDescriptor.Loop.FAST, "DF-07");
+    }
+
+    @Override public boolean runnable() { return true; }
+
+    @Override public void runNow() { sweepOnce(); }
 }

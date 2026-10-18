@@ -1,5 +1,8 @@
 package ai.intentoms.learning.learner;
 
+import ai.intentoms.learning.governance.GovernedLearner;
+import ai.intentoms.learning.governance.LearnerDescriptor;
+import ai.intentoms.learning.governance.LearnerGovernance;
 import ai.intentoms.decision.record.DecisionRecordRepository;
 import ai.intentoms.learning.model.FactKey;
 import ai.intentoms.learning.model.LearnedFact;
@@ -30,7 +33,8 @@ import java.util.Map;
  * writes the segment with a generic label the analyst can relabel, not a final human-facing name.
  */
 @Component
-public class CiSegmentDiscovery {
+public class CiSegmentDiscovery implements GovernedLearner {
+    public static final String KEY = "ci_segment_discovery";
     private static final Logger log = LoggerFactory.getLogger(CiSegmentDiscovery.class);
 
     private final ai.intentoms.learning.store.LearnedFactRepository facts;
@@ -39,7 +43,10 @@ public class CiSegmentDiscovery {
 
     @Value("${oms.learning.segment-min-size:30}") private int minSize;
 
-    public CiSegmentDiscovery(ai.intentoms.learning.store.LearnedFactRepository facts, SegmentRepository segments, DecisionRecordRepository decisionRecords) {
+    private final LearnerGovernance governance;
+
+    public CiSegmentDiscovery(ai.intentoms.learning.store.LearnedFactRepository facts, SegmentRepository segments, DecisionRecordRepository decisionRecords, LearnerGovernance governance) {
+        this.governance = governance;
         this.facts = facts;
         this.segments = segments;
         this.decisionRecords = decisionRecords;
@@ -56,6 +63,8 @@ public class CiSegmentDiscovery {
     }
 
     private void discoverForTenant() {
+        if (!governance.begin(KEY).mayRun()) return;
+        governance.recordRun(KEY);
         List<LearnedFact> splitTolerance = facts.activeByKey(SubjectType.CUSTOMER, FactKey.SPLIT_TOLERANCE, 10_000);
         if (splitTolerance.size() < minSize) return;
         List<double[]> scored = new ArrayList<>();
@@ -81,4 +90,13 @@ public class CiSegmentDiscovery {
         segments.insert(new Segment(Ids.prefixed("seg"), 1, label, description, definition, customerIds.size(), "system:ci_segment_discovery", Instant.now()));
         log.info("Discovered segment {} with {} members", label, customerIds.size());
     }
+
+    @Override
+    public LearnerDescriptor descriptor() {
+        return LearnerDescriptor.of(KEY, "Customer segments", "Groups customers who behave alike so new customers start from their group's habits.", LearnerDescriptor.Loop.FAST, "CI-02");
+    }
+
+    @Override public boolean runnable() { return true; }
+
+    @Override public void runNow() { sweepOnce(); }
 }

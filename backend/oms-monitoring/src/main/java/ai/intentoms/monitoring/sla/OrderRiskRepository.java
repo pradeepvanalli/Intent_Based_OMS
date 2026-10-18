@@ -38,13 +38,24 @@ public class OrderRiskRepository {
         return out;
     }
 
-    public void upsert(OrderRisk r) {
+    public void upsert(OrderRisk r) { upsert(r, null); }
+
+    /** Store a freshly decided risk with the signature of the inputs it was decided on (null keeps the stored one). */
+    public void upsert(OrderRisk r, String inputSignature) {
         jdbc.sql("""
-            insert into order_risk(tenant_id, order_id, score, level, reasons, decision_record_id, scored_at) values (:t, :o, :s, :l, :r, :d, :at)
+            insert into order_risk(tenant_id, order_id, score, level, reasons, decision_record_id, scored_at, input_signature, checked_at)
+            values (:t, :o, :s, :l, :r, :d, :at, :sig, :at)
             on conflict (tenant_id, order_id) do update set score = excluded.score, level = excluded.level, reasons = excluded.reasons,
-              decision_record_id = excluded.decision_record_id, scored_at = excluded.scored_at
+              decision_record_id = excluded.decision_record_id, scored_at = excluded.scored_at,
+              input_signature = coalesce(excluded.input_signature, order_risk.input_signature), checked_at = excluded.checked_at
             """).param("t", TenantContext.require()).param("o", r.orderId()).param("s", r.score()).param("l", r.level()).param("r", Jsonb.of(r.reasons()))
-            .param("d", r.decisionRecordId()).param("at", Timestamp.from(r.scoredAt())).update();
+            .param("d", r.decisionRecordId()).param("at", Timestamp.from(r.scoredAt())).param("sig", inputSignature).update();
+    }
+
+    /** An order was examined but its material inputs had not changed: move it to the back of the sweep without a decision. */
+    public void markChecked(String orderId, Instant at) {
+        jdbc.sql("update order_risk set checked_at = :at where tenant_id = :t and order_id = :o")
+            .param("at", Timestamp.from(at)).param("t", TenantContext.require()).param("o", orderId).update();
     }
 
     /**
@@ -56,13 +67,14 @@ public class OrderRiskRepository {
             select o.id, o.status, o.order_type, o.channel, o.ship_method, o.primary_node_id, o.placed_at, o.grand_total,
                    coalesce(es.state, o.status) as state, coalesce(q.since, es.updated_at, o.placed_at) as since,
                    (select min(g.promise_date) from fulfilment_group g where g.tenant_id = o.tenant_id and g.order_id = o.id) as promise_date,
-                   r.level as prev_level, r.scored_at
+                   r.level as prev_level, r.scored_at, r.input_signature as prev_signature, r.score as prev_score,
+                   r.reasons::text as prev_reasons, r.decision_record_id as prev_record_id
             from orders o
             left join entity_state es on es.tenant_id = o.tenant_id and es.entity_type = 'order' and es.entity_id = o.id
             left join entity_state_qty q on q.tenant_id = es.tenant_id and q.entity_type = es.entity_type and q.entity_id = es.entity_id and q.state = es.state
             left join order_risk r on r.tenant_id = o.tenant_id and r.order_id = o.id
             where o.tenant_id = :t and o.status not in (:terminal)
-            """ + (onlyOrderId != null ? " and o.id = :oid" : "") + " order by r.scored_at nulls first, o.placed_at limit :n";
+            """ + (onlyOrderId != null ? " and o.id = :oid" : "") + " order by coalesce(r.checked_at, r.scored_at) nulls first, o.placed_at limit :n";
         var spec = jdbc.sql(sql).param("t", TenantContext.require()).param("terminal", terminalStatuses).param("n", limit);
         if (onlyOrderId != null) spec = spec.param("oid", onlyOrderId);
         return spec.query().listOfRows();

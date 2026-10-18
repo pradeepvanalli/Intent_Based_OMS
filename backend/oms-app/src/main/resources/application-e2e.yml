@@ -1,0 +1,27 @@
+# End-to-end test profile (spring.profiles.active=e2e), used by scripts/e2e.sh and `make e2e`.
+# Deterministic: no AI provider keys (decisions use the heuristic/default path), background sweeps slowed so the
+# data a Playwright spec reads does not shift under it, and the demo tenant plus self-optimizing reference data seeded.
+oms:
+  demo:
+    seed: true
+    soo-seed: true
+  decision:
+    jev:
+      enabled: false
+      api-key: ""
+    llm:
+      anthropic-api-key: ""
+      openai-api-key: ""
+  copilot:
+    api-key: ""
+  monitoring:
+    risk-sweep-ms: 900000
+    stuck-sweep-ms: 900000
+  orchestration:
+    autonomy:
+      scan-ms: 900000
+  learning:
+    auto-promote-sweep-ms: 86400000
+    guardrail-sweep-ms: 86400000
+    provisional-sweep-ms: 86400000
+    coverage-sweep-ms: 86400000

@@ -25,7 +25,9 @@ public final class ToolPermissions {
         Map.entry("inventory_check", Permissions.INVENTORY_READ),
         Map.entry("decision_why", Permissions.DECISION_READ),
         Map.entry("task_list", Permissions.TASK_READ),
-        Map.entry("task_complete", Permissions.TASK_WORK)
+        Map.entry("task_complete", Permissions.TASK_WORK),
+        Map.entry("learning_status", Permissions.LEARNING_READ),
+        Map.entry("explain_policy_change", Permissions.LEARNING_READ)
     );
 
     /** Permission required for a tool; unknown tools map to nothing (and are rejected by the executor). */

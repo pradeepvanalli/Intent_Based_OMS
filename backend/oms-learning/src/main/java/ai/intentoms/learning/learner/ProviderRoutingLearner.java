@@ -1,5 +1,8 @@
 package ai.intentoms.learning.learner;
 
+import ai.intentoms.learning.governance.GovernedLearner;
+import ai.intentoms.learning.governance.LearnerDescriptor;
+import ai.intentoms.learning.governance.LearnerGovernance;
 import ai.intentoms.decision.definition.DecisionDefinitionRepository;
 import ai.intentoms.decision.model.DecisionDefinition;
 import ai.intentoms.decision.model.DecisionRecord;
@@ -42,7 +45,8 @@ import java.util.Map;
  * overstated as ground truth.
  */
 @Component
-public class ProviderRoutingLearner {
+public class ProviderRoutingLearner implements GovernedLearner {
+    public static final String KEY = "provider_routing";
     private static final Logger log = LoggerFactory.getLogger(ProviderRoutingLearner.class);
     private static final String LEARNER = "provider_routing";
     private static final String HUMAN_RESOLUTION_LABEL = "human_resolution";
@@ -57,8 +61,11 @@ public class ProviderRoutingLearner {
     @Value("${oms.learning.df05.accuracy-tolerance:0.02}") private double accuracyTolerance;
     @Value("${oms.learning.df05.window-days:30}") private int windowDays;
 
+    private final LearnerGovernance governance;
+
     public ProviderRoutingLearner(DecisionDefinitionRepository definitions, AiSpendRepository spend, DecisionRecordRepository decisionRecords,
-                                   LearnedFactRepository facts, ProposalRepository proposals) {
+                                   LearnedFactRepository facts, ProposalRepository proposals, LearnerGovernance governance) {
+        this.governance = governance;
         this.definitions = definitions;
         this.spend = spend;
         this.decisionRecords = decisionRecords;
@@ -79,6 +86,8 @@ public class ProviderRoutingLearner {
     }
 
     private int sweepTenant() {
+        if (!governance.begin(KEY).mayPropose()) return 0;
+        governance.recordRun(KEY);
         int n = 0;
         for (String name : definitions.names()) {
             try { if (sweepDecision(name)) n++; } catch (RuntimeException e) { log.warn("Provider-routing check failed for {}: {}", name, e.toString()); }
@@ -156,10 +165,14 @@ public class ProviderRoutingLearner {
             new TypedValue.NumberValue(costPerCall), 1.0, 0, LEARNER, version, now, null, now));
     }
 
-    private boolean hasPendingProposal(String name) {
-        String ref = "decision:" + name;
-        return proposals.byStatus("DRAFT", 50).stream().anyMatch(p -> p.changeset().target().toString().equals(ref))
-            || proposals.byStatus("EVALUATED", 50).stream().anyMatch(p -> p.changeset().target().toString().equals(ref))
-            || proposals.byStatus("APPROVED", 50).stream().anyMatch(p -> p.changeset().target().toString().equals(ref));
+    private boolean hasPendingProposal(String name) { return proposals.existsOpenFor("decision:" + name); }
+
+    @Override
+    public LearnerDescriptor descriptor() {
+        return LearnerDescriptor.of(KEY, "AI provider routing", "Finds the cheapest AI provider that is just as accurate for each decision.", LearnerDescriptor.Loop.FAST, "DF-05").feeds("decision.provider");
     }
+
+    @Override public boolean runnable() { return true; }
+
+    @Override public void runNow() { sweepOnce(); }
 }

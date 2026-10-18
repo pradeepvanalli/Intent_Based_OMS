@@ -22,6 +22,10 @@ public interface HumanTaskService {
     /** Cancel an OPEN or CLAIMED task. Writes {@code task.cancelled}. */
     HumanTask cancel(String taskId, String reason);
 
+    /** Merge keys into an OPEN or CLAIMED task's payload, e.g. a newer recommendation for the same question while the
+     * task waits. Writes {@code task.refreshed}. */
+    HumanTask refreshPayload(String taskId, Map<String, Object> patch);
+
     Page<HumanTask> list(TaskQuery q);
 
     HumanTask get(String id);

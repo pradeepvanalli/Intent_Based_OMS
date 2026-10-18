@@ -1,5 +1,8 @@
 package ai.intentoms.learning.learner;
 
+import ai.intentoms.learning.governance.GovernedLearner;
+import ai.intentoms.learning.governance.LearnerDescriptor;
+import ai.intentoms.learning.governance.LearnerGovernance;
 import ai.intentoms.learning.model.FactKey;
 import ai.intentoms.learning.model.LearnedFact;
 import ai.intentoms.learning.model.SubjectType;
@@ -34,7 +37,8 @@ import java.util.Map;
  * (not sourced-to-deliver), using the shipped_at this learner itself now captures on {@code order.shipped}.
  */
 @Component
-public class LaneDeliveryLearner implements EventSubscriber {
+public class LaneDeliveryLearner implements EventSubscriber, GovernedLearner {
+    public static final String KEY = "lane_transit";
     private static final Logger log = LoggerFactory.getLogger(LaneDeliveryLearner.class);
     private static final String LEARNER_KEY = "lane_transit";
     private static final int SAMPLE_CAP = 200;
@@ -43,7 +47,10 @@ public class LaneDeliveryLearner implements EventSubscriber {
     private final LaneDeliverySampleRepository samples;
     private final LearnedFactRepository facts;
 
-    public LaneDeliveryLearner(NodeAssignmentRepository assignments, LaneDeliverySampleRepository samples, LearnedFactRepository facts) {
+    private final LearnerGovernance governance;
+
+    public LaneDeliveryLearner(NodeAssignmentRepository assignments, LaneDeliverySampleRepository samples, LearnedFactRepository facts, LearnerGovernance governance) {
+        this.governance = governance;
         this.assignments = assignments;
         this.samples = samples;
         this.facts = facts;
@@ -55,6 +62,8 @@ public class LaneDeliveryLearner implements EventSubscriber {
     public void on(Event e) {
         if (e.tenantId() != null) TenantContext.set(e.tenantId());
         try {
+            if (!governance.begin(KEY).mayRun()) return;
+            governance.recordRunThrottled(KEY);
             switch (e.type()) {
                 case "order.shipped", "event.shipped" -> onShipped(e);
                 case "order.delivered", "event.delivered" -> onDelivered(e);
@@ -112,5 +121,10 @@ public class LaneDeliveryLearner implements EventSubscriber {
         if (sorted.isEmpty()) return 0;
         int idx = (int) Math.ceil(p * sorted.size()) - 1;
         return sorted.get(Math.max(0, Math.min(sorted.size() - 1, idx)));
+    }
+
+    @Override
+    public LearnerDescriptor descriptor() {
+        return LearnerDescriptor.of(KEY, "Carrier lane transit times", "Learns how long each carrier lane really takes and how often it is on time, to make promises honest.", LearnerDescriptor.Loop.FAST, "FS-03, CX-01").feeds("promise.lane_transit_days", "promise.lane_on_time_rate");
     }
 }

@@ -9,18 +9,18 @@ public final class Roles {
 
     public static final Map<String, Set<String>> DEFAULT = Map.ofEntries(
         Map.entry("admin", Set.of("*")),
-        Map.entry("strategy_lead", Set.of("order.read", "decision.*", "statemodel.*", "analytics.read", "simulation.run", "task.read", "task.work", "exception.read", "config.admin", "margin.approve", "order.bulk", "inventory.read")),
-        Map.entry("ops_analyst", Set.of("order.read", "order.modify", "order.hold", "order.release", "order.bulk", "task.*", "exception.*", "inventory.read", "decision.read", "decision.override", "analytics.read")),
+        Map.entry("strategy_lead", Set.of("order.read", "decision.*", "statemodel.*", "analytics.read", "simulation.run", "task.read", "task.work", "exception.read", "config.admin", "margin.approve", "order.bulk", "inventory.read", "learning.read", "learning.admin")),
+        Map.entry("ops_analyst", Set.of("order.read", "order.modify", "order.hold", "order.release", "order.bulk", "task.*", "exception.*", "inventory.read", "decision.read", "decision.override", "analytics.read", "learning.read")),
         Map.entry("cs_rep", Set.of("order.read", "order.modify", "order.cancel", "return.create", "refund.issue", "appeasement.issue", "task.read", "task.work", "decision.read")),
         Map.entry("store_associate", Set.of("order.read", "task.read", "task.work")),
-        Map.entry("risk_analyst", Set.of("order.read", "return.decide", "decision.read", "decision.approve", "decision.override", "task.*", "exception.read", "agent.admin")),
+        Map.entry("risk_analyst", Set.of("order.read", "return.decide", "decision.read", "decision.approve", "decision.override", "task.*", "exception.read", "agent.admin", "learning.read")),
         Map.entry("finance_controller", Set.of("order.read", "refund.approve", "margin.approve", "analytics.read", "decision.read", "decision.approve", "task.read", "task.work")),
         Map.entry("implementer", Set.of("statemodel.*", "decision.edit", "decision.read", "config.admin", "order.read", "simulation.run")),
-        Map.entry("ai_governance", Set.of("decision.*", "analytics.read", "simulation.run", "order.read")),
+        Map.entry("ai_governance", Set.of("decision.*", "analytics.read", "simulation.run", "order.read", "learning.read")),
         Map.entry("platform_engineer", Set.of("*")),
         Map.entry("agent_readonly", Set.of("order.read", "promise.read", "inventory.read")),
         Map.entry("agent_shopper", Set.of("order.read", "order.create", "order.modify", "order.cancel", "return.create", "promise.read", "inventory.read")),
-        Map.entry("agent_ops", Set.of("order.read", "order.modify", "order.hold", "order.release", "task.read", "task.work", "exception.*", "decision.read"))
+        Map.entry("agent_ops", Set.of("order.read", "order.modify", "order.hold", "order.release", "task.read", "task.work", "exception.*", "decision.read", "learning.read"))
     );
 
     public static Set<String> permissionsFor(Set<String> roles) {

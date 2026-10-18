@@ -3,8 +3,8 @@ package ai.intentoms.learning.service;
 import ai.intentoms.decision.model.DecisionRecord;
 import ai.intentoms.decision.model.Mode;
 import ai.intentoms.decision.record.DecisionRecordRepository;
+import ai.intentoms.learning.model.DecisionPoints;
 import ai.intentoms.learning.model.Episode;
-import ai.intentoms.learning.model.EpisodeStatus;
 import ai.intentoms.learning.store.EpisodeRepository;
 import ai.intentoms.platform.ids.Ids;
 import ai.intentoms.platform.ledger.Event;
@@ -12,18 +12,20 @@ import ai.intentoms.platform.ledger.EventSubscriber;
 import ai.intentoms.platform.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
- * OC-02: opens one episode per decision point, joined to everything that follows it. Listens for the same
- * {@code decision.evaluated} event every decision already emits, so no decision path needs to know learning
- * exists. Only LIVE-mode decisions become episodes — shadow/simulation/replay evaluations aren't real outcomes to
- * learn from.
+ * OC-02: one episode per decision point (decision, subject type, subject id, line, fulfilment group), joined to
+ * everything that follows it. Listens for the {@code decision.evaluated} event every decision already emits, so no
+ * decision path needs to know learning exists. Only LIVE evaluations count; a re-evaluation of the same point (a
+ * scheduled scorer re-scoring an open order) updates the episode's latest decision instead of opening another.
+ * Decisions in {@code oms.learning.episode.excluded-decisions} (default: the injection screen, which is a guard on
+ * text, not a decision with a business outcome) never open episodes.
  */
 @Component
 public class EpisodeAssembler implements EventSubscriber {
@@ -31,46 +33,31 @@ public class EpisodeAssembler implements EventSubscriber {
 
     private final DecisionRecordRepository decisionRecords;
     private final EpisodeRepository episodes;
+    private final Set<String> excluded;
 
-    public EpisodeAssembler(DecisionRecordRepository decisionRecords, EpisodeRepository episodes) {
+    public EpisodeAssembler(DecisionRecordRepository decisionRecords, EpisodeRepository episodes,
+                            @Value("${oms.learning.episode.excluded-decisions:injection_screen}") List<String> excluded) {
         this.decisionRecords = decisionRecords;
         this.episodes = episodes;
+        this.excluded = Set.copyOf(excluded);
     }
 
     @Override public List<String> eventTypePrefixes() { return List.of("decision.evaluated"); }
 
     @Override
     public void on(Event e) {
+        var previousTenant = TenantContext.current();
         if (e.tenantId() != null) TenantContext.set(e.tenantId());
         try {
             Optional<DecisionRecord> rec = decisionRecords.find(e.aggregateId());
-            if (rec.isEmpty() || rec.get().mode() != Mode.LIVE) return;
-            if (episodes.findByDecisionId(rec.get().id()).isPresent()) return; // idempotent re-delivery
+            if (rec.isEmpty() || rec.get().mode() != Mode.LIVE || excluded.contains(rec.get().decision())) return;
             DecisionRecord r = rec.get();
-            String orderId = deriveOrderId(r, e);
-            Episode episode = new Episode(Ids.prefixed("epi"), r.id(), r.decision(), orderId, lineIdOf(r), fulfillmentGroupIdOf(r),
-                EpisodeStatus.OPEN, null, Map.of(), r.policyVersion(), Instant.now(), null);
-            episodes.insert(episode);
+            episodes.upsertDecisionPoint(Episode.open(Ids.prefixed("epi"), r.id(), r.decision(), DecisionPoints.orderId(r, e.correlationId()),
+                DecisionPoints.lineId(r), DecisionPoints.fulfillmentGroupId(r), r.policyVersion(), r.subjectType(), r.subjectId(), r.createdAt()));
         } catch (RuntimeException ex) {
             log.warn("Episode assembly failed for decision record {}: {}", e.aggregateId(), ex.toString());
         } finally {
-            TenantContext.clear();
+            previousTenant.ifPresentOrElse(TenantContext::set, TenantContext::clear);
         }
-    }
-
-    /** Best-effort order id: the decision's own subject when it IS an order, else its correlation id, which every
-     * order-scoped decision call sets to the order id by convention. Refine per-decision if a future decision's
-     * subject/correlation shape doesn't follow this. */
-    private static String deriveOrderId(DecisionRecord r, Event e) {
-        if ("order".equals(r.subjectType())) return r.subjectId();
-        if (e.correlationId() != null) return e.correlationId();
-        return "order".equals(e.aggregateType()) ? e.aggregateId() : null;
-    }
-
-    private static String lineIdOf(DecisionRecord r) { return "line".equals(r.subjectType()) ? r.subjectId() : null; }
-
-    private static String fulfillmentGroupIdOf(DecisionRecord r) {
-        Object fg = r.input() == null ? null : r.input().get("fulfillmentGroupId");
-        return fg == null ? null : String.valueOf(fg);
     }
 }

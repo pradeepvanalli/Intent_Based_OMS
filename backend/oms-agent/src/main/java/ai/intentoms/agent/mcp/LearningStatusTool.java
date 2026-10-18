@@ -33,8 +33,8 @@ public class LearningStatusTool implements McpTool {
         List<LearnerState> all = learners.all();
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("learners", all.stream().map(s -> Map.of("key", s.learnerKey(), "autonomyLevel", s.autonomyLevel().name(), "enabled", s.enabled())).toList());
-        out.put("proposalsInDraft", proposals.byStatus("DRAFT", 200).size());
-        out.put("proposalsAwaitingApproval", proposals.byStatus("EVALUATED", 200).size());
+        out.put("proposalsInDraft", proposals.countByStatus("DRAFT"));
+        out.put("proposalsAwaitingApproval", proposals.countByStatus("EVALUATED"));
         out.put("proposalsPromotedRecently", proposals.byStatus("PROMOTED", 10).stream().map(Proposal::proposalId).toList());
         return out;
     }

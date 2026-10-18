@@ -35,7 +35,7 @@ public class ProposalRepository {
             values (:id, :t, :target, :base, :changes, :hyp, :tier, :status, :by, :created, :updated)
             """)
             .param("id", p.proposalId()).param("t", TenantContext.require()).param("target", p.changeset().target().toString()).param("base", p.changeset().baseVersion())
-            .param("changes", Jsonb.of(p.changeset().changes())).param("hyp", p.hypothesisId()).param("tier", p.tier().name()).param("status", p.status().name())
+            .param("changes", Jsonb.of(Json.write(p.changeset().changes(), CHANGES))).param("hyp", p.hypothesisId()).param("tier", p.tier().name()).param("status", p.status().name())
             .param("by", p.createdBy()).param("created", Timestamp.from(p.createdAt())).param("updated", Timestamp.from(p.updatedAt())).update();
     }
 
@@ -51,6 +51,19 @@ public class ProposalRepository {
         String t = TenantContext.require();
         return jdbc.sql("select " + COLS + " from proposal where tenant_id = :t and status = :s order by created_at desc limit :lim")
             .param("t", t).param("s", status).param("lim", limit).query().listOfRows().stream().map(ProposalRepository::hydrate).toList();
+    }
+
+    /** Statuses in which a proposal is still in flight; a learner must not stack a second proposal on the same target. */
+    public static final List<String> OPEN_STATUSES = List.of("DRAFT", "EVALUATED", "APPROVED", "CANARY");
+
+    public boolean existsOpenFor(String targetRef) {
+        return jdbc.sql("select count(*) from proposal where tenant_id = :t and target_ref = :target and status in (:open)")
+            .param("t", TenantContext.require()).param("target", targetRef).param("open", OPEN_STATUSES).query(Long.class).single() > 0;
+    }
+
+    public long countByStatus(String status) {
+        return jdbc.sql("select count(*) from proposal where tenant_id = :t and status = :s")
+            .param("t", TenantContext.require()).param("s", status).query(Long.class).single();
     }
 
     public void markEvaluated(String id, Map<String, Object> report, Instant at) {

@@ -1,5 +1,8 @@
 package ai.intentoms.learning.learner;
 
+import ai.intentoms.learning.governance.GovernedLearner;
+import ai.intentoms.learning.governance.LearnerDescriptor;
+import ai.intentoms.learning.governance.LearnerGovernance;
 import ai.intentoms.decision.model.DecisionRecord;
 import ai.intentoms.decision.record.DecisionRecordRepository;
 import ai.intentoms.learning.model.Direction;
@@ -32,7 +35,8 @@ import java.util.stream.Collectors;
  * fraud-signals table or a cross-module query exists.
  */
 @Component
-public class FraudAbuseHypothesisScanner {
+public class FraudAbuseHypothesisScanner implements GovernedLearner {
+    public static final String KEY = "fraud_abuse_scanner";
     private static final Logger log = LoggerFactory.getLogger(FraudAbuseHypothesisScanner.class);
     private static final List<String> FRAUD_DECISIONS = List.of("payment_risk", "return_risk", "rto_risk");
     private static final double ELEVATED_RATE_THRESHOLD = 0.15;
@@ -41,7 +45,10 @@ public class FraudAbuseHypothesisScanner {
     private final DecisionRecordRepository decisionRecords;
     private final HypothesisRepository hypotheses;
 
-    public FraudAbuseHypothesisScanner(DecisionRecordRepository decisionRecords, HypothesisRepository hypotheses) {
+    private final LearnerGovernance governance;
+
+    public FraudAbuseHypothesisScanner(DecisionRecordRepository decisionRecords, HypothesisRepository hypotheses, LearnerGovernance governance) {
+        this.governance = governance;
         this.decisionRecords = decisionRecords;
         this.hypotheses = hypotheses;
     }
@@ -57,6 +64,8 @@ public class FraudAbuseHypothesisScanner {
     }
 
     private void scanTenant() {
+        if (!governance.begin(KEY).mayPropose()) return;
+        governance.recordRun(KEY);
         Instant since = Instant.now().minus(Duration.ofDays(30));
         for (String decision : FRAUD_DECISIONS) {
             List<DecisionRecord> labelled = decisionRecords.labelledBetween(decision, currentVersionGuess(decision), since, Instant.now());
@@ -92,4 +101,13 @@ public class FraudAbuseHypothesisScanner {
 
     /** decisionsWithRecords doesn't carry version; 1 covers every tenant's current decision YAMLs (version: 1 above). */
     private static int currentVersionGuess(String decision) { return 1; }
+
+    @Override
+    public LearnerDescriptor descriptor() {
+        return LearnerDescriptor.of(KEY, "Abuse pattern finder", "Looks for new fraud and abuse patterns in confirmed cases and suggests rules for a person to review.", LearnerDescriptor.Loop.FAST, "FD-04").readsOutcomesOf("payment_risk", "return_risk", "rto_risk");
+    }
+
+    @Override public boolean runnable() { return true; }
+
+    @Override public void runNow() { sweepOnce(); }
 }

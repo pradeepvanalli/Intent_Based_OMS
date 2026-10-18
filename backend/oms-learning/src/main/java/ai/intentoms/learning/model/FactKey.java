@@ -24,7 +24,27 @@ public enum FactKey {
     CALIBRATION_ERROR(TypedValue.NumberValue.class),        // DF-02: subject=DECISION, latest measured calibration error
     CALIBRATION_CURVE(TypedValue.ListValue.class),          // DF-02: subject=DECISION, "<lower>-<upper>:<correction>" per confidence bin
     PROVIDER_COST_PER_CALL(TypedValue.NumberValue.class),   // DF-05: subject=DECISION, keyed per learner run against one provider at a time
-    AGENT_REPUTATION(TypedValue.NumberValue.class);          // FD-05: subject=AGENT, 0..1 from mandate compliance, injection-screen hits and dispute rate
+    AGENT_REPUTATION(TypedValue.NumberValue.class),          // FD-05: subject=AGENT, 0..1 from mandate compliance, injection-screen hits and dispute rate
+    // ---- fraud and abuse (FD-*)
+    DISPUTE_RATE(TypedValue.NumberValue.class),              // FD-05: subject=AGENT or CUSTOMER, chargebacks / settled payments, 0..1
+    FALSE_POSITIVE_RATE(TypedValue.NumberValue.class),       // FD-03: subject=DECISION, blocked orders later shown good / all blocked
+    FEATURE_DRIFT_PSI(TypedValue.NumberValue.class),         // FD-07: subject=DECISION, population stability index of the input features this week vs baseline
+    ADDRESS_REUSE_COUNT(TypedValue.NumberValue.class),       // FD-04: subject=ADDRESS (token), distinct customers using the address in 30 days
+    // ---- fulfilment and promise (FS-*, CX-*)
+    NODE_BACKLOG_BREACH_CURVE(TypedValue.ListValue.class),   // FS-05: subject=NODE, "<backlogUnits>:<breachProbability>" points
+    NODE_REJECT_PENALTY(TypedValue.NumberValue.class),       // FS-06: subject=NODE, decaying penalty replacing sourcing.reject_penalty
+    LANE_CALIBRATION_OFFSET(TypedValue.NumberValue.class),   // CX-01: subject=LANE, observed minus stated on-time probability
+    PROMISE_BUFFER_DAYS(TypedValue.NumberValue.class),       // CX-02: subject=SEGMENT, buffer that maximises conversion x on-time
+    WARN_EARLY_THRESHOLD(TypedValue.NumberValue.class),      // CX-03: subject=DECISION (sla_breach_risk), risk score that triggers a proactive notice
+    APPEASEMENT_LEVEL(TypedValue.NumberValue.class),         // CX-04: subject=SEGMENT, credit amount that best retains within budget
+    // ---- inventory (IU-*)
+    STOCK_AGE_DAYS(TypedValue.NumberValue.class),            // IU-03: subject=SKU_NODE ("<sku>|<node>"), days since oldest unit was received
+    BACKORDER_CONVERSION_RATE(TypedValue.NumberValue.class), // IU-06: subject=SKU, backorders fulfilled / backorders taken
+    TRANSFER_RECOMMENDATION(TypedValue.ListValue.class),     // IU-04: subject=SKU, "<from>><to>:<units>" suggestions (recommend only)
+    // ---- customer intelligence (CI-*)
+    SEGMENT_MEMBERSHIP(TypedValue.TextValue.class),          // CI-02: subject=CUSTOMER, discovered segment id
+    // ---- decision fabric (DF-*)
+    PROVIDER_ACCURACY(TypedValue.NumberValue.class);         // DF-05: subject=DECISION, accuracy of one provider on labelled records
 
     private final Class<? extends TypedValue> shape;
     FactKey(Class<? extends TypedValue> shape) { this.shape = shape; }

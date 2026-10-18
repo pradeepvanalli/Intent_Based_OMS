@@ -1,5 +1,8 @@
 package ai.intentoms.learning.learner;
 
+import ai.intentoms.learning.governance.GovernedLearner;
+import ai.intentoms.learning.governance.LearnerDescriptor;
+import ai.intentoms.learning.governance.LearnerGovernance;
 import ai.intentoms.decision.definition.DecisionDefinitionRepository;
 import ai.intentoms.decision.model.DecisionDefinition;
 import ai.intentoms.decision.model.EvaluationReport;
@@ -31,7 +34,8 @@ import java.util.Locale;
  * Observe-only: writes a fact, never changes how a decision actually runs.
  */
 @Component
-public class ConfidenceCalibrator {
+public class ConfidenceCalibrator implements GovernedLearner {
+    public static final String KEY = "confidence_calibrator";
     private static final Logger log = LoggerFactory.getLogger(ConfidenceCalibrator.class);
     private static final String LEARNER = "confidence_calibrator";
 
@@ -40,7 +44,10 @@ public class ConfidenceCalibrator {
     private final DecisionRecordRepository decisionRecords;
     private final LearnedFactRepository facts;
 
-    public ConfidenceCalibrator(DecisionDefinitionRepository definitions, DecisionStudioService studio, DecisionRecordRepository decisionRecords, LearnedFactRepository facts) {
+    private final LearnerGovernance governance;
+
+    public ConfidenceCalibrator(DecisionDefinitionRepository definitions, DecisionStudioService studio, DecisionRecordRepository decisionRecords, LearnedFactRepository facts, LearnerGovernance governance) {
+        this.governance = governance;
         this.definitions = definitions;
         this.studio = studio;
         this.decisionRecords = decisionRecords;
@@ -60,6 +67,8 @@ public class ConfidenceCalibrator {
     }
 
     private int sweepTenant() {
+        if (!governance.begin(KEY).mayRun()) return 0;
+        governance.recordRun(KEY);
         int n = 0;
         for (String name : definitions.names()) {
             try { if (sweepDecision(name)) n++; } catch (RuntimeException e) { log.warn("Calibration check failed for {}: {}", name, e.toString()); }
@@ -94,4 +103,13 @@ public class ConfidenceCalibrator {
         facts.supersede(SubjectType.DECISION, decisionName, key, now);
         facts.insert(new LearnedFact(Ids.prefixed("fact"), SubjectType.DECISION, decisionName, key, value, confidence, sampleSize, LEARNER, version, now, null, now));
     }
+
+    @Override
+    public LearnerDescriptor descriptor() {
+        return LearnerDescriptor.of(KEY, "Confidence calibration", "Checks whether a decision that says 90% sure is right 90% of the time, and corrects it when not.", LearnerDescriptor.Loop.FAST, "DF-02").feeds("decision.calibration");
+    }
+
+    @Override public boolean runnable() { return true; }
+
+    @Override public void runNow() { sweepOnce(); }
 }

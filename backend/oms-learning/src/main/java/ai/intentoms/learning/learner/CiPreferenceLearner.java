@@ -1,5 +1,8 @@
 package ai.intentoms.learning.learner;
 
+import ai.intentoms.learning.governance.GovernedLearner;
+import ai.intentoms.learning.governance.LearnerDescriptor;
+import ai.intentoms.learning.governance.LearnerGovernance;
 import ai.intentoms.learning.model.Episode;
 import ai.intentoms.learning.model.FactKey;
 import ai.intentoms.learning.model.LearnedFact;
@@ -34,7 +37,8 @@ import java.util.Map;
  * defensively from common payload keys and the event is skipped (not guessed) when it's absent.
  */
 @Component
-public class CiPreferenceLearner implements EventSubscriber {
+public class CiPreferenceLearner implements EventSubscriber, GovernedLearner {
+    public static final String KEY = "ci_preference";
     private static final Logger log = LoggerFactory.getLogger(CiPreferenceLearner.class);
     private static final double SEGMENT_PRIOR_SPLIT_TOLERANCE = 0.5;
     private static final double SHRINKAGE_K = 5.0;
@@ -44,7 +48,10 @@ public class CiPreferenceLearner implements EventSubscriber {
     private final OutcomeRepository outcomes;
     private final LearnedFactRepository facts;
 
-    public CiPreferenceLearner(EpisodeRepository episodes, OutcomeRepository outcomes, LearnedFactRepository facts) {
+    private final LearnerGovernance governance;
+
+    public CiPreferenceLearner(EpisodeRepository episodes, OutcomeRepository outcomes, LearnedFactRepository facts, LearnerGovernance governance) {
+        this.governance = governance;
         this.episodes = episodes;
         this.outcomes = outcomes;
         this.facts = facts;
@@ -56,6 +63,8 @@ public class CiPreferenceLearner implements EventSubscriber {
     public void on(Event e) {
         if (e.tenantId() != null) TenantContext.set(e.tenantId());
         try {
+            if (!governance.begin(KEY).mayRun()) return;
+            governance.recordRunThrottled(KEY);
             String customerRef = customerRefOf(e);
             if (customerRef == null) return;
             String orderId = orderIdOf(e);
@@ -101,5 +110,10 @@ public class CiPreferenceLearner implements EventSubscriber {
             if (o != null) return String.valueOf(o);
         }
         return "order".equals(e.aggregateType()) ? e.aggregateId() : e.correlationId();
+    }
+
+    @Override
+    public LearnerDescriptor descriptor() {
+        return LearnerDescriptor.of(KEY, "Customer preferences", "Learns each customer's split tolerance, pickup preference and contact channel from what they do.", LearnerDescriptor.Loop.FAST, "CI-01, CI-03, CI-04").features("cs.wismo", "order.shipped");
     }
 }

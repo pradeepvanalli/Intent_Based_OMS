@@ -65,11 +65,14 @@ public class PromotionService {
     private final DecisionStudioService decisionStudio;
     private final LearningEvents events;
     private final ai.intentoms.decision.record.DecisionRecordRepository decisionRecords;
+    private final ai.intentoms.learning.governance.ParameterResolver parameters;
+    private final ai.intentoms.learning.governance.LearnerRegistry registry;
 
     @Value("${oms.learning.auto-promote-sweep-ms:1800000}") private long sweepMs;
 
     public PromotionService(ProposalRepository proposals, LearnerRepository learners, ObjectiveProfileRepository objectives, LearnedFactRepository facts,
-                             DecisionStudioService decisionStudio, LearningEvents events, ai.intentoms.decision.record.DecisionRecordRepository decisionRecords) {
+                             DecisionStudioService decisionStudio, LearningEvents events, ai.intentoms.decision.record.DecisionRecordRepository decisionRecords,
+                             ai.intentoms.learning.governance.ParameterResolver parameters, ai.intentoms.learning.governance.LearnerRegistry registry) {
         this.proposals = proposals;
         this.learners = learners;
         this.objectives = objectives;
@@ -77,6 +80,8 @@ public class PromotionService {
         this.decisionStudio = decisionStudio;
         this.events = events;
         this.decisionRecords = decisionRecords;
+        this.parameters = parameters;
+        this.registry = registry;
     }
 
     /** Scheduled auto-promotion sweep (the "T0 auto / T1 at L3" half of EX-07); approvals still go through the
@@ -103,8 +108,8 @@ public class PromotionService {
     }
 
     private boolean tryAutoPromote(Proposal p, List<FreezeWindows.Window> freeze) {
-        String learnerKey = p.createdBy();
-        LearnerState learner = learners.getOrCreate(learnerKey);
+        String learnerKey = learnerKeyOf(p);
+        LearnerState learner = learnerFor(p);
         int promotedThisWeek = countPromotedInTrailingWeek(learnerKey);
         PromotionGuard.Result r = PromotionGuard.evaluate(p, learner, FreezeWindows.toGuardWindows(freeze), Instant.now(), promotedThisWeek);
         if (r.verdict() != PromotionGuard.Verdict.AUTO_PROMOTE) return false;
@@ -114,7 +119,7 @@ public class PromotionService {
     /** Manual promotion of an already-APPROVED proposal (called from a human-facing controller). */
     public Proposal promote(String proposalId, Actor by) {
         Proposal p = proposals.get(proposalId);
-        LearnerState learner = learners.getOrCreate(p.createdBy());
+        LearnerState learner = learnerFor(p);
         List<FreezeWindows.Window> freeze = FreezeWindows.load(objectives.live().orElse(null));
         PromotionGuard.Result r = PromotionGuard.evaluateManualPromote(p, learner, FreezeWindows.toGuardWindows(freeze), Instant.now());
         if (r.verdict() != PromotionGuard.Verdict.AUTO_PROMOTE) throw new ConflictException("Cannot promote: " + r.reason());
@@ -129,7 +134,7 @@ public class PromotionService {
         else throw new ValidationException("Unknown artifact type '" + target.type() + "' on proposal " + p.proposalId());
 
         proposals.promote(p.proposalId(), Instant.now());
-        learners.recordRun(learner.learnerKey(), Instant.now());
+        if (registry.descriptor(learner.learnerKey()).isPresent()) learners.recordRun(learner.learnerKey(), Instant.now());
         events.proposalPromoted(p.proposalId(), Actor.system("promotion-service"),
             Map.of("target", target.toString(), "tier", p.tier().name(), "reason", reason, "learner", learner.learnerKey()));
     }
@@ -156,6 +161,7 @@ public class PromotionService {
     }
 
     private void applyToParameter(Proposal p, String parameterRef) {
+        if (parameterRef.startsWith("live:")) { applyLiveUse(p, parameterRef.substring("live:".length())); return; }
         // Convention: a parameter ref of the form "<subjectType>:<subjectId>:<factKey>" names the learned fact a
         // ParameterChange moves (e.g. "NODE:node_12:SAFETY_STOCK_UNITS"). Anything else can't be applied
         // automatically — it's a parameter this build doesn't know how to write back.
@@ -178,10 +184,39 @@ public class PromotionService {
         events.factLearned(parts[1], Actor.system("promotion-service"), Map.of("subjectType", st.name(), "factKey", key.name(), "version", nextVersion, "proposalId", p.proposalId()));
     }
 
+    /**
+     * Enabling live use of a learned parameter family ({@code parameter:live:<family>}): the change's {@code to} is
+     * {@code {"enabled": true, "min": .., "max": .., "maxStep": .., "learner": ..}}; {@code enabled: false} revokes.
+     */
+    private void applyLiveUse(Proposal p, String family) {
+        if (!(p.changeset().changes().get(0) instanceof PolicyChange.ParameterChange pc) || !(pc.to() instanceof Map<?, ?> to)) {
+            throw new ConflictException("A live-use change needs a ParameterChange whose 'to' is {enabled, min, max, maxStep}");
+        }
+        String by = "proposal:" + p.proposalId();
+        if (Boolean.FALSE.equals(to.get("enabled"))) { parameters.revoke(family, by); return; }
+        String learner = to.get("learner") == null ? learnerKeyOf(p) : String.valueOf(to.get("learner"));
+        parameters.promote(family, learner, num(to.get("min")), num(to.get("max")), num(to.get("maxStep")), p.proposalId(), by);
+    }
+
+    /** The governing learner's state; a proposal a person authored has no learner, so only tier rules apply to it. */
+    private LearnerState learnerFor(Proposal p) {
+        String key = learnerKeyOf(p);
+        if (registry.descriptor(key).isPresent()) return learners.getOrCreate(key);
+        return new LearnerState(key, AutonomyLevel.L1_RECOMMEND, true, Integer.MAX_VALUE, null, null, "system", Instant.now(), null);
+    }
+
+    /** Proposals are authored as {@code system:<learner_key>}; the governance row is keyed by the bare learner key. */
+    static String learnerKeyOf(Proposal p) {
+        String by = p.createdBy() == null ? "" : p.createdBy();
+        return by.startsWith("system:") ? by.substring("system:".length()) : by;
+    }
+
+    private static Double num(Object o) { return o instanceof Number n ? n.doubleValue() : o == null ? null : Double.valueOf(String.valueOf(o)); }
+
     private int countPromotedInTrailingWeek(String learnerKey) {
         Instant since = Instant.now().minus(Duration.ofDays(7));
         return (int) proposals.byStatus("PROMOTED", 500).stream()
-            .filter(p -> learnerKey.equals(p.createdBy()) && p.promotedAt() != null && p.promotedAt().isAfter(since)).count();
+            .filter(p -> learnerKey.equals(learnerKeyOf(p)) && p.promotedAt() != null && p.promotedAt().isAfter(since)).count();
     }
 
     /** Same pattern as {@code DecisionEscalationTaskSubscriber.runAsSystem}: the sweep runs with no principal, and

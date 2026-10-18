@@ -95,11 +95,13 @@ public class DecisionRuntime implements DecisionService {
     private final EscalationHandler escalations;
     private final TransactionTemplate tx;
     private final TraceBuilder traces;
+    private final org.springframework.beans.factory.ObjectProvider<DecisionLearningHooks> hookProvider;
+    private volatile DecisionLearningHooks hooks;
 
     public DecisionRuntime(DecisionDefinitionRepository definitions, DefinitionCache definitionCache, ProviderRegistry providers, RuleEngine rules, CheckEvaluator checks,
                            StateBuilder stateBuilder, DecisionRecordRepository records, DecisionCacheRepository cache, AiSpendRepository spend, TenantConfigStore config,
                            EventStore events, Metrics metrics, TimeSource time, AuthorizationService authz, AuditLog audit, EscalationHandler escalations,
-                           TransactionTemplate tx, TraceBuilder traces) {
+                           TransactionTemplate tx, TraceBuilder traces, org.springframework.beans.factory.ObjectProvider<DecisionLearningHooks> hooks) {
         this.definitions = definitions;
         this.definitionCache = definitionCache;
         this.providers = providers;
@@ -118,6 +120,7 @@ public class DecisionRuntime implements DecisionService {
         this.escalations = escalations;
         this.tx = tx;
         this.traces = traces;
+        this.hookProvider = hooks;
     }
 
     // ------------------------------------------------------------------ DecisionService
@@ -126,7 +129,19 @@ public class DecisionRuntime implements DecisionService {
     public DecisionResult decide(String decisionName, Map<String, Object> input, DecisionOptions opts) {
         DecisionOptions o = opts == null ? DecisionOptions.live(null, null, Actor.system("decision-runtime")) : opts;
         Resolution r = resolve(decisionName, o);
-        DecisionResult result = evaluate(r.selected(), input, o.withVersion(r.selected().version()));
+        DecisionDefinition selected = r.selected();
+        Map<String, Object> routing = null;
+        if (o.mode() == Mode.LIVE && o.versionOverride() == null) {
+            Optional<DecisionLearningHooks.Route> route = safely(() -> hooks().route(decisionName, routingKey(o), r.selected().version()), Optional.empty());
+            if (route.isPresent()) {
+                DecisionLearningHooks.Route rt = route.get();
+                if (rt.version() != selected.version()) {
+                    selected = definitions.find(decisionName, rt.version()).map(DecisionDefinitionRepository.Row::definition).orElse(selected);
+                }
+                routing = Map.of("experimentId", rt.experimentId(), "arm", rt.arm(), "version", selected.version());
+            }
+        }
+        DecisionResult result = evaluate(selected, input, o.withVersion(selected.version()), routing);
         if (o.mode() == Mode.LIVE && !r.shadows().isEmpty()) runShadows(r.shadows(), input, o);
         return result;
     }
@@ -207,6 +222,29 @@ public class DecisionRuntime implements DecisionService {
         return new Resolution(selected, shadows);
     }
 
+    /** Experiments split by customer when the caller passes {@code customerRef} in the options, else by subject. */
+    private static String routingKey(DecisionOptions o) {
+        Object c = o.extraVars().get("customerRef");
+        return c != null ? String.valueOf(c) : o.subjectId();
+    }
+
+    /** Resolved on first use, not in the constructor: the learning implementation may itself depend on decisions. */
+    private DecisionLearningHooks hooks() {
+        DecisionLearningHooks h = hooks;
+        if (h == null) hooks = h = hookProvider.getIfAvailable(() -> DecisionLearningHooks.NOOP);
+        return h;
+    }
+
+    /** A learning hook must never break a decision (GR-07): any failure falls back to behaving as if it were absent. */
+    private <T> T safely(java.util.function.Supplier<T> call, T fallback) {
+        try { return call.get(); }
+        catch (RuntimeException e) {
+            metrics.count("oms.decision.learning_hook.failure");
+            log.warn("Learning hook failed, continuing without it: {}", e.toString());
+            return fallback;
+        }
+    }
+
     /** Stable per-subject canary assignment: the same subject always sees the same version (FR-PRM-04). */
     public static boolean inCanary(String subjectId, int percent) {
         if (percent <= 0) return false;
@@ -281,7 +319,13 @@ public class DecisionRuntime implements DecisionService {
         /** Provider chain: provider → fallbackProvider (GR-07, section 9 rule 9). Returns null when every option failed. */
         ProviderResponse ask(Object askState, Map<String, QuestionDef> questions) {
             List<String> chain = new ArrayList<>();
-            if (def.provider() != null) chain.add(def.provider());
+            if (opts.mode() == Mode.LIVE || opts.mode() == Mode.SHADOW) {
+                safely(() -> hooks().preferredProvider(def.name(), def.version()), Optional.<String>empty()).ifPresent(pref -> {
+                    chain.add(pref);
+                    details.put("providerRouted", pref);
+                });
+            }
+            if (def.provider() != null && !chain.contains(def.provider())) chain.add(def.provider());
             if (def.fallbackProvider() != null && !chain.contains(def.fallbackProvider())) chain.add(def.fallbackProvider());
             for (String name : chain) {
                 Optional<DecisionProvider> p = providers.usable(name);
@@ -331,7 +375,20 @@ public class DecisionRuntime implements DecisionService {
 
     /** Evaluates one specific definition version (also used by shadow, simulation, impact diffs and golden evaluation). */
     public DecisionResult evaluate(DecisionDefinition def, Map<String, Object> input, DecisionOptions opts) {
+        return evaluate(def, input, opts, null);
+    }
+
+    private DecisionResult evaluate(DecisionDefinition def, Map<String, Object> input, DecisionOptions opts, Map<String, Object> routing) {
+        List<Map<String, Object>> factsUsed = List.of();
+        if (opts.mode() == Mode.LIVE || opts.mode() == Mode.SHADOW) {
+            Map<String, Object> raw = input == null ? Map.of() : input;
+            DecisionLearningHooks.Contribution c = safely(() -> hooks().contribute(def.name(), raw, opts), DecisionLearningHooks.Contribution.none(raw));
+            input = c.input() == null ? raw : c.input();
+            factsUsed = c.factsUsed() == null ? List.of() : c.factsUsed();
+        }
         Eval ev = new Eval(def, input, opts);
+        if (!factsUsed.isEmpty()) ev.details.put("learnedFacts", factsUsed);
+        if (routing != null) ev.details.put("experiment", routing);
         if (opts.mode() == Mode.LIVE && def.cache() != null) {
             Optional<DecisionResult> hit = cache.get(def.key(), ev.inputHash, ev.startedAt);
             if (hit.isPresent()) {
@@ -442,6 +499,15 @@ public class DecisionRuntime implements DecisionService {
         QuestionDef mainQ = def.questions().get(mainKey);
         ev.value = mainValue(main, mainQ);
         ev.confidence = main.confidence();
+        if (ev.opts.mode() == Mode.LIVE || ev.opts.mode() == Mode.SHADOW) {
+            double raw = ev.confidence;
+            DecisionLearningHooks.Calibrated cal = safely(() -> hooks().calibrate(def.name(), def.version(), raw), new DecisionLearningHooks.Calibrated(raw, null));
+            if (cal.source() != null && cal.confidence() != raw) {
+                ev.confidence = Math.max(0.0, Math.min(1.0, cal.confidence()));
+                ev.details.put("rawConfidence", raw);
+                ev.details.put("calibration", cal.source());
+            }
+        }
 
         // Reason codes by decomposition (section 9 rule 6).
         for (QuestionDef q : def.questions().values()) {
@@ -562,16 +628,16 @@ public class DecisionRuntime implements DecisionService {
         details.put("preChecks", ev.preChecks);
         details.put("postChecks", ev.postChecks);
         details.put("mode", ev.opts.mode().name());
-        // SOO propensity logging (OC-01): this generic path makes one deterministic choice per call, so arms is the
-        // singleton actually chosen and propensity is 1.0. A learner that samples among several named arms (the
-        // FS-01 sourcing-policy bandit, for example) logs its own arms/chosenArm/propensity directly through
-        // DecisionRecordRepository instead of through this generic path, since bandit exploration is a different
-        // mechanism from the act/confirm/escalate confidence bands this runtime evaluates.
+        // SOO propensity logging (OC-01): arms are the main question's enumerated options (what could have been
+        // chosen), chosenArm the value acted on, and propensity 1.0 because this path chooses deterministically. A
+        // learner that samples among arms (the FS-01 sourcing-policy bandit) logs its own record with the real draw
+        // probability instead.
         String chosenArm = ev.value == null ? null : String.valueOf(ev.value);
+        List<String> arms = armsOf(ev, chosenArm);
         DecisionRecord record = new DecisionRecord(ev.recordId, ev.def.name(), ev.def.version(), ev.opts.mode(), ev.opts.subjectType(), ev.opts.subjectId(), ev.opts.correlationId(),
             ev.layer, ev.band, ev.action, ev.value, ev.answers, ev.confidence, ev.provider, ev.modelVersion, ev.inputHash, ev.state, ev.input, ev.rulesFired, ev.reasonCodes, latency,
             ev.costUsd, ev.inputTokens, ev.requiresHuman, ev.escalationId, ev.opts.actor().ref(), details, null, null, null, null, Map.of(), ev.startedAt,
-            ev.state, chosenArm == null ? List.of() : List.of(chosenArm), chosenArm, 1.0, ev.def.version());
+            ev.state, arms, chosenArm, 1.0, ev.def.version());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("decision", ev.def.name());
         payload.put("version", ev.def.version());
@@ -611,6 +677,15 @@ public class DecisionRuntime implements DecisionService {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    private static List<String> armsOf(Eval ev, String chosenArm) {
+        Object mainKey = ev.details.get("mainQuestion");
+        QuestionDef q = mainKey == null ? null : ev.def.questions().get(String.valueOf(mainKey));
+        List<String> arms = new ArrayList<>();
+        if (q != null && q.isChoice() && q.choiceCriteria() != null) arms.addAll(q.choiceCriteria().keySet());
+        if (chosenArm != null && !arms.contains(chosenArm)) arms.add(chosenArm);
+        return arms;
+    }
 
     private static Object mainValue(Answer main, QuestionDef q) {
         if (q != null && q.isNoul()) return main.asBoolean();

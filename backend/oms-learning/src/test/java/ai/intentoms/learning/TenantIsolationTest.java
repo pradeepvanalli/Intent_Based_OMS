@@ -37,7 +37,7 @@ class TenantIsolationTest extends PostgresTestBase {
 
         // Tenant A (the base class's bound "test" tenant) writes an episode and a fact for this node id.
         episodes.insert(new Episode(Ids.prefixed("epi"), Ids.prefixed("dr"), "sourcing_node_score", "order-a", null, null,
-            EpisodeStatus.MATURE, 0.8, Map.of("otd", 0.8), 1, Instant.now(), Instant.now()));
+            EpisodeStatus.MATURE, 0.8, Map.of("otd", 0.8), 1, Instant.now(), Instant.now(), "order", "order-a", null, 1));
         facts.insert(new LearnedFact(Ids.prefixed("fact"), SubjectType.NODE, nodeId, FactKey.NODE_ON_TIME_RATE, new TypedValue.NumberValue(0.95),
             0.9, 50, "node_reliability", 1, Instant.now(), null, Instant.now()));
 

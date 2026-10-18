@@ -14,10 +14,12 @@ import java.util.List;
  * @param pipelineCacheMs          pipeline view cache per tenant+filter (FR-MON-01 freshness budget is 5 s); default 3000
  * @param terminalStatuses         header statuses that take an order out of the open pipeline
  * @param defaultCarrierOnTimeRate carrier on-time rate used when {@code carrier.on_time_rate_7d} is not configured; default 0.94
+ * @param riskRescoreMinutes       an order whose material risk inputs are unchanged is re-decided at most this often; default 60.
+ *                                 Re-deciding every sweep produced ~1,440 decision records (and as many escalations) per order per day.
  */
 @ConfigurationProperties(prefix = "oms.monitoring")
 public record MonitoringProperties(Boolean enabled, long riskSweepMs, long stuckSweepMs, int sweepBatch, long pipelineCacheMs,
-                                   List<String> terminalStatuses, Double defaultCarrierOnTimeRate) {
+                                   List<String> terminalStatuses, Double defaultCarrierOnTimeRate, long riskRescoreMinutes) {
     public static final List<String> DEFAULT_TERMINAL = List.of("delivered", "cancelled", "picked_up", "refunded", "closed");
 
     public MonitoringProperties {
@@ -29,6 +31,7 @@ public record MonitoringProperties(Boolean enabled, long riskSweepMs, long stuck
         if (terminalStatuses == null || terminalStatuses.isEmpty()) terminalStatuses = DEFAULT_TERMINAL;
         terminalStatuses = List.copyOf(terminalStatuses);
         if (defaultCarrierOnTimeRate == null || defaultCarrierOnTimeRate <= 0 || defaultCarrierOnTimeRate > 1) defaultCarrierOnTimeRate = 0.94;
+        if (riskRescoreMinutes <= 0) riskRescoreMinutes = 60;
     }
 
     public boolean isEnabled() { return enabled; }

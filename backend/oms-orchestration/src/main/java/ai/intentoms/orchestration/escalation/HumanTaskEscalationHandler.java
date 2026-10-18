@@ -5,6 +5,7 @@ import ai.intentoms.decision.model.Tier;
 import ai.intentoms.decision.record.DecisionEscalationRepository;
 import ai.intentoms.decision.runtime.EscalationHandler;
 import ai.intentoms.decision.runtime.EscalationRequest;
+import ai.intentoms.platform.config.TenantConfigStore;
 import ai.intentoms.platform.ids.Ids;
 import ai.intentoms.platform.json.Json;
 import ai.intentoms.workflow.task.HumanTask;
@@ -15,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -35,18 +37,71 @@ public class HumanTaskEscalationHandler implements EscalationHandler {
     public static final String QUEUE_DEFAULT = "decision_escalations";
     private static final Logger log = LoggerFactory.getLogger(HumanTaskEscalationHandler.class);
 
+    public static final String DEDUPE_KEY = "escalation.dedupe_decisions";
+    static final Set<String> DEFAULT_DEDUPE = Set.of("sla_breach_risk");
+
     private final HumanTaskService tasks;
     private final DecisionEscalationRepository escalations;
+    private final TenantConfigStore config;
 
-    public HumanTaskEscalationHandler(HumanTaskService tasks, DecisionEscalationRepository escalations) {
+    public HumanTaskEscalationHandler(HumanTaskService tasks, DecisionEscalationRepository escalations, TenantConfigStore config) {
         this.tasks = tasks;
         this.escalations = escalations;
+        this.config = config;
     }
 
     @Override
     public String escalate(EscalationRequest r) {
         String id = Ids.prefixed("esc");
+        boolean dedupe = dedupes(r.decision()) && r.subjectType() != null && r.subjectId() != null;
+        if (dedupe) {
+            String linked = linkToWaitingTask(id, r);
+            if (linked != null) return linked;
+        }
         String queue = queueFor(r.tier(), r.decision());
+        Map<String, Object> payload = payload(id, r);
+        payload.put("options", Map.of("accept", "Act on the recommendation", "override", "Choose another value (details.value) with a reason"));
+        String title = "Decision " + r.decision() + " needs a human";
+        HumanTask task = tasks.create(new TaskRequest(TASK_TYPE, queue, r.subjectType(), r.subjectId(), title, payload, null, skills(queue), r.tier() == Tier.T3 ? 8 : 4, null));
+        if (!escalations.insert(id, r.recordId(), r.decision(), task.id(), r.subjectType(), r.subjectId(), dedupe)) {
+            // A concurrent evaluation opened the anchor first: drop the task just created and link to that one.
+            tasks.cancel(task.id(), "Duplicate of a concurrent escalation for the same decision and subject");
+            String linked = linkToWaitingTask(id, r);
+            if (linked != null) return linked;
+            throw new IllegalStateException("Escalation anchor for " + r.decision() + " " + r.subjectType() + ":" + r.subjectId() + " vanished");
+        }
+        log.info("Decision {} ({}) escalated to {} as task {} (recommendation {}, confidence {})", r.decision(), r.tier(), queue, task.id(), r.recommendedValue(), r.confidence());
+        return id;
+    }
+
+    /** The same question about the same subject already waiting on a person: record this escalation LINKED to that
+     * task and refresh the task with the newest recommendation, instead of opening another task. A scheduled scorer
+     * re-evaluates open orders every minute; without this one order collects hundreds of identical tasks. Completing
+     * the task resolves the anchor and every linked escalation ({@link DecisionEscalationTaskSubscriber}). */
+    private String linkToWaitingTask(String id, EscalationRequest r) {
+        var anchor = escalations.openAnchorForSubject(r.decision(), r.subjectType(), r.subjectId());
+        if (anchor.isEmpty()) return null;
+        HumanTask existing = tasks.get(anchor.get().taskId());
+        if (!existing.isOpen()) return null;
+        escalations.insertLinked(id, r.recordId(), r.decision(), existing.id(), r.subjectType(), r.subjectId());
+        Map<String, Object> latest = new LinkedHashMap<>();
+        latest.put("latestRecordId", r.recordId());
+        latest.put("latestRecommendedValue", r.recommendedValue());
+        latest.put("latestConfidence", r.confidence());
+        latest.put("reEvaluations", escalations.unresolvedForTask(existing.id()).size() - 1);
+        tasks.refreshPayload(existing.id(), latest);
+        log.debug("Decision {} re-escalated for {}:{}; linked to open task {}", r.decision(), r.subjectType(), r.subjectId(), existing.id());
+        return id;
+    }
+
+    /** Decisions whose escalations are de-duplicated per subject, from tenant config; default the breach-risk score. */
+    private boolean dedupes(String decision) {
+        List<Object> configured = config.getList(DEDUPE_KEY);
+        if (configured.isEmpty()) return DEFAULT_DEDUPE.contains(decision);
+        return configured.stream().map(String::valueOf).anyMatch(decision::equals);
+    }
+
+    private static Map<String, Object> payload(String id, EscalationRequest r) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("escalationId", id);
         payload.put("recordId", r.recordId());
@@ -61,12 +116,7 @@ public class HumanTaskEscalationHandler implements EscalationHandler {
         payload.put("reason", r.reason());
         payload.put("subjectType", r.subjectType());
         payload.put("subjectId", r.subjectId());
-        payload.put("options", Map.of("accept", "Act on the recommendation", "override", "Choose another value (details.value) with a reason"));
-        String title = "Decision " + r.decision() + " needs a human";
-        HumanTask task = tasks.create(new TaskRequest(TASK_TYPE, queue, r.subjectType(), r.subjectId(), title, payload, null, skills(queue), r.tier() == Tier.T3 ? 8 : 4, null));
-        escalations.insert(id, r.recordId(), r.decision(), task.id());
-        log.info("Decision {} ({}) escalated to {} as task {} (recommendation {}, confidence {})", r.decision(), r.tier(), queue, task.id(), r.recommendedValue(), r.confidence());
-        return id;
+        return payload;
     }
 
     /** Queue by tier and decision name (visible for unit tests). */

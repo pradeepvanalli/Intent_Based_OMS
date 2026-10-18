@@ -1,5 +1,8 @@
 package ai.intentoms.learning.learner;
 
+import ai.intentoms.learning.governance.GovernedLearner;
+import ai.intentoms.learning.governance.LearnerDescriptor;
+import ai.intentoms.learning.governance.LearnerGovernance;
 import ai.intentoms.decision.definition.DecisionDefinitionRepository;
 import ai.intentoms.decision.model.DecisionDefinition;
 import ai.intentoms.decision.model.EvaluationReport;
@@ -33,7 +36,8 @@ import java.util.List;
  * {@link Proposal} for a human to act on through the existing studio.
  */
 @Component
-public class BandThresholdLearner {
+public class BandThresholdLearner implements GovernedLearner {
+    public static final String KEY = "band_threshold";
     private static final Logger log = LoggerFactory.getLogger(BandThresholdLearner.class);
     private static final String LEARNER_KEY = "band_threshold";
     private static final int MIN_BIN_SAMPLE = 10;
@@ -46,7 +50,10 @@ public class BandThresholdLearner {
     @Value("${oms.learning.df01.max-step:0.05}") private double maxStep;
     @Value("${oms.learning.df01.min-move:0.02}") private double minMove;
 
-    public BandThresholdLearner(DecisionDefinitionRepository definitions, DecisionStudioService studio, DecisionRecordRepository decisionRecords, ProposalRepository proposals) {
+    private final LearnerGovernance governance;
+
+    public BandThresholdLearner(DecisionDefinitionRepository definitions, DecisionStudioService studio, DecisionRecordRepository decisionRecords, ProposalRepository proposals, LearnerGovernance governance) {
+        this.governance = governance;
         this.definitions = definitions;
         this.studio = studio;
         this.decisionRecords = decisionRecords;
@@ -66,6 +73,8 @@ public class BandThresholdLearner {
     }
 
     private int sweepTenant() {
+        if (!governance.begin(KEY).mayPropose()) return 0;
+        governance.recordRun(KEY);
         int n = 0;
         for (String name : definitions.names()) {
             try { if (sweepDecision(name)) n++; } catch (RuntimeException e) { log.warn("Band-threshold check failed for {}: {}", name, e.toString()); }
@@ -115,13 +124,17 @@ public class BandThresholdLearner {
         return Math.max(0, Math.min(1, result));
     }
 
-    private boolean hasPendingProposal(String name) {
-        String ref = "decision:" + name;
-        return proposals.byStatus("DRAFT", 50).stream().anyMatch(p -> p.changeset().target().toString().equals(ref))
-            || proposals.byStatus("EVALUATED", 50).stream().anyMatch(p -> p.changeset().target().toString().equals(ref))
-            || proposals.byStatus("APPROVED", 50).stream().anyMatch(p -> p.changeset().target().toString().equals(ref));
-    }
+    private boolean hasPendingProposal(String name) { return proposals.existsOpenFor("decision:" + name); }
 
     private static PolicyChangeset.RiskTier mapTier(Tier t) { return PolicyChangeset.RiskTier.valueOf(t.name()); }
     private static double round(double d) { return Math.round(d * 1000) / 1000d; }
+
+    @Override
+    public LearnerDescriptor descriptor() {
+        return LearnerDescriptor.of(KEY, "Confidence band tuner", "Suggests where each decision's act and confirm thresholds should sit so accuracy holds within the escalation budget.", LearnerDescriptor.Loop.FAST, "DF-01");
+    }
+
+    @Override public boolean runnable() { return true; }
+
+    @Override public void runNow() { sweepOnce(); }
 }

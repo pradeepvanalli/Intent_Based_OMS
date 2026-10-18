@@ -1,5 +1,8 @@
 package ai.intentoms.learning.learner;
 
+import ai.intentoms.learning.governance.GovernedLearner;
+import ai.intentoms.learning.governance.LearnerDescriptor;
+import ai.intentoms.learning.governance.LearnerGovernance;
 import ai.intentoms.decision.definition.DecisionDefinitionRepository;
 import ai.intentoms.decision.model.DecisionDefinition;
 import ai.intentoms.decision.model.DecisionRecord;
@@ -30,7 +33,8 @@ import java.util.stream.Collectors;
  * "after deduplication and reviewer sign-off"), so this only produces the candidate and its evidence.
  */
 @Component
-public class GoldenSetGrowthLearner {
+public class GoldenSetGrowthLearner implements GovernedLearner {
+    public static final String KEY = "golden_set_growth";
     private static final Logger log = LoggerFactory.getLogger(GoldenSetGrowthLearner.class);
     private static final String HUMAN_RESOLUTION_LABEL = "human_resolution";
 
@@ -41,7 +45,10 @@ public class GoldenSetGrowthLearner {
     @Value("${oms.learning.df03.min-occurrences:3}") private int minOccurrences;
     @Value("${oms.learning.df03.window-days:60}") private int windowDays;
 
-    public GoldenSetGrowthLearner(DecisionDefinitionRepository definitions, DecisionRecordRepository decisionRecords, HypothesisRepository hypotheses) {
+    private final LearnerGovernance governance;
+
+    public GoldenSetGrowthLearner(DecisionDefinitionRepository definitions, DecisionRecordRepository decisionRecords, HypothesisRepository hypotheses, LearnerGovernance governance) {
+        this.governance = governance;
         this.definitions = definitions;
         this.decisionRecords = decisionRecords;
         this.hypotheses = hypotheses;
@@ -60,6 +67,8 @@ public class GoldenSetGrowthLearner {
     }
 
     private int sweepTenant() {
+        if (!governance.begin(KEY).mayPropose()) return 0;
+        governance.recordRun(KEY);
         int n = 0;
         Instant since = Instant.now().minus(Duration.ofDays(windowDays));
         for (String name : definitions.names()) {
@@ -98,4 +107,13 @@ public class GoldenSetGrowthLearner {
         log.info("DF-03 hypothesis {}: {} recurring resolutions for {} (input hash {})", h.hypothesisId(), group.size(), decisionName, inputHash);
         return true;
     }
+
+    @Override
+    public LearnerDescriptor descriptor() {
+        return LearnerDescriptor.of(KEY, "Test case growth", "Turns situations people keep resolving the same way into new test cases, after a reviewer signs off.", LearnerDescriptor.Loop.FAST, "DF-03");
+    }
+
+    @Override public boolean runnable() { return true; }
+
+    @Override public void runNow() { sweepOnce(); }
 }

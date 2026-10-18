@@ -27,14 +27,17 @@ import java.util.Map;
 public class FraudDriftMonitor {
     private static final Logger log = LoggerFactory.getLogger(FraudDriftMonitor.class);
     private static final List<String> FRAUD_DECISIONS = List.of("payment_risk", "rto_risk", "address_risk", "return_risk");
-    private static final List<String> GUARDED_LEARNERS = List.of(FraudThresholdTuner.class.getSimpleName(), FraudAbuseHypothesisScanner.class.getSimpleName());
+    private static final List<String> GUARDED_LEARNERS = List.of(FraudThresholdTuner.KEY, FraudAbuseHypothesisScanner.KEY);
 
     private final DecisionRecordRepository decisionRecords;
     private final LearnerRepository learners;
 
     @Value("${oms.learning.fraud-drift-multiple:2.0}") private double driftMultiple;
 
-    public FraudDriftMonitor(DecisionRecordRepository decisionRecords, LearnerRepository learners) {
+    private final ai.intentoms.learning.governance.LearnerGovernance governance;
+
+    public FraudDriftMonitor(DecisionRecordRepository decisionRecords, LearnerRepository learners, ai.intentoms.learning.governance.LearnerGovernance governance) {
+        this.governance = governance;
         this.decisionRecords = decisionRecords;
         this.learners = learners;
     }
@@ -63,8 +66,8 @@ public class FraudDriftMonitor {
         }
         if (!drifted) return;
         for (String key : GUARDED_LEARNERS) {
-            var s = learners.getOrCreate(key);
-            if (s.autonomyLevel() != AutonomyLevel.L0_OBSERVE) learners.setAutonomy(key, AutonomyLevel.L0_OBSERVE, "system:fraud-drift-monitor", Instant.now());
+            if (!governance.gate(key).mayRun()) continue;
+            governance.pause(key, "fraud feature drift", "system:fraud-drift-monitor");
         }
     }
 

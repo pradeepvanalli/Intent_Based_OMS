@@ -15,6 +15,7 @@
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-workflow</artifactId></dependency>
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-order</artifactId></dependency>
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-statemachine</artifactId></dependency>
+    <dependency><groupId>ai.intentoms</groupId><artifactId>oms-learning</artifactId></dependency>
     <dependency><groupId>ai.intentoms</groupId><artifactId>oms-testing</artifactId><scope>test</scope></dependency>
   </dependencies>
 </project>

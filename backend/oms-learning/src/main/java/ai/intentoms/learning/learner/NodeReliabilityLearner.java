@@ -1,5 +1,8 @@
 package ai.intentoms.learning.learner;
 
+import ai.intentoms.learning.governance.GovernedLearner;
+import ai.intentoms.learning.governance.LearnerDescriptor;
+import ai.intentoms.learning.governance.LearnerGovernance;
 import ai.intentoms.learning.model.FactKey;
 import ai.intentoms.learning.model.LearnedFact;
 import ai.intentoms.learning.model.SubjectType;
@@ -37,7 +40,8 @@ import java.util.Map;
  * class today, so every line is pooled together.
  */
 @Component
-public class NodeReliabilityLearner implements EventSubscriber {
+public class NodeReliabilityLearner implements EventSubscriber, GovernedLearner {
+    public static final String KEY = "node_reliability";
     private static final Logger log = LoggerFactory.getLogger(NodeReliabilityLearner.class);
     private static final String LEARNER_KEY = "node_reliability";
     static final String SKU_CLASS = "default";
@@ -46,7 +50,10 @@ public class NodeReliabilityLearner implements EventSubscriber {
     private final NodeReliabilityStatRepository stats;
     private final LearnedFactRepository facts;
 
-    public NodeReliabilityLearner(NodeAssignmentRepository assignments, NodeReliabilityStatRepository stats, LearnedFactRepository facts) {
+    private final LearnerGovernance governance;
+
+    public NodeReliabilityLearner(NodeAssignmentRepository assignments, NodeReliabilityStatRepository stats, LearnedFactRepository facts, LearnerGovernance governance) {
+        this.governance = governance;
         this.assignments = assignments;
         this.stats = stats;
         this.facts = facts;
@@ -58,6 +65,8 @@ public class NodeReliabilityLearner implements EventSubscriber {
     public void on(Event e) {
         if (e.tenantId() != null) TenantContext.set(e.tenantId());
         try {
+            if (!governance.begin(KEY).mayRun()) return;
+            governance.recordRunThrottled(KEY);
             switch (e.type()) {
                 case "order.sourced" -> onSourced(e);
                 case "order.resourced" -> onResourced(e);
@@ -128,5 +137,10 @@ public class NodeReliabilityLearner implements EventSubscriber {
         if (v == null) return null;
         try { return LocalDate.parse(String.valueOf(v).length() > 10 ? String.valueOf(v).substring(0, 10) : String.valueOf(v)); }
         catch (RuntimeException e) { return null; }
+    }
+
+    @Override
+    public LearnerDescriptor descriptor() {
+        return LearnerDescriptor.of(KEY, "Node reliability", "Learns how often each store or warehouse ships on time and how often it rejects orders.", LearnerDescriptor.Loop.FAST, "FS-02").readsOutcomesOf("sourcing_node_score").feeds(ai.intentoms.learning.hooks.NodeReliabilityFeatures.REJECT_RATE, ai.intentoms.learning.hooks.NodeReliabilityFeatures.ON_TIME_RATE);
     }
 }

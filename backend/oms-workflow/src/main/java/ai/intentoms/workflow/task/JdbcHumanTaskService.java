@@ -150,6 +150,19 @@ public class JdbcHumanTaskService implements HumanTaskService {
 
     @Override
     @Transactional
+    public HumanTask refreshPayload(String taskId, Map<String, Object> patch) {
+        HumanTask t = lock(taskId);
+        if (!t.isOpen()) throw new ConflictException("Task " + taskId + " is " + t.status() + " and cannot be refreshed");
+        Instant now = time.now();
+        jdbc.sql("update human_task set payload = coalesce(payload, '{}'::jsonb) || :p, updated_at = :now where tenant_id = :t and id = :id")
+            .param("p", Jsonb.of(patch)).param("now", Timestamp.from(now)).param("t", TenantContext.require()).param("id", taskId).update();
+        HumanTask out = get(taskId);
+        events.append(AGGREGATE, taskId, new NewEvent("task.refreshed", eventPayload(out, Map.of("keys", List.copyOf(patch.keySet()))), actor()));
+        return out;
+    }
+
+    @Override
+    @Transactional
     public HumanTask cancel(String taskId, String reason) {
         HumanTask t = lock(taskId);
         if (!t.isOpen()) throw new ConflictException("Task " + taskId + " is " + t.status() + " and cannot be cancelled");

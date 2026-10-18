@@ -67,6 +67,9 @@ public class DecisionEscalationTaskSubscriber implements EventSubscriber {
         Object value = details.containsKey("value") ? details.get("value") : ACCEPT.contains(outcome == null ? "" : outcome.toLowerCase(Locale.ROOT)) ? recommended : outcome;
         String by = e.actor() == null ? "system:task" : e.actor().ref();
         escalations.resolve(escalationId, value, by, time.now());
+        // Later re-evaluations of the same question were linked to this task instead of opening their own
+        // (HumanTaskEscalationHandler); the person's answer resolves them too.
+        for (DecisionEscalation linked : escalations.unresolvedForTask(task.id())) escalations.resolve(linked.id(), value, by, time.now());
         boolean override = value != null && (recommended == null || !String.valueOf(value).equals(String.valueOf(recommended)));
         if (!override) return;
         String reason = str(e.payload().get("reason"));

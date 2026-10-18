@@ -51,6 +51,7 @@ public class BreachRiskScorer implements RiskLookup {
     private static final Logger log = LoggerFactory.getLogger(BreachRiskScorer.class);
     private static final Actor ACTOR = Actor.system("risk-scorer");
 
+    private static final com.fasterxml.jackson.core.type.TypeReference<List<String>> STRINGS = new com.fasterxml.jackson.core.type.TypeReference<>() {};
     private final OrderRiskRepository risks;
     private final DecisionService decisions;
     private final EventStore events;
@@ -107,23 +108,41 @@ public class BreachRiskScorer implements RiskLookup {
         if (rows.isEmpty()) return List.of();
         Instant now = time.now();
         double carrierOnTime = config.getDouble(CARRIER_ON_TIME_KEY, props.defaultCarrierOnTimeRate());
+        Duration rescore = Duration.ofMinutes(props.riskRescoreMinutes());
         List<Invocation> batch = new ArrayList<>(rows.size());
         List<Map<String, Object>> inputs = new ArrayList<>(rows.size());
+        List<Map<String, Object>> decided = new ArrayList<>(rows.size());
+        List<String> signatures = new ArrayList<>(rows.size());
+        List<OrderRisk> out = new ArrayList<>(rows.size());
         for (Map<String, Object> r : rows) {
             Map<String, Object> input = buildInput(r, now, carrierOnTime);
+            String signature = materialSignature(input);
+            Instant scoredAt = OrderRiskRepository.ts(r.get("scored_at"));
+            boolean unchanged = signature.equals(r.get("prev_signature")) && scoredAt != null && scoredAt.plus(rescore).isAfter(now);
+            if (unchanged) {
+                // Same material inputs, decided recently: keep the stored risk. Re-deciding every sweep produced a new
+                // decision record (and, in the escalate band, a new human task) per order per minute.
+                risks.markChecked((String) r.get("id"), now);
+                out.add(new OrderRisk((String) r.get("id"), ((Number) r.get("prev_score")).intValue(), (String) r.get("prev_level"),
+                    Json.read((String) r.get("prev_reasons"), STRINGS), (String) r.get("prev_record_id"), scoredAt));
+                metrics.count("oms.monitoring.risk_skipped_unchanged");
+                continue;
+            }
             inputs.add(input);
+            decided.add(r);
+            signatures.add(signature);
             batch.add(new Invocation(DECISION, input, DecisionOptions.live("order", (String) r.get("id"), ACTOR)));
         }
+        if (batch.isEmpty()) return out;
         List<DecisionResult> results = metrics.time("oms.monitoring.risk_decide", () -> decisions.decideAll(batch));
-        List<OrderRisk> out = new ArrayList<>(rows.size());
-        for (int i = 0; i < rows.size(); i++) {
-            Map<String, Object> r = rows.get(i);
+        for (int i = 0; i < decided.size(); i++) {
+            Map<String, Object> r = decided.get(i);
             DecisionResult res = results.get(i);
             String orderId = (String) r.get("id");
             int score = scoreOf(res);
             RiskLevel level = RiskLevel.of(score);
             OrderRisk risk = new OrderRisk(orderId, score, level.key(), reasons(res, inputs.get(i)), res.recordId(), now);
-            risks.upsert(risk);
+            risks.upsert(risk, signatures.get(i));
             String prev = (String) r.get("prev_level");
             if (!level.key().equals(prev)) {
                 Map<String, Object> payload = new LinkedHashMap<>();
@@ -140,6 +159,25 @@ public class BreachRiskScorer implements RiskLookup {
             out.add(risk);
         }
         return out;
+    }
+
+    /**
+     * Hash of the inputs with their fast-moving numbers bucketed: hours in state per 4 h, promise slack per 12 h, node
+     * backlog per 10 units, rates to 2 decimals. A change inside a bucket is not material; crossing one is.
+     */
+    @SuppressWarnings("unchecked")
+    static String materialSignature(Map<String, Object> input) {
+        Map<String, Object> order = new LinkedHashMap<>((Map<String, Object>) input.getOrDefault("order", Map.of()));
+        order.computeIfPresent("hours_in_state", (k, v) -> v instanceof Number n ? Math.floor(n.doubleValue() / 4) * 4 : v);
+        order.computeIfPresent("promise_hours_remaining", (k, v) -> v instanceof Number n ? Math.floor(n.doubleValue() / 12) * 12 : v);
+        Map<String, Object> node = new LinkedHashMap<>((Map<String, Object>) input.getOrDefault("node", Map.of()));
+        node.computeIfPresent("backlog_units", (k, v) -> v instanceof Number n ? Math.floor(n.doubleValue() / 10) * 10 : v);
+        node.computeIfPresent("reject_rate", (k, v) -> v instanceof Number n ? Math.round(n.doubleValue() * 100) / 100.0 : v);
+        node.computeIfPresent("minutes_to_cutoff", (k, v) -> v instanceof Number n ? Math.floor(n.doubleValue() / 60) * 60 : v);
+        Map<String, Object> material = new LinkedHashMap<>(input);
+        material.put("order", order);
+        material.put("node", node);
+        return Json.sha256(material);
     }
 
     /** Score from the decision: the main value, else the {@code breach_risk} answer, else the L0 default (2). */

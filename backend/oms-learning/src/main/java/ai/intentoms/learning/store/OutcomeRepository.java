@@ -19,20 +19,30 @@ public class OutcomeRepository {
     private final JdbcClient jdbc;
     public OutcomeRepository(JdbcClient jdbc) { this.jdbc = jdbc; }
 
-    public void insert(OutcomeRecord o) {
-        jdbc.sql("""
+    /** Returns false when this (episode, source event) pair is already stored: a redelivered event is a no-op. */
+    public boolean insert(OutcomeRecord o) {
+        return jdbc.sql("""
             insert into outcome(outcome_id, tenant_id, episode_id, type, payload, observed_at, source_event_id, created_at)
             values (:id, :t, :ep, :type, :payload, :obs, :src, :created)
+            on conflict (tenant_id, episode_id, source_event_id) where source_event_id is not null do nothing
             """)
             .param("id", o.outcomeId()).param("t", TenantContext.require()).param("ep", o.episodeId()).param("type", o.type())
             .param("payload", Jsonb.of(o.payload())).param("obs", Timestamp.from(o.observedAt())).param("src", o.sourceEventId())
-            .param("created", Timestamp.from(o.createdAt())).update();
+            .param("created", Timestamp.from(o.createdAt())).update() == 1;
     }
 
     public List<OutcomeRecord> forEpisode(String episodeId) {
         String t = TenantContext.require();
         return jdbc.sql("select outcome_id, episode_id, type, payload::text as payload, observed_at, source_event_id, created_at from outcome where tenant_id = :t and episode_id = :ep order by observed_at")
             .param("t", t).param("ep", episodeId).query().listOfRows().stream().map(OutcomeRepository::hydrate).toList();
+    }
+
+    /** Idempotency for re-delivered events: one outcome per (source event, episode) — the same event legitimately
+     * attaches to every open episode for the order. */
+    public boolean existsForEventAndEpisode(String sourceEventId, String episodeId) {
+        String t = TenantContext.require();
+        return jdbc.sql("select count(*) from outcome where tenant_id = :t and source_event_id = :e and episode_id = :ep")
+            .param("t", t).param("e", sourceEventId).param("ep", episodeId).query(Long.class).single() > 0;
     }
 
     public boolean existsForEvent(String sourceEventId) {

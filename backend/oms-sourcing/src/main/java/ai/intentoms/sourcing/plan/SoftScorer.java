@@ -6,10 +6,6 @@ import ai.intentoms.decision.model.DecisionOptions;
 import ai.intentoms.decision.model.DecisionResult;
 import ai.intentoms.decision.model.Layer;
 import ai.intentoms.decision.runtime.DecisionService;
-import ai.intentoms.learning.model.FactKey;
-import ai.intentoms.learning.model.SubjectType;
-import ai.intentoms.learning.model.TypedValue;
-import ai.intentoms.learning.store.LearnedFactRepository;
 import ai.intentoms.platform.ledger.Actor;
 import ai.intentoms.platform.observability.Metrics;
 import ai.intentoms.platform.time.TimeSource;
@@ -59,19 +55,18 @@ public class SoftScorer {
     private final DecisionService decisions;
     private final TimeSource time;
     private final Metrics metrics;
-    private final LearnedFactRepository learnedFacts;
 
-    public SoftScorer(DecisionService decisions, TimeSource time, Metrics metrics, LearnedFactRepository learnedFacts) {
+    public SoftScorer(DecisionService decisions, TimeSource time, Metrics metrics) {
         this.decisions = decisions;
         this.time = time;
         this.metrics = metrics;
-        this.learnedFacts = learnedFacts;
     }
 
     public SoftScores score(SourcingRequest req, List<Candidate> candidates, RateCard card, Actor actor) {
         if (candidates.isEmpty()) return SoftScores.neutral("no candidates");
+        // Learned node reliability (FS-02) is merged into the candidates by the decision fabric's learning hook
+        // (oms-learning NodeReliabilityFeatures), so the decision record shows which facts and versions it used.
         Map<String, Object> input = input(req, candidates, card, time.now());
-        overlayLearnedReliability(input, candidates);
         DecisionResult r;
         try {
             r = decisions.decide(DECISION, input, DecisionOptions.live("order", req.orderId(), actor));
@@ -144,30 +139,6 @@ public class SoftScorer {
             return new SoftScores(Map.of(), r.recordId(), r.layer().name(), r.band().name(), "none", notes);
         }
         return new SoftScores(scores, r.recordId(), r.layer().name(), r.band().name(), source, notes);
-    }
-
-    /** FS-02: overlays each candidate's static {@code reject_rate} with the learned Beta-binomial posterior and adds
-     * {@code on_time_rate}, once a node has enough observed deliveries to trust (sample_size &gt;= 10) — below that
-     * the static node config value is kept untouched, so a brand-new tenant with no history behaves exactly as
-     * before this learner existed. */
-    @SuppressWarnings("unchecked")
-    private void overlayLearnedReliability(Map<String, Object> input, List<Candidate> candidates) {
-        if (!(input.get("candidates") instanceof List<?> cands)) return;
-        for (Object o : cands) {
-            if (!(o instanceof Map<?, ?> m) || m.get("id") == null) continue;
-            Map<String, Object> cand = (Map<String, Object>) m;
-            String nodeId = String.valueOf(cand.get("id"));
-            try {
-                learnedFacts.active(SubjectType.NODE, nodeId, FactKey.NODE_REJECT_RATE)
-                    .filter(f -> f.sampleSize() >= 10 && f.value() instanceof TypedValue.NumberValue)
-                    .ifPresent(f -> cand.put("reject_rate", ((TypedValue.NumberValue) f.value()).value()));
-                learnedFacts.active(SubjectType.NODE, nodeId, FactKey.NODE_ON_TIME_RATE)
-                    .filter(f -> f.sampleSize() >= 10 && f.value() instanceof TypedValue.NumberValue)
-                    .ifPresent(f -> cand.put("on_time_rate", ((TypedValue.NumberValue) f.value()).value()));
-            } catch (RuntimeException e) {
-                log.warn("Learned reliability lookup failed for node {}: {}", nodeId, e.getMessage());
-            }
-        }
     }
 
     /** Lowest ranked score for candidates outside the returned ranking (they were scored lower than every ranked node). */
