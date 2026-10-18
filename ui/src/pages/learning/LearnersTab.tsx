@@ -92,7 +92,7 @@ function LearnerRow({ learner: l, metrics, canAdmin, canConfigure }: { learner: 
         </Technical>
       </div>
       <div className="col gap1">
-        <span><Badge tone={status.tone} dot>{status.text}</Badge></span>
+        <span><Badge tone={status.tone} dot className="wrap-text">{status.text}</Badge></span>
         <span className="xs muted">{l.lastRunAt ? `last ran ${relTime(l.lastRunAt)}` : runnable ? 'has not run yet' : 'updates as outcomes arrive'}</span>
         {metrics && (metrics.proposalsDrafted > 0 || metrics.coverage != null) && (
           <span className="xs muted">{metrics.proposalsDrafted > 0 ? `${fmtNum(metrics.proposalsDrafted)} suggested · ${fmtNum(metrics.proposalsPromoted)} live` : ''}{metrics.coverage != null ? `${metrics.proposalsDrafted > 0 ? ' · ' : ''}${fmtPct(metrics.coverage, 0)} outcomes` : ''}</span>
@@ -103,7 +103,9 @@ function LearnerRow({ learner: l, metrics, canAdmin, canConfigure }: { learner: 
           onChange={(e) => autonomy.mutate(e.target.value as AutonomyLevel)} title={AUTONOMY[l.autonomyLevel].explain}>
           {AUTONOMY_LEVELS.map((lv) => <option key={lv} value={lv}>{AUTONOMY[lv].label}</option>)}
         </Select>
-        {l.liveParameters.length > 0 && <div className="xs muted mt1" title={l.liveParameters.map(familyName).join(', ')}>Can feed live: {l.liveParameters.map(familyName).slice(0, 2).join(', ')}{l.liveParameters.length > 2 ? ` +${l.liveParameters.length - 2}` : ''}</div>}
+        {l.liveParameters.length > 0 && (
+          <div className="xs muted mt1">Can feed {l.liveParameters.length} live value{l.liveParameters.length === 1 ? '' : 's'} <InfoTip text={l.liveParameters.map(familyName).join(' · ')} label="Live values" /></div>
+        )}
       </div>
       <div className="actions">
         {canAdmin && l.paused && <Button size="sm" variant="primary" loading={resume.isPending} onClick={() => resume.mutate()}>Resume</Button>}

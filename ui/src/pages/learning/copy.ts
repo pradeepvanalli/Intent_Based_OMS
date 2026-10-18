@@ -68,6 +68,26 @@ export function liftVerdict(m: LiftMetric): { text: string; tone: 'ok' | 'warn' 
   return m.improvement ? { text: 'Better with learning', tone: 'ok' } : { text: 'Worse with learning', tone: 'danger' };
 }
 
+/** A decision or config key as a person would write it: "Sourcing node score". */
+export function decisionLabel(name: string | null | undefined): string {
+  const s = humanize((name ?? '').replace(/\./g, ' ')).replace(/\b(sla|rto|ai|cs|ttl|cod|psp|zip3)\b/gi, (m) => m.toUpperCase());
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+}
+
+/** An artifact reference ("decision:x", "parameter:live:f", "config:k") as a short readable name. */
+export function targetName(ref: string | null | undefined): string {
+  const r = ref ?? '';
+  if (r.startsWith('parameter:live:')) return `${familyName(r.slice('parameter:live:'.length))} (used live)`;
+  if (r.startsWith('live:')) return `${familyName(r.slice('live:'.length))} (used live)`;
+  return decisionLabel(r.replace(/^(decision|parameter|config):/, ''));
+}
+
+/** Relative change against a baseline, e.g. +5.1%, or null when the baseline is zero or missing. */
+export function relativeChange(value: number | null | undefined, baseline: number | null | undefined): number | null {
+  if (value == null || baseline == null || baseline === 0) return null;
+  return (value - baseline) / Math.abs(baseline);
+}
+
 const FAMILY: Record<string, string> = {
   'sourcing.node_reject_rate': 'Store and warehouse reject rates', 'sourcing.node_on_time_rate': 'Store and warehouse on-time rates',
   'sourcing.reject_penalty': 'Penalty for nodes that reject orders', 'sourcing.node_backlog_breach': 'Backlog-to-late-delivery curve',
@@ -130,10 +150,10 @@ const num = (v: unknown): string => (typeof v === 'number' ? (Number.isInteger(v
 /** A proposed change as one sentence. */
 export function changeSentence(c: PolicyChange): string {
   switch (c.type) {
-    case 'ThresholdChange': return `${humanize(c.decision)}: move the ${c.band} confidence threshold from ${c.from.toFixed(2)} to ${c.to.toFixed(2)}`;
-    case 'WeightChange': return `${humanize(c.target.replace(/^config:/, ''))}: change ${humanize(c.weightKey)} weight from ${num(c.from)} to ${num(c.to)}`;
-    case 'RuleAdd': return `${humanize(c.decision)}: add a rule — when ${c.expression}, answer ${c.thenValue}`;
-    case 'RuleRetire': return `${humanize(c.decision)}: retire rule ${c.ruleId}${c.reason ? ` (${c.reason})` : ''}`;
+    case 'ThresholdChange': return `${decisionLabel(c.decision)}: move the ${c.band} confidence threshold from ${c.from.toFixed(2)} to ${c.to.toFixed(2)}`;
+    case 'WeightChange': return `${decisionLabel(c.target.replace(/^config:/, ''))}: change the ${humanize(c.weightKey)} weight from ${num(c.from)} to ${num(c.to)}`;
+    case 'RuleAdd': return `${decisionLabel(c.decision)}: add a rule — when ${c.expression}, answer ${c.thenValue}`;
+    case 'RuleRetire': return `${decisionLabel(c.decision)}: retire rule ${c.ruleId}${c.reason ? ` (${c.reason})` : ''}`;
     case 'ParameterChange': {
       if (c.parameter.startsWith('live:')) {
         const to = (c.to ?? {}) as Record<string, unknown>;
@@ -142,9 +162,9 @@ export function changeSentence(c: PolicyChange): string {
         const range = to.min !== undefined || to.max !== undefined ? ` within ${num(to.min)}–${num(to.max)}` : '';
         return `Use the learned "${fam}" in live decisions${range}${to.maxStep !== undefined ? `, at most ${num(to.maxStep)} from the standard value` : ''}`;
       }
-      return `${humanize(c.parameter.replace(/:/g, ' · '))}: change from ${num(c.from)} to ${num(c.to)}`;
+      return `${decisionLabel(c.parameter.replace(/:/g, ' · '))}: change from ${num(c.from)} to ${num(c.to)}`;
     }
-    case 'AllowListChange': return `${humanize(c.listName)}: ${c.add ? 'add' : 'remove'} ${c.entry}`;
+    case 'AllowListChange': return `${decisionLabel(c.listName)}: ${c.add ? 'add' : 'remove'} ${c.entry}`;
     default: return 'A change to a policy';
   }
 }

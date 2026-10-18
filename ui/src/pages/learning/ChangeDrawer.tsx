@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { learningApi } from '../../api/learning';
 import type { ChangeCard, ExperimentMode, KeyDiff, Proposal } from '../../api/types';
-import { Badge, TierBadge } from '../../components/Badge';
+import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { JsonTree } from '../../components/Misc';
 import { Drawer } from '../../components/Overlay';
@@ -11,7 +11,7 @@ import { fmtDateTime, fmtNum, fmtPct, humanize, relTime, valueLabel } from '../.
 import { toast } from '../../lib/toast';
 import { useSession } from '../../auth/session';
 import { DemoBadge, InfoTip, ReasonDialog, Technical } from './Bits';
-import { METHOD_WORDS, POSTAL_REASON_CODES, STATUS_TONE, STATUS_WORDS, TIER_WORDS, VERDICT, authorName, changeSentence, isPostalScoped, proposalTitle, replayPhrase } from './copy';
+import { METHOD_WORDS, POSTAL_REASON_CODES, STATUS_TONE, STATUS_WORDS, TIER_WORDS, VERDICT, authorName, changeSentence, decisionLabel, familyName, isPostalScoped, proposalTitle, replayPhrase } from './copy';
 
 type Dialogs = 'approve' | 'reject' | 'rollback' | null;
 
@@ -22,7 +22,7 @@ export function ChangeDrawer({ proposalId, onClose, canAdmin, names }: { proposa
   return (
     <Drawer open={!!proposalId} onClose={onClose} width={720}
       title={p ? proposalTitle(p) : 'Proposed change'}
-      subtitle={p ? <span className="row wrap gap2"><Badge tone={STATUS_TONE[p.status]}>{STATUS_WORDS[p.status]}</Badge><span title={TIER_WORDS[p.tier]}><TierBadge tier={p.tier} title /></span><DemoBadge by={p.createdBy} /></span> : undefined}
+      subtitle={p ? <span className="row wrap gap2"><Badge tone={STATUS_TONE[p.status]}>{STATUS_WORDS[p.status]}</Badge><Badge tone={p.tier} title={`Risk tier ${p.tier}`}>{TIER_WORDS[p.tier]}</Badge><DemoBadge by={p.createdBy} /></span> : undefined}
       footer={card.data && canAdmin ? <Actions card={card.data} onDone={() => card.refetch()} /> : <Button onClick={onClose}>Close</Button>}>
       {card.isLoading && <Loading label="Loading change…" />}
       {card.isError && <ErrorState error={card.error} retry={() => card.refetch()} />}
@@ -127,13 +127,19 @@ function Replay({ card }: { card: ChangeCard }) {
   );
 }
 
+function keyLabel(key: string): string {
+  if (key.startsWith('bands.')) return `${decisionLabel(key.slice('bands.'.length))} confidence threshold`;
+  if (key.startsWith('live:')) return `${familyName(key.slice('live:'.length))} (used live)`;
+  return decisionLabel(key.replace(/\./g, ' · '));
+}
+
 function DiffTable({ rows, caption }: { rows: KeyDiff[]; caption: string }) {
   return (
     <div className="table-wrap mt2">
       <table className="diff-table" aria-label={caption}>
         <thead><tr><th scope="col">{caption}</th><th scope="col">From</th><th scope="col">To</th></tr></thead>
         <tbody>{rows.map((d) => (
-          <tr key={d.key}><td>{humanize(d.key.replace(/^bands\./, '').replace(/\./g, ' · '))}{d.steps > 1 && <span className="xs muted"> · {d.steps} steps</span>}</td><td className="mono">{valueLabel(d.from)}</td><td className="mono">{valueLabel(d.to)}</td></tr>
+          <tr key={d.key}><td>{keyLabel(d.key)}{d.steps > 1 && <span className="xs muted"> · over {d.steps} changes</span>}</td><td className="mono">{valueLabel(d.from)}</td><td className="mono">{valueLabel(d.to)}</td></tr>
         ))}</tbody>
       </table>
     </div>

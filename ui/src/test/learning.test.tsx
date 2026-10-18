@@ -19,7 +19,7 @@ describe('Learning Console', () => {
     expect(within(lift).getByText('On-time delivery')).toBeInTheDocument();
     expect(within(lift).getAllByText('Better with learning').length).toBeGreaterThan(0);
     expect(await screen.findByRole('button', { name: /changes to review/ }, { timeout: T })).toBeInTheDocument();
-    expect(await screen.findByRole('meter', { name: 'sla breach risk outcome coverage' }, { timeout: T })).toBeInTheDocument();
+    expect(await screen.findByRole('meter', { name: 'SLA breach risk outcome coverage' }, { timeout: T })).toBeInTheDocument();
     // jargon stays hidden until asked for
     expect(screen.queryByText(/ips_doubly_robust/)).not.toBeInTheDocument();
   }, T);

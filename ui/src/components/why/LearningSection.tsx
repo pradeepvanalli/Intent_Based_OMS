@@ -30,7 +30,7 @@ export function LearningSection({ learning }: { learning?: DecisionTraceLearning
             <div role="listitem" key={`${f.subjectId}-${f.factKey}-${i}`} className="fact-row">
               <span><b>{subjectName(f.subjectType)} {f.subjectId}</b>: {factName(f.factKey)}{technical && f.version !== undefined && <span className="xs muted mono"> · v{f.version}</span>}</span>
               <span className="row gap2 wrap">
-                <Badge tone={f.source === 'LEARNED' ? 'ai' : 'outline'}>{servedWhy(f.reason, f.source)}</Badge>
+                <Badge tone={f.source === 'LEARNED' ? 'ai' : 'outline'} className="wrap-text">{servedWhy(f.reason, f.source)}</Badge>
                 <span className="xs muted num">learned {valueLabel(f.learned)}{f.source === 'LEARNED' && f.served !== f.learned ? ` · used ${valueLabel(f.served)}` : ''}</span>
               </span>
             </div>

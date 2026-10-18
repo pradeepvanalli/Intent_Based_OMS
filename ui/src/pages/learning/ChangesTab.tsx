@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { learningApi } from '../../api/learning';
 import type { LearnerView, LiveParameter, Proposal, ProposalStatus } from '../../api/types';
-import { Badge, TierBadge } from '../../components/Badge';
+import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { Input, Select, Textarea } from '../../components/Form';
 import { ConfirmDialog, Dialog } from '../../components/Overlay';
@@ -42,7 +42,7 @@ export function ChangesTab({ canAdmin, learners }: { canAdmin: boolean; learners
       <Section title={<span className="row gap2">Proposed changes <InfoTip text="Every change a learner suggests is tested against past decisions, reviewed by someone other than its author, and can be rolled back." /></span>} tight>
         <div style={{ padding: 'var(--s2) var(--s4) 0' }}>
           <Tabs pills ariaLabel="Change status" active={g.id} onChange={setGroup}
-            tabs={GROUPS.map((x) => ({ id: x.id, label: x.label, count: x.statuses.reduce((n, s) => n + (byStatus.get(s)?.data?.length ?? 0), 0) }))} />
+            tabs={GROUPS.map((x) => ({ id: x.id, label: x.label, count: x.statuses.every((s) => byStatus.get(s)?.data) ? x.statuses.reduce((n, s) => n + (byStatus.get(s)?.data?.length ?? 0), 0) : undefined }))} />
         </div>
         <div className="col gap2" style={{ padding: 'var(--s3) var(--s4) var(--s4)' }}>
           {loading && <Loading />}
@@ -74,7 +74,7 @@ function ChangeRow({ p, names, onOpen }: { p: Proposal; names: Map<string, strin
       </div>
       <div className="side">
         <Badge tone={STATUS_TONE[p.status]}>{STATUS_WORDS[p.status]}</Badge>
-        <span className="row gap2"><span title={TIER_WORDS[p.tier]}><TierBadge tier={p.tier} /></span><Badge tone={replay.tone}>{replay.text}</Badge></span>
+        <span className="row gap2"><Badge tone={p.tier} title={`Risk tier ${p.tier}`}>{TIER_WORDS[p.tier]}<Technical> · {p.tier}</Technical></Badge><Badge tone={replay.tone}>{replay.text}</Badge></span>
       </div>
     </button>
   );

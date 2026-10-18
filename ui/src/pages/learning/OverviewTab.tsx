@@ -9,7 +9,7 @@ import { ApiError } from '../../api/client';
 import { fmtDate, fmtNum, fmtPct, humanize, relTime } from '../../lib/format';
 import { toast } from '../../lib/toast';
 import { InfoTip, Meter, Technical } from './Bits';
-import { liftVerdict, metricName } from './copy';
+import { decisionLabel, liftVerdict, metricName, relativeChange, targetName } from './copy';
 
 const REFRESH = 30000;
 const COVERAGE_FLOOR = 0.8;
@@ -27,6 +27,11 @@ export function OverviewTab({ canAdmin, goTo }: { canAdmin: boolean; goTo: (tab:
 
   const reward = lift.data?.metrics.find((m) => m.metric === 'reward');
   const verdict = reward ? liftVerdict(reward) : null;
+  const rel = reward ? relativeChange(reward.treatedMean, reward.holdoutMean) : null;
+  const helpingValue = verdict && reward?.lift != null && reward.significant
+    ? (rel !== null ? `${rel >= 0 ? '+' : ''}${fmtPct(rel, 1)}` : `${reward.lift >= 0 ? '+' : ''}${fmtNum(reward.lift, 3)}`)
+    : (verdict?.text ?? (lift.data?.holdout ? 'Not enough data yet' : 'Not measured yet'));
+  const names = new Map((learners.data ?? []).map((l) => [l.learnerKey, l.displayName]));
   const toReview = (drafts.data?.length ?? 0) + (evaluated.data?.length ?? 0);
   const all = learners.data ?? [];
   const running = all.filter((l) => l.running).length;
@@ -38,15 +43,15 @@ export function OverviewTab({ canAdmin, goTo }: { canAdmin: boolean; goTo: (tab:
     <div className="col gap4">
       <div className="learn-tiles">
         <StatTile label="Is learning helping?" loading={lift.isLoading}
-          value={verdict && reward?.lift != null && reward.significant ? `${reward.lift >= 0 ? '+' : ''}${fmtNum(reward.lift, 3)}` : (verdict?.text ?? (lift.data?.holdout ? 'Not enough data yet' : 'Not measured yet'))}
+          value={helpingValue}
           tone={verdict?.tone === 'ok' ? 'ok' : verdict?.tone === 'danger' ? 'danger' : undefined}
-          hint={reward?.lift != null && reward.significant ? verdict?.text : lift.data?.holdout ? 'Compared with the holdout group' : 'Start a holdout to measure it'} />
-        <StatTile label="Changes waiting for you" value={toReview + (approved.data?.length ?? 0)} loading={drafts.isLoading}
-          hint={`${toReview} to review · ${approved.data?.length ?? 0} approved, not live`} onClick={() => goTo('changes')} tone={toReview > 0 ? 'ai' : undefined} />
+          hint={!lift.data ? undefined : reward?.lift != null && reward.significant ? `${verdict?.text}: outcome score vs the holdout` : lift.data.holdout ? 'Compared with the holdout group' : 'Start a holdout to measure it'} />
+        <StatTile label="Changes waiting for you" value={toReview + (approved.data?.length ?? 0)} loading={drafts.isLoading || evaluated.isLoading || approved.isLoading}
+          hint={drafts.data && evaluated.data && approved.data ? `${toReview} to review · ${approved.data.length} approved, not live` : undefined} onClick={() => goTo('changes')} tone={toReview > 0 ? 'ai' : undefined} />
         <StatTile label="Learners running" value={learners.data ? `${running} of ${all.length}` : '—'} loading={learners.isLoading}
-          hint={paused.length ? `${paused.length} paused or switched off` : 'All running'} onClick={() => goTo('learners')} tone={paused.length ? 'warn' : undefined} />
+          hint={!learners.data ? undefined : paused.length ? `${paused.length} paused or switched off` : 'All running'} onClick={() => goTo('learners')} tone={paused.length ? 'warn' : undefined} />
         <StatTile label="Outcomes coming back" value={lowest === null ? '—' : fmtPct(lowest, 0)} loading={coverage.isLoading}
-          hint={lowest === null ? 'Measured once there are enough decisions' : lowest < COVERAGE_FLOOR ? 'Below 80%: affected learners pause' : 'Lowest decision, healthy'}
+          hint={!coverage.data ? undefined : lowest === null ? 'Measured once there are enough decisions' : lowest < COVERAGE_FLOOR ? 'Below 80%: affected learners pause' : 'Lowest decision, healthy'}
           tone={lowest !== null && lowest < COVERAGE_FLOOR ? 'danger' : undefined} />
       </div>
 
@@ -66,8 +71,8 @@ export function OverviewTab({ canAdmin, goTo }: { canAdmin: boolean; goTo: (tab:
             {coverage.data && cov.length === 0 && <EmptyState title="Not measured yet" hint="Coverage is measured once a decision has at least 20 episodes old enough for an outcome to arrive." />}
             {cov.map(([decision, value]) => (
               <div key={decision} className="coverage-row">
-                <span>{humanize(decision)}</span>
-                <Meter value={value} target={COVERAGE_FLOOR} label={`${humanize(decision)} outcome coverage`} />
+                <span>{decisionLabel(decision)}</span>
+                <Meter value={value} target={COVERAGE_FLOOR} label={`${decisionLabel(decision)} outcome coverage`} />
                 <span className="num right">{fmtPct(value, 0)}</span>
               </div>
             ))}
@@ -75,7 +80,7 @@ export function OverviewTab({ canAdmin, goTo }: { canAdmin: boolean; goTo: (tab:
         </div>
       </div>
 
-      <DigestCard digest={digest.data} missing={digest.error instanceof ApiError && digest.error.status === 404} isLoading={digest.isLoading} canAdmin={canAdmin} />
+      <DigestCard digest={digest.data} missing={digest.error instanceof ApiError && digest.error.status === 404} isLoading={digest.isLoading} canAdmin={canAdmin} names={names} />
     </div>
   );
 }
@@ -134,7 +139,9 @@ function LiftRow({ m }: { m: LiftMetric }) {
   );
 }
 
-function DigestCard({ digest, missing, isLoading, canAdmin }: { digest?: Digest; missing: boolean; isLoading: boolean; canAdmin: boolean }) {
+const EVENT_WORDS: Record<string, string> = { autonomy_changed: 'autonomy changed', switched: 'switched on or off', paused: 'paused', resumed: 'resumed', kill_switch_changed: 'all learning paused or resumed' };
+
+function DigestCard({ digest, missing, isLoading, canAdmin, names }: { digest?: Digest; missing: boolean; isLoading: boolean; canAdmin: boolean; names: Map<string, string> }) {
   const qc = useQueryClient();
   const run = useMutation({ mutationFn: () => learningApi.runDigest(7), onSuccess: () => { toast.ok('Weekly summary updated'); qc.invalidateQueries({ queryKey: ['learning', 'digest'] }); } });
   const s = digest?.summary;
@@ -153,13 +160,17 @@ function DigestCard({ digest, missing, isLoading, canAdmin }: { digest?: Digest;
             <DigestList title="Went live" rows={promoted} empty="Nothing went live" />
             <DigestList title="Rolled back" rows={rolledBack} empty="Nothing rolled back" />
             <DigestList title="Learner changes" rows={learnerChanges} empty="No learner settings changed"
-              format={(r) => `${humanize(String(r.learner ?? r.aggregate_id ?? 'learning'))}: ${humanize(String(r.type ?? '').split('.').pop() ?? '')}${r.to_level ? ` → ${String(r.to_level)}` : ''}`} />
+              format={(r) => {
+                const key = String(r.learner ?? r.aggregate_id ?? '');
+                const ev = String(r.type ?? '').split('.').pop() ?? '';
+                return `${names.get(key) ?? (key ? decisionLabel(key) : 'Learning')}: ${EVENT_WORDS[ev] ?? humanize(ev)}`;
+              }} />
           </div>
           {rewards.length > 0 && (
             <div className="small">
               <div className="section-title">Outcome score by decision</div>
               <div className="subtle-list">{rewards.map((r) => (
-                <div key={r.decision} className="row-between"><span>{humanize(r.decision)}</span>
+                <div key={r.decision} className="row-between"><span>{decisionLabel(r.decision)}</span>
                   <span className="num">{fmtNum(r.meanReward, 3)}{r.change != null && <span style={{ color: r.change >= 0 ? 'var(--ok-fg)' : 'var(--danger-fg)', marginLeft: 8 }}>{r.change >= 0 ? '▲' : '▼'} {fmtNum(Math.abs(r.change), 3)}</span>}
                     <span className="xs muted" style={{ marginLeft: 8 }}>{fmtNum(r.maturedEpisodes)} outcomes</span></span>
                 </div>))}</div>
@@ -173,7 +184,7 @@ function DigestCard({ digest, missing, isLoading, canAdmin }: { digest?: Digest;
 }
 
 function DigestList({ title, rows, empty, format }: { title: string; rows: Record<string, unknown>[]; empty: string; format?: (r: Record<string, unknown>) => string }) {
-  const label = format ?? ((r: Record<string, unknown>) => humanize(String(r.target_ref ?? r.target ?? r.proposal_id ?? Object.values(r)[0] ?? '').replace(/^(decision|parameter|config):(live:)?/, '')));
+  const label = format ?? ((r: Record<string, unknown>) => targetName(String(r.target_ref ?? r.target ?? r.proposal_id ?? '')));
   return (
     <div className="finding">
       <span className="title">{title} <span className="muted">· {rows.length}</span></span>

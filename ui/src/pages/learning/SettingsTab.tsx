@@ -10,6 +10,7 @@ import { fmtDate, fmtNum, fmtPct, humanize, relTime, valueLabel } from '../../li
 import { toast } from '../../lib/toast';
 import { InfoTip, Technical } from './Bits';
 import { ObjectiveSettings } from './ObjectiveEditor';
+import { decisionLabel } from './copy';
 
 const FAIRNESS_DECISIONS = ['fulfilment_intent', 'split_acceptability', 'sourcing_node_score', 'payment_risk', 'return_risk', 'rto_risk'];
 
@@ -42,7 +43,7 @@ function GoldenCandidates({ canSignOff }: { canSignOff: boolean }) {
       <div className="subtle-list">{(q.data ?? []).map((c) => (
         <div key={c.hypothesisId} className="row-between wrap gap3">
           <div className="col gap1">
-            <span className="small"><b>{humanize(c.decision)}</b> should answer <span className="mono">{valueLabel(c.expectedValue)}</span></span>
+            <span className="small"><b>{decisionLabel(c.decision)}</b> should answer <span className="mono">{valueLabel(c.expectedValue)}</span></span>
             <span className="xs muted">{c.agreeingResolutions} matching human decisions · {relTime(c.createdAt)}{c.rationale ? ` · ${c.rationale}` : ''}</span>
             <Technical><span className="xs muted mono">{c.hypothesisId} · records {(c.sourceRecordIds ?? []).slice(0, 3).join(', ')}</span></Technical>
           </div>
@@ -60,7 +61,7 @@ function Fairness() {
   const r = q.data;
   return (
     <Section title={<span className="row gap2">Fairness check <InfoTip text="Compares how often each customer group is decided automatically and how often people override it. Learners never use protected traits such as age, gender or ethnicity." /></span>}
-      actions={<Select sm aria-label="Decision to check" value={decision} onChange={(e) => setDecision(e.target.value)}>{FAIRNESS_DECISIONS.map((d) => <option key={d} value={d}>{humanize(d)}</option>)}</Select>}>
+      actions={<Select sm aria-label="Decision to check" value={decision} onChange={(e) => setDecision(e.target.value)}>{FAIRNESS_DECISIONS.map((d) => <option key={d} value={d}>{decisionLabel(d)}</option>)}</Select>}>
       {q.isLoading && <Loading />}
       {q.isError && <ErrorState error={q.error} retry={() => q.refetch()} />}
       {r && (

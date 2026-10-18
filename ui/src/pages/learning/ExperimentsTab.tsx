@@ -11,7 +11,7 @@ import { fmtDate, fmtNum, fmtPct, humanize, relTime } from '../../lib/format';
 import { useQueryState } from '../../lib/hooks';
 import { toast } from '../../lib/toast';
 import { DemoBadge, InfoTip, Technical } from './Bits';
-import { MODE_WORDS, familyName } from './copy';
+import { MODE_WORDS, STATUS_WORDS, decisionLabel, familyName, targetName } from './copy';
 
 const REFRESH = 30000;
 
@@ -52,8 +52,8 @@ function targetWords(e: Experiment): string {
   if (e.mode === 'HOLDOUT') return 'Everything learning changes (overall effect)';
   const t = e.targetRef ?? '';
   if (t.startsWith('parameter:live:')) return `Using the learned "${familyName(t.slice('parameter:live:'.length))}" live`;
-  if (e.decisionName) return `${humanize(e.decisionName)}${e.candidateVersion ? `, new version ${e.candidateVersion}` : ''}`;
-  return humanize(t.replace(/^(decision|parameter|config):/, '')) || 'A proposed change';
+  if (e.decisionName) return `${decisionLabel(e.decisionName)}${e.candidateVersion ? `, new version ${e.candidateVersion}` : ''}`;
+  return targetName(t) || 'A proposed change';
 }
 
 function ExperimentDrawer({ id, onClose, canAdmin }: { id: string | null; onClose: () => void; canAdmin: boolean }) {
@@ -99,7 +99,7 @@ function ExperimentBody({ d }: { d: ExperimentDetail }) {
         <div className="subtle-list small">
           <div>Started {fmtDate(e.startAt)}{e.endAt ? ` · planned end ${fmtDate(e.endAt)}` : ''}</div>
           {e.baselineVersion != null && <div>Compared with live version {e.baselineVersion}{e.candidateVersion != null ? `; testing version ${e.candidateVersion}` : ''}</div>}
-          {d.proposal && <div>From a proposed change that is {humanize(d.proposal.status.toLowerCase())}</div>}
+          {d.proposal && <div>The change being tested is: {STATUS_WORDS[d.proposal.status]?.toLowerCase() ?? humanize(d.proposal.status.toLowerCase())}</div>}
         </div>
       </section>
       <Technical>

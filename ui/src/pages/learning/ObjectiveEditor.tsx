@@ -142,9 +142,9 @@ function DraftCard({ d, live, canAdmin }: { d: ObjectiveProfile; live?: Objectiv
       )}
       <Technical><span className="xs muted mono">method {d.draftMethod ?? 'manual'} · created {fmtDateTime(d.createdAt)}</span></Technical>
       {canAdmin && (
-        <div className="row gap2">
+        <div className="row gap2 wrap">
           <Button size="sm" variant="primary" disabled={mine} loading={approve.isPending} onClick={() => approve.mutate()}>Approve and use</Button>
-          {mine && <Badge tone="outline">You drafted this; someone else must approve</Badge>}
+          {mine && <Badge tone="outline" className="wrap-text">You drafted this; someone else must approve</Badge>}
         </div>
       )}
     </div>
