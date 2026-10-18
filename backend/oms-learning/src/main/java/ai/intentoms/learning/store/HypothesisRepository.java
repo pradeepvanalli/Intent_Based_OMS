@@ -20,6 +20,13 @@ public class HypothesisRepository {
     private final JdbcClient jdbc;
     public HypothesisRepository(JdbcClient jdbc) { this.jdbc = jdbc; }
 
+    private ai.intentoms.learning.event.LearningEvents events;
+
+    /** GV-04: every inserted hypothesis is recorded as {@code hypothesis.raised}. Setter-injected so plain
+     * construction (tests) still works. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setEvents(ai.intentoms.learning.event.LearningEvents events) { this.events = events; }
+
     private static final String COLS = "hypothesis_id, scope::text as scope, target_metric, direction, lever::text as lever, prior_confidence, " +
         "evidence_refs::text as evidence_refs, rationale, status, created_at";
 
@@ -32,6 +39,15 @@ public class HypothesisRepository {
             .param("dir", h.expectedDirection().name()).param("lever", Jsonb.of(h.lever())).param("conf", h.priorConfidence())
             .param("evidence", Jsonb.of(h.evidence())).param("rationale", h.rationale()).param("status", h.status().name()).param("created", Timestamp.from(h.createdAt()))
             .update();
+        if (events != null) {
+            Map<String, Object> payload = new java.util.LinkedHashMap<>();
+            payload.put("scope", h.scope());
+            payload.put("targetMetric", h.targetMetric());
+            payload.put("direction", h.expectedDirection().name());
+            payload.put("priorConfidence", h.priorConfidence());
+            payload.put("lever", h.lever());
+            events.hypothesisRaised(h.hypothesisId(), ai.intentoms.platform.ledger.Actor.system("learning"), payload);
+        }
     }
 
     public List<Hypothesis> byStatus(String status, int limit) {

@@ -24,6 +24,20 @@ public class LearnedFactRepository {
     private final JdbcClient jdbc;
     public LearnedFactRepository(JdbcClient jdbc) { this.jdbc = jdbc; }
 
+    private ai.intentoms.learning.event.LearningEvents events;
+    private ai.intentoms.platform.observability.Metrics metrics;
+
+    /** GV-04 / NF-09: every written fact version is a {@code fact.learned} event and counts toward the facts-written
+     * metric. Setter-injected so plain construction (tests) still works. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setEvents(ai.intentoms.learning.event.LearningEvents events, ai.intentoms.platform.observability.Metrics metrics) {
+        this.events = events;
+        this.metrics = metrics;
+    }
+
+    /** {@code PromotionService} writes its own {@code fact.learned} carrying the proposal id for promoted facts. */
+    private static final String PROMOTION_WRITER = "promotion-service";
+
     private static final String COLS = "fact_id, subject_type, subject_id, fact_key, value::text as value, confidence, sample_size, learner, version, valid_from, valid_to, created_at";
 
     public void insert(LearnedFact f) {
@@ -35,6 +49,19 @@ public class LearnedFactRepository {
             .param("val", Jsonb.of(f.value())).param("conf", f.confidence()).param("n", f.sampleSize()).param("learner", f.learner()).param("v", f.version())
             .param("from", Timestamp.from(f.validFrom())).param("to", f.validTo() == null ? null : Timestamp.from(f.validTo())).param("created", Timestamp.from(f.createdAt()))
             .update();
+        if (metrics != null) metrics.count("oms.learning.facts_written", "learner", String.valueOf(f.learner()), "key", f.factKey().name());
+        if (events != null && !PROMOTION_WRITER.equals(f.learner())) {
+            Map<String, Object> payload = new java.util.LinkedHashMap<>();
+            payload.put("subjectType", f.subjectType().name());
+            payload.put("subjectId", f.subjectId());
+            payload.put("factKey", f.factKey().name());
+            payload.put("version", f.version());
+            payload.put("value", f.value());
+            payload.put("confidence", f.confidence());
+            payload.put("sampleSize", f.sampleSize());
+            payload.put("learner", f.learner());
+            events.factLearned(f.factId(), ai.intentoms.platform.ledger.Actor.system(String.valueOf(f.learner())), payload);
+        }
     }
 
     @Transactional

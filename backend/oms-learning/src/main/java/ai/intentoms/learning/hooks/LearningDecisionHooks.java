@@ -45,7 +45,11 @@ public class LearningDecisionHooks implements DecisionLearningHooks {
             if (copy == null) copy = deepCopy(input);
             c.contribute(decision, copy, opts, used);
         }
-        return copy == null ? Contribution.none(input) : new Contribution(copy, List.copyOf(used));
+        if (copy == null) return Contribution.none(input);
+        // GV-07: whatever a contributor adds, a protected attribute never reaches a decision.
+        ai.intentoms.learning.governance.FeatureAllowlist.stripAddedProtected(input, copy);
+        used.removeIf(u -> ai.intentoms.learning.governance.FeatureAllowlist.isProtected(String.valueOf(u.get("factKey"))));
+        return new Contribution(copy, List.copyOf(used));
     }
 
     @Override

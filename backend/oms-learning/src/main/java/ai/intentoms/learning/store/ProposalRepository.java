@@ -25,6 +25,13 @@ public class ProposalRepository {
     private final JdbcClient jdbc;
     public ProposalRepository(JdbcClient jdbc) { this.jdbc = jdbc; }
 
+    private ai.intentoms.learning.event.LearningEvents events;
+
+    /** GV-04: every inserted proposal is recorded as {@code proposal.drafted}. Setter-injected so plain construction
+     * (tests) still works; without it no event is written. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setEvents(ai.intentoms.learning.event.LearningEvents events) { this.events = events; }
+
     private static final String COLS = "proposal_id, target_ref, base_version, changeset::text as changeset, hypothesis_id, tier, status, " +
         "critic_review::text as critic_review, evaluation_report::text as evaluation_report, created_by, created_at, updated_at, evaluated_at, " +
         "approved_by, approved_at, promoted_at, rejected_reason, rejected_at, rolled_back_reason, rolled_back_at";
@@ -37,6 +44,15 @@ public class ProposalRepository {
             .param("id", p.proposalId()).param("t", TenantContext.require()).param("target", p.changeset().target().toString()).param("base", p.changeset().baseVersion())
             .param("changes", Jsonb.of(Json.write(p.changeset().changes(), CHANGES))).param("hyp", p.hypothesisId()).param("tier", p.tier().name()).param("status", p.status().name())
             .param("by", p.createdBy()).param("created", Timestamp.from(p.createdAt())).param("updated", Timestamp.from(p.updatedAt())).update();
+        if (events != null) {
+            Map<String, Object> payload = new java.util.LinkedHashMap<>();
+            payload.put("target", p.changeset().target().toString());
+            payload.put("tier", p.tier().name());
+            payload.put("hypothesisId", p.hypothesisId());
+            payload.put("changeTypes", p.changeset().changes().stream().map(c -> c.getClass().getSimpleName()).toList());
+            payload.put("createdBy", p.createdBy());
+            events.proposalDrafted(p.proposalId(), ai.intentoms.platform.ledger.Actor.parse(p.createdBy()), payload);
+        }
     }
 
     public Proposal get(String id) { return find(id).orElseThrow(() -> new NotFoundException("Proposal " + id + " not found")); }
