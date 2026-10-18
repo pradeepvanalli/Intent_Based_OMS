@@ -94,7 +94,7 @@ const FAMILY: Record<string, string> = {
   'sourcing.policy_bandit': 'Trying alternative sourcing policies', 'sourcing.aged_stock_tiebreak': 'Prefer aged stock when costs are close',
   'promise.lane_transit_days': 'Carrier transit times', 'promise.lane_calibration': 'Promise accuracy by carrier lane',
   'promise.buffer_days': 'Promise date buffer', 'monitoring.warn_early_threshold': 'When to warn customers about delays',
-  'cs.appeasement_level': 'Goodwill credit amount', 'decision.calibration': 'Confidence calibration',
+  'cs.appeasement_level': 'Goodwill credit amount', 'decision.calibration': 'Confidence calibration', 'decision.provider': 'Which AI provider to ask first',
   'inventory.safety_stock': 'Safety stock', 'inventory.inbound_reliability': 'Supplier delivery reliability',
   'inventory.reservation_ttl': 'How long carts hold stock', 'customer.preferences': 'Customer preferences',
   'fraud.agent_reputation': 'AI agent reputation', 'fraud.agent_dispute_rate': 'AI agent dispute rate', 'fraud.address_reuse_count': 'Shared delivery addresses',

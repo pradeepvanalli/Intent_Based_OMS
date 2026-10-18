@@ -66,8 +66,8 @@ function Fairness() {
       {q.isError && <ErrorState error={q.error} retry={() => q.refetch()} />}
       {r && (
         <>
-          {r.flags.length > 0 ? <div className="callout warn mb2"><span>{r.flags.join(' ')}</span></div> : <p className="caption">No group stands out for this decision.</p>}
-          {r.groups.length === 0 ? <EmptyState title="Not enough decisions yet" /> : (
+          {r.flags.length > 0 ? <div className="callout warn mb2"><span>{r.flags.join(' ')}</span></div> : r.groups.some((g) => (g.decisions ?? g.customers) > 0) ? <p className="caption">No group stands out for this decision.</p> : null}
+          {r.groups.every((g) => (g.decisions ?? g.customers) === 0) ? <EmptyState title="Not enough decisions yet" hint="The comparison appears once customers in each group have had decisions made for them." /> : (
             <div className="table-wrap">
               <table className="tbl dense" aria-label="Fairness by customer group">
                 <thead><tr><th scope="col">Customer group</th><th scope="col" className="num">Customers</th><th scope="col" className="num">Decided automatically</th><th scope="col" className="num">Overridden by people</th></tr></thead>

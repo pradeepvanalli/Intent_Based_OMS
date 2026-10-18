@@ -62,7 +62,12 @@ function LiveObjective({ p }: { p: ObjectiveProfile }) {
   const windows = freezeWindows(p);
   return (
     <div className="col gap2">
-      <div className="row-between wrap"><span className="small">In use: <b>version {p.version}</b>{p.approvedBy && <> · approved by {p.approvedBy.replace(/^user:/, '')} {relTime(p.approvedAt)}</>}</span><DemoBadge by={p.createdBy} /></div>
+      <div className="row-between wrap">
+        {p.version > 0
+          ? <span className="small">In use: <b>version {p.version}</b>{p.approvedBy && <> · approved by {p.approvedBy.replace(/^user:/, '')} {relTime(p.approvedAt)}</>}</span>
+          : <span className="small">Nothing approved yet, so the <b>balanced</b> default is in use.</span>}
+        <DemoBadge by={p.createdBy} />
+      </div>
       <div className="weight-bars">{TERMS.map((t) => (
         <div key={t.key} className="weight-bar"><span title={t.hint}>{t.label}</span><Meter value={p.weights[t.key] / max} label={`${t.label} weight`} /><span className="num right">{p.weights[t.key].toFixed(2)}</span></div>
       ))}</div>
