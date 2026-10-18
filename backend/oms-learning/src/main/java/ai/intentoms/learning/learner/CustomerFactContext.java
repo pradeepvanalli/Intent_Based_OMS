@@ -25,8 +25,20 @@ public class CustomerFactContext {
         FactKey.PREFERRED_CONTACT_CHANNEL, FactKey.SEGMENT_MEMBERSHIP);
 
     private final LearnedFactCache facts;
+    private final ai.intentoms.learning.store.LearnedFactRepository repository;
 
-    public CustomerFactContext(LearnedFactCache facts) { this.facts = facts; }
+    public CustomerFactContext(LearnedFactCache facts, ai.intentoms.learning.store.LearnedFactRepository repository) {
+        this.facts = facts;
+        this.repository = repository;
+    }
+
+    /** Same as {@link #facts} but read from the database, for people-facing views that must not lag the learner. */
+    public Map<FactKey, LearnedFact> freshFacts(String customerRef) {
+        Map<FactKey, LearnedFact> out = new LinkedHashMap<>();
+        if (customerRef == null || customerRef.isBlank()) return out;
+        for (FactKey k : DECISION_FACTS) repository.active(SubjectType.CUSTOMER, customerRef, k).ifPresent(f -> out.put(k, f));
+        return out;
+    }
 
     /** Field name under {@code customer.facts} for a fact key. */
     public static String field(FactKey key) {

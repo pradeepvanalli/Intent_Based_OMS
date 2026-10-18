@@ -52,7 +52,7 @@ public class CustomerIntelligenceController {
         out.put("cohort", evidence.latestCohort(customerRef).orElse(null));
         out.put("usedByDecisions", resolver.isLive(CustomerFeatureFamilies.PREFERENCES));
         List<Map<String, Object>> list = new ArrayList<>();
-        for (Map.Entry<FactKey, LearnedFact> e : facts.facts(customerRef).entrySet()) {
+        for (Map.Entry<FactKey, LearnedFact> e : facts.freshFacts(customerRef).entrySet()) {
             LearnedFact f = e.getValue();
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("key", CustomerFactContext.field(e.getKey()));
