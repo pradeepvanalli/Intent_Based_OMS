@@ -59,6 +59,23 @@ class PromotionRollbackIntegrationTest extends DecisionFabricTestBase {
     }
 
     @Test
+    void rollbackRestoresTheReplacedVersionEvenWhenAnotherVersionWasRetiredSince() {
+        String name = installProbe("f4_thr2");
+        int v1 = liveVersion(name);
+        Proposal p = proposal("system:band_threshold", new ArtifactRef("decision", name), v1, PolicyChangeset.RiskTier.T1, ProposalStatus.APPROVED,
+            new PolicyChange.ThresholdChange(name, "act", 0.8, 0.72));
+        promotion.promote(p.proposalId(), HUMAN);
+        // A finished shadow (or any other version) retired after the promotion.
+        var other = studio.createDraft(name, probeYaml(name, null).replace("confidence_gte: 0.8", "confidence_gte: 0.66"));
+        definitions.setStatus(name, other.version(), "retired", null);
+
+        promotion.rollback(p.proposalId(), HUMAN, null);
+
+        assertThat(live(name).effectiveBands().actGte()).isEqualTo(0.8);
+        assertThat(live(name).rules()).extracting(r -> r.id()).containsExactly("big_order", "never_fires");
+    }
+
+    @Test
     void ruleAddAndRuleRetireAreAppliedToTheLiveDecision() {
         String name = installProbe("f4_rules");
         Proposal p = proposal("system:author", new ArtifactRef("decision", name), liveVersion(name), PolicyChangeset.RiskTier.T1, ProposalStatus.APPROVED,

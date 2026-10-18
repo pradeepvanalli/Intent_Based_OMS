@@ -288,10 +288,19 @@ public class PromotionService {
                 int previous = ((Number) s.get("previousVersion")).intValue();
                 int liveNow = liveDefinition(name).version();
                 if (liveNow != newVersion) throw new ConflictException("Decision " + name + " is now on version " + liveNow + ", not " + newVersion + " that this proposal published; roll back the later change first");
-                var row = SystemPrincipal.call(() -> decisionStudio.rollback(name));
+                // The studio's one-click rollback revives the most recently retired version. If something else was retired
+                // since (a finished shadow, say), republish the replaced version's YAML as a new version instead.
+                boolean lastRetiredIsPrevious = definitions.lastRetired(name).map(r -> r.definition().version() == previous).orElse(false);
+                int liveVersion = SystemPrincipal.call(() -> {
+                    if (lastRetiredIsPrevious) return decisionStudio.rollback(name).definition().version();
+                    String yaml = definitions.find(name, previous).orElseThrow(() -> new ConflictException("Version " + previous + " of " + name + " no longer exists")).definition().yaml();
+                    DecisionDefinition copy = decisionStudio.createDraft(name, yaml);
+                    decisionStudio.publish(name, copy.version(), "live", true);
+                    return copy.version();
+                });
                 restored.put("decision", name);
-                restored.put("liveVersion", row.definition().version());
-                if (row.definition().version() != previous) log.warn("Rollback of {} restored version {} instead of the expected {}", name, row.definition().version(), previous);
+                restored.put("liveVersion", liveVersion);
+                restored.put("restoredFromVersion", previous);
             }
             case "config" -> {
                 String key = String.valueOf(s.get("key"));
