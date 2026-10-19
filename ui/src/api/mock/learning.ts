@@ -102,7 +102,7 @@ const proposals: Proposal[] = [
   mk({ proposalId: 'prop_demo10', tier: 'T1', status: 'EVALUATED', evaluatedAt: hoursAgo(3), evaluationReport: { method: 'no_counterfactual', sampleSize: 0, reason: 'sourcing.blocked_zip3 has only ever run at its current value' }, target: ['parameter', 'sourcing.blocked_zip3'], changes: [{ type: 'ParameterChange', parameter: 'sourcing.blocked_zip3', from: [], to: ['941'] }],
     createdBy: 'system:author', createdAt: hoursAgo(6), updatedAt: hoursAgo(6) }),
   mk({ proposalId: 'prop_demo13', tier: 'T1', status: 'APPROVED', target: ['parameter', 'live:promise.lane_calibration'], changes: [{ type: 'ParameterChange', parameter: 'live:promise.lane_calibration', from: { enabled: false }, to: { enabled: true, min: 0.5, max: 1, maxStep: 0.1, learner: 'lane_transit' } }],
-    evaluationReport: { method: 'no_counterfactual', sampleSize: 0, reason: 'only 4 decisions that used a learned value and 210 decisions on static values with a reward (need 30 each)', next: 'run a shadow experiment, then promote within the learner max step; the promotion gate will ask for a person' },
+    evaluationReport: { method: 'no_counterfactual', sampleSize: 0, reason: 'not enough rewarded decisions on both learned and static values yet (sourcing_node_score: only 4 decisions that used a learned value and 210 decisions on static values with a reward (need 30 each))', next: 'run a shadow experiment, then promote within the learner max step; the promotion gate will ask for a person' },
     createdBy: 'system:lane_transit', approvedBy: 'user:strategy', approvedAt: hoursAgo(4), evaluatedAt: hoursAgo(9), createdAt: hoursAgo(10), updatedAt: hoursAgo(4) }),
 ];
 

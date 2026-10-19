@@ -171,6 +171,21 @@ class ProposalReplayIntegrationTest extends PostgresTestBase {
             new PolicyChange.ParameterChange("sourcing.node_reject_rate", Map.of("enabled", false), Map.of("enabled", true)));
         Map<String, Object> r2 = evaluations.evaluate(live.proposalId(), "user:tester").evaluationReport();
         assertThat(r2.get("method")).isEqualTo("no_counterfactual");
+        assertThat(String.valueOf(r2.get("reason"))).contains("sourcing_node_score: only").contains("decisions that used a learned value");
+
+        // N6: the reason names what is actually missing. promise_buffer learns promise.buffer_days and declares no outcome
+        // decision of its own; the family is read by sla_breach_risk, which has no rewarded decisions on either value yet.
+        Proposal buffer = draft(new ArtifactRef("parameter", "live:promise.buffer_days"), 0,
+            new PolicyChange.ParameterChange("live:promise.buffer_days", Map.of("enabled", false), Map.of("enabled", true, "min", 0.0, "max", 3.0)));
+        String bufferReason = String.valueOf(evaluations.evaluate(buffer.proposalId(), "user:tester").evaluationReport().get("reason"));
+        assertThat(bufferReason).doesNotContain("no learner").contains("sla_breach_risk: only ").contains("decisions that used a learned value");
+        Proposal curve = draft(new ArtifactRef("parameter", "live:decision.calibration"), 0,
+            new PolicyChange.ParameterChange("live:decision.calibration", Map.of("enabled", false), Map.of("enabled", true)));
+        assertThat(String.valueOf(evaluations.evaluate(curve.proposalId(), "user:tester").evaluationReport().get("reason")))
+            .isEqualTo("confidence_calibrator learns decision.calibration, but no decision that reads it records outcomes, so served and static values cannot be compared");
+        Proposal unknown = draft(new ArtifactRef("parameter", "live:test.nobody_learns_this"), 0,
+            new PolicyChange.ParameterChange("live:test.nobody_learns_this", Map.of("enabled", false), Map.of("enabled", true)));
+        assertThat(String.valueOf(evaluations.evaluate(unknown.proposalId(), "user:tester").evaluationReport().get("reason"))).startsWith("no learner learns test.nobody_learns_this");
 
         Proposal weights = draft(new ArtifactRef("config", "sourcing.weights"), 0, new PolicyChange.WeightChange("sourcing.weights", "cost", 0.5, 0.4));
         assertThat(evaluations.evaluate(weights.proposalId(), "user:tester").evaluationReport().get("method")).isEqualTo("no_counterfactual");

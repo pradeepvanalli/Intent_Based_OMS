@@ -424,7 +424,8 @@ public class PromotionService {
         liveParameters.find(family).map(LiveParameterRepository.LiveParameter::proposalId).flatMap(proposals::find).ifPresent(p -> {
             if (p.status() != ProposalStatus.PROMOTED) return;
             String why = "live use of " + family + " switched off by " + by.ref();
-            proposals.rollback(p.proposalId(), why, Instant.now());
+            // N4: a precautionary switch-off, not evidence against the change; people may propose it again at once.
+            proposals.rollback(p.proposalId(), why, Instant.now(), false);
             events.proposalRolledBack(p.proposalId(), by, Map.of("target", p.changeset().target().toString(), "reason", why, "restored", Map.of("kind", "live", "family", family, "live", false)));
         });
     }

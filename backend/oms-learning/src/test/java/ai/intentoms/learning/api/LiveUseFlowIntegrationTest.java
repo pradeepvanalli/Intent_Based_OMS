@@ -76,8 +76,21 @@ class LiveUseFlowIntegrationTest extends PostgresTestBase {
         assertThat(closed.status()).isEqualTo(ProposalStatus.ROLLED_BACK);
         assertThat(closed.rolledBackReason()).contains("switched off by user:bob");
         assertThatThrownBy(() -> promotion.rollback(p.proposalId(), Actor.parse("user:bob"), null)).isInstanceOf(ConflictException.class);
-        // Defect 26: the same change cannot come straight back, although its "from" now records the revoked row's range.
+        // N4: a person's safety switch-off is no evidence against the change. The learner that would draft the same change
+        // again still waits out the cooldown (defect 26), but a person may propose it again at once.
+        var learnerRedraft = new ai.intentoms.learning.model.Proposal(ai.intentoms.platform.ids.Ids.prefixed("prop"), p.changeset(), null, p.tier(), ProposalStatus.DRAFT,
+            null, null, "system:node_reliability", java.time.Instant.now(), java.time.Instant.now(), null, null, null, null, null, null, null, null);
+        assertThatThrownBy(() -> proposals.insert(learnerRedraft))
+            .isInstanceOf(OmsException.class).satisfies(e -> assertThat(((OmsException) e).code()).isEqualTo("proposal_cooling_down"));
         as("alice");
+        var again = liveUse.propose(new LiveUseController.LiveUseRequest(family, "node_reliability", 0.0, 0.5, 0.1, true, null));
+        assertThat(again.status()).isEqualTo(ProposalStatus.DRAFT);
+
+        // A rollback for cause (here a person rolling the promoted change back) still holds everyone off for the cooldown.
+        proposals.markEvaluated(again.proposalId(), java.util.Map.of("method", "no_counterfactual", "sampleSize", 0), java.time.Instant.now());
+        proposals.approve(again.proposalId(), "user:bob", java.time.Instant.now());
+        promotion.promote(again.proposalId(), Actor.parse("user:bob"), "pilot on one region agreed with operations");
+        promotion.rollback(again.proposalId(), Actor.parse("user:bob"), "rejected orders went up in the pilot region");
         assertThatThrownBy(() -> liveUse.propose(new LiveUseController.LiveUseRequest(family, "node_reliability", 0.0, 0.5, 0.1, true, null)))
             .isInstanceOf(OmsException.class).satisfies(e -> assertThat(((OmsException) e).code()).isEqualTo("proposal_cooling_down"));
         // A different range is a different change.
