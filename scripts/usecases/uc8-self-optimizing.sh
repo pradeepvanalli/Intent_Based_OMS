@@ -96,16 +96,22 @@ say "ST-LA-02 learned: $(field '", ".join("%s=%s (v%d, %d obs)" % (f["factKey"],
 step "6) A learned value goes live only through a governed change"
 # Try learned families in order. One that is already live, or was rolled back recently (a 30-day cooldown, so a
 # reverted change is not re-proposed on the same evidence), is skipped; that keeps this script safe to re-run.
+# The demo seed already has several families live, so the ones it leaves off come first.
 PROP=""
+call GET /api/v1/learning/live-parameters "" "$STRATEGY_TOKEN"; must 200
+LIVE_NOW=$(field '" ".join(p["parameter"] for p in d if p["status"] == "LIVE")')
 for CANDIDATE in \
+  'inventory.reservation_ttl|inventory_reservation_ttl|5|1440|60|hold carts for the learned time before releasing stock' \
+  'sourcing.aged_stock_tiebreak|inventory_stock_age|0|1|0.5|prefer aged stock when costs are close' \
+  'inventory.inbound_reliability|inventory_inbound_reliability|0.3|1|0.1|trust each supplier inbound by its learned reliability' \
   'sourcing.reject_penalty|node_reliability|0.1|2.0|0.5|use the learned, decaying reject penalty per node' \
   'monitoring.warn_early_threshold|warn_early|0.3|0.9|0.1|warn customers about a likely delay at the learned risk level' \
-  'promise.buffer_days|promise_buffer|0|3|1|add the learned promise buffer per customer segment' \
-  'inventory.reservation_ttl|inventory_reservation_ttl|5|1440|60|hold carts for the learned time before releasing stock'; do
+  'promise.buffer_days|promise_buffer|0|3|1|add the learned promise buffer per customer segment'; do
   IFS='|' read -r FAMILY LEARNER LO HI STEP WHY <<< "$CANDIDATE"
+  case " $LIVE_NOW " in *" $FAMILY "*) ok "$FAMILY is already live; trying the next one"; continue ;; esac
   call POST /api/v1/learning/live-parameters/proposals "{\"family\":\"$FAMILY\",\"learnerKey\":\"$LEARNER\",\"min\":$LO,\"max\":$HI,\"maxStep\":$STEP,\"reason\":\"UC8: $WHY\"}" "$STRATEGY_TOKEN"
   if [ "$CODE" = 200 ] || [ "$CODE" = 201 ]; then PROP=$(field 'd["proposalId"]'); break; fi
-  if [ "$CODE" = 409 ]; then ok "$FAMILY was rolled back recently or is already live, so it cannot be re-proposed yet (409); trying the next one"; continue; fi
+  if [ "$CODE" = 409 ]; then ok "$FAMILY was rolled back recently, so the same change cannot be re-proposed yet (409); trying the next one"; continue; fi
   must 200 201
 done
 [ -n "$PROP" ] || { printf '\033[31m  ✗ every candidate family is cooling down or live; run on a fresh demo tenant\033[0m\n' >&2; exit 1; }
