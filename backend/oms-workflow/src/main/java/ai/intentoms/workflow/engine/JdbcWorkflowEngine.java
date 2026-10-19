@@ -110,6 +110,11 @@ public class JdbcWorkflowEngine implements WorkflowEngine {
     }
 
     @Override
+    public Optional<WorkflowView> findById(String workflowId) {
+        return repo.find(TenantContext.require(), workflowId).map(WorkflowInstance::toView);
+    }
+
+    @Override
     public WorkflowView get(String workflowId) {
         return instance(workflowId).toView();
     }
