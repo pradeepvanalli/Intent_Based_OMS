@@ -55,6 +55,7 @@ public class BanditRewardLearner implements GovernedLearner, ai.intentoms.platfo
     @Value("${oms.learning.fs01.min-bucket-episodes:20}") private int minBucket = 20;
     @Value("${oms.learning.fs01.min-arm-episodes:5}") private int minArm = 5;
     @Value("${oms.learning.fs01.min-matured-arm-episodes:5}") private int minMatured = 5;
+    @Value("${oms.learning.fs01.matured-window-days:365}") private int maturedWindowDays = 365;
     @Value("${oms.learning.fs01.temperature:0.2}") private double temperature = 0.2;
 
     public BanditRewardLearner(EpisodeRepository episodes, DecisionRecordRepository decisionRecords, FulfilmentFacts facts, LearnerGovernance governance) {
@@ -104,8 +105,12 @@ public class BanditRewardLearner implements GovernedLearner, ai.intentoms.platfo
         if (!governance.begin(KEY).mayRun()) return 0;
         governance.recordRun(KEY);
         List<Logged> logged = new ArrayList<>();
-        for (Episode ep : episodes.forDecisionSince(SourcingPolicyBandit.DECISION_NAME, Instant.now().minus(Duration.ofDays(windowDays)), 20_000)) {
+        // B3-4: an episode matures only once every reward window has closed (chargebacks: 120 days by default), so matured
+        // rewards are read from a longer window than provisional ones, or no arm could ever prove itself.
+        Instant provisionalFrom = Instant.now().minus(Duration.ofDays(windowDays));
+        for (Episode ep : episodes.forDecisionSince(SourcingPolicyBandit.DECISION_NAME, Instant.now().minus(Duration.ofDays(Math.max(windowDays, maturedWindowDays))), 20_000)) {
             if (ep.reward() == null || ep.status() == EpisodeStatus.OPEN) continue;
+            if (ep.status() != EpisodeStatus.MATURE && ep.createdAt() != null && ep.createdAt().isBefore(provisionalFrom)) continue;
             Optional<DecisionRecord> rec = decisionRecords.find(ep.decisionId());
             if (rec.isEmpty() || rec.get().chosenArm() == null || rec.get().propensity() <= 0) continue;
             // A record whose policy was overridden downstream (split check, no plan for the drawn policy) did not apply the bandit's arm.

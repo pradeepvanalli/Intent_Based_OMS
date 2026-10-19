@@ -88,8 +88,15 @@ class FillRateIntegrationTest extends OrchestrationTestBase {
         }
         assertThat(events(o.id(), "order.shipped")).isNotEmpty().allSatisfy(e -> assertThat(e).containsEntry("firstAttempt", false));
 
-        Episode ep = scoredSourcingEpisode(o);
+        // OC-02 (A-N1): the shipments belong to the re-sourcing decision that planned them, keyed by the rejected group;
+        // the original choice, whose node refused, does not get their credit.
+        drainOutbox();
+        rewards.sweepOnce();
+        Episode ep = episodes.forOrder(o.id()).stream().filter(e -> "sourcing_node_score".equals(e.decisionName()) && e.fulfillmentGroupId() != null)
+            .map(e -> episodes.find(e.episodeId()).orElseThrow()).findFirst().orElseThrow();
         assertThat(ep.rewardComponents().get("fill")).isCloseTo(1.0, within(1e-9));
         assertThat(ep.rewardComponents().get("fill_first_attempt")).as("everything shipped from the second sourcing").isZero();
+        Episode original = episodes.forOrder(o.id()).stream().filter(e -> "sourcing_node_score".equals(e.decisionName()) && e.fulfillmentGroupId() == null).findFirst().orElseThrow();
+        assertThat(episodes.find(original.episodeId()).orElseThrow().reward()).as("the failed first choice earns no shipment credit").isNull();
     }
 }
