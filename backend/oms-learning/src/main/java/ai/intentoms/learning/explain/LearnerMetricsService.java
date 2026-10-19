@@ -91,7 +91,10 @@ public class LearnerMetricsService {
         Map<String, long[]> out = new HashMap<>();
         for (Proposal p : proposals.createdSince(Instant.now().minus(Duration.ofDays(WINDOW_DAYS)), 10_000)) {
             String author = ProposalOwnership.authorLearner(p.createdBy());
-            String key = ownership.owner(p).orElse(author != null ? author : String.valueOf(p.createdBy()));
+            // A learner's yield counts its own drafts; a draft by a person, the author or the template counts for the
+            // learner that owns its target (E-3). D-4 made the owner govern a learner's draft of another's target, not own its yield.
+            String key = author != null && ownership.governors(p).contains(author) ? author
+                : ownership.owner(p).orElse(author != null ? author : String.valueOf(p.createdBy()));
             long[] c = out.computeIfAbsent(key, k -> new long[4]);
             c[0]++;
             if (p.promotedAt() != null) c[1]++;

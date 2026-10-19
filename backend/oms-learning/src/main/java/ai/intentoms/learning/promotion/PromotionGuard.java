@@ -33,8 +33,9 @@ import java.util.Map;
  * weekly budget and the learner's max step (GV-02); the shadow run, if any, must have passed; the critic must not have
  * called it risky. A person can still promote despite any of those by giving a written reason, which is recorded on the
  * ledger and on the proposal ({@link Verdict#NEEDS_OVERRIDE} names what they would be waiving). Nothing can override a
- * freeze window, a kill switch, a switched-off or paused learner, a T3 change, or refunds and cancellations on an
- * autonomous allow-list.
+ * freeze window, a kill switch, a switched-off or paused learner (the target's owner or the drafter, D-4), a T3 change,
+ * a decision change drafted against a version or value that is no longer live (D-2, {@link LiveBase}), or refunds and
+ * cancellations on an autonomous allow-list.
  *
  * <p>Always: changes touching refunds, cancellations, pricing, the objective or autonomy are never automatic; a change
  * scoped to postal codes needs a person and a reason code (GV-07).
