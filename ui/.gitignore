@@ -7,4 +7,5 @@ test-results
 # Playwright
 e2e/.auth/
 e2e/.results/
+e2e/.service/
 e2e/report/

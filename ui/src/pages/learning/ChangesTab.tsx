@@ -108,7 +108,7 @@ function LiveUsePanel({ canAdmin, learners }: { canAdmin: boolean; learners: Lea
                 <Technical><span className="xs muted mono">{p.parameter} · proposal {p.proposalId ?? '—'} · by {p.status === 'LIVE' ? p.promotedBy : p.revokedBy}</span></Technical>
               </div>
               <span className="row gap2">
-                <DemoBadge by={p.promotedBy} />
+                <DemoBadge by={p.promotedBy} id={p.proposalId} />
                 <Badge tone={p.status === 'LIVE' ? 'ok' : 'neutral'} dot>{p.status === 'LIVE' ? 'In use' : 'Switched off'}</Badge>
                 {canAdmin && p.status === 'LIVE' && <Button size="sm" variant="ghost" onClick={() => setRevoking(p)} aria-label={`Switch off ${familyName(p.parameter)}`}>Switch off</Button>}
               </span>
