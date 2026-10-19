@@ -46,6 +46,9 @@ public class ConfidenceCalibrator implements GovernedLearner {
 
     private final LearnerGovernance governance;
 
+    @org.springframework.beans.factory.annotation.Value("${oms.learning.calibration.min-per-bin:20}") int minPerBin = 20;
+    @org.springframework.beans.factory.annotation.Value("${oms.learning.calibration.max-correction:0.15}") double maxCorrection = 0.15;
+
     public ConfidenceCalibrator(DecisionDefinitionRepository definitions, DecisionStudioService studio, DecisionRecordRepository decisionRecords, LearnedFactRepository facts, LearnerGovernance governance) {
         this.governance = governance;
         this.definitions = definitions;
@@ -88,8 +91,12 @@ public class ConfidenceCalibrator implements GovernedLearner {
 
         List<String> curve = new ArrayList<>();
         for (var bin : report.bins()) {
-            if (bin.count() == 0) continue;
-            double correction = bin.accuracy() - bin.meanConfidence();
+            // DF-02: a bin with too few cases gets no correction at all, and a well-populated one is shrunk toward
+            // zero by n/(n+k) and capped, so a handful of golden cases can never move 0.55 to 0.98.
+            if (bin.count() < minPerBin) continue;
+            double raw = bin.accuracy() - bin.meanConfidence();
+            double shrunk = raw * bin.count() / (bin.count() + (double) minPerBin);
+            double correction = Math.max(-maxCorrection, Math.min(maxCorrection, shrunk));
             curve.add(String.format(Locale.ROOT, "%.2f-%.2f:%+.3f", bin.lower(), bin.upper(), correction));
         }
         if (!curve.isEmpty()) writeFact(name, FactKey.CALIBRATION_CURVE, new TypedValue.ListValue(curve), 1.0, report.cases());

@@ -266,7 +266,8 @@ class ExperimentLifecycleIntegrationTest extends DecisionFabricTestBase {
         try {
             DecisionResult after = decideLive(name, "ord_a" + Ids.shortId(), 100, null);
             double raw = ((Number) after.details().get("rawConfidence")).doubleValue();
-            assertThat(after.confidence()).isCloseTo(raw + 0.3, org.assertj.core.data.Offset.offset(1e-9));
+            // the bin says +0.30, but no correction moves confidence by more than 0.15 (DF-02 safety cap)
+            assertThat(after.confidence()).isCloseTo(raw + 0.15, org.assertj.core.data.Offset.offset(1e-9));
             assertThat(after.details()).containsKey("calibration");
         } finally {
             parameters.revoke(CurveConfidenceCalibration.FAMILY, TESTER);

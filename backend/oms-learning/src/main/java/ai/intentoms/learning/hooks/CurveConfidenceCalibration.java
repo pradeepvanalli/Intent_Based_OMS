@@ -24,6 +24,7 @@ import java.util.Optional;
 @Component
 public class CurveConfidenceCalibration implements ConfidenceCalibration {
     public static final String FAMILY = "decision.calibration";
+    static final double MAX_CORRECTION = 0.15;
 
     private final LearnedFactCache facts;
     private final ParameterResolver resolver;
@@ -40,12 +41,14 @@ public class CurveConfidenceCalibration implements ConfidenceCalibration {
         for (String bin : lv.values()) {
             Bin b = Bin.parse(bin);
             if (b == null || rawConfidence < b.lower() || rawConfidence > b.upper()) continue;
-            double calibrated = Math.max(0.0, Math.min(1.0, rawConfidence + b.correction()));
+            // Safety net for curves written before the per-bin minimum existed: never move confidence by more than this.
+            double correction = Math.max(-MAX_CORRECTION, Math.min(MAX_CORRECTION, b.correction()));
+            double calibrated = Math.max(0.0, Math.min(1.0, rawConfidence + correction));
             Map<String, Object> source = new LinkedHashMap<>();
             source.put("family", FAMILY);
             source.put("factVersion", curve.get().version());
             source.put("bin", bin);
-            source.put("correction", b.correction());
+            source.put("correction", correction);
             source.put("learner", curve.get().learner());
             source.put("decisionVersion", version);
             return Optional.of(new DecisionLearningHooks.Calibrated(calibrated, source));
