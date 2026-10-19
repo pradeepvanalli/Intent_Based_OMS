@@ -75,7 +75,7 @@ public class ChangeCardService {
         for (String k : List.of("method", "liftEstimate", "confidenceInterval", "sampleSize", "episodes", "guardrails", "shadow", "canary", "estimator", "clipping",
                 "ips", "rewards", "reason", "next", "caveat", "baselineReward", "proposedRewardEstimate", "fraudLabels"))
             if (report.containsKey(k)) m.put(k, report.get(k));
-        // E-2: the lift is a difference in mean reward on the 0-1 reward scale, not a percentage; say so on the card.
+        // E-2: the lift is a difference in mean reward (the objective's weighted sum, not a 0-1 scale, E3-N3), not a percentage; say so on the card.
         if (report.get("liftEstimate") instanceof Number) m.put("liftUnit", "reward");
         List<String> concerns = new java.util.ArrayList<>();
         String ips = ai.intentoms.learning.promotion.PromotionGuard.ipsWorse(report);

@@ -119,14 +119,18 @@ public class AuthController {
 
     public record CreateUserRequest(@NotBlank String userId, String displayName, @NotBlank String password, Set<String> roles) {}
 
-    /** Administrative user creation for deployments without dev users (production); passwords must satisfy the policy. */
+    /**
+     * Administrative user creation for deployments without dev users (production); passwords must satisfy the policy.
+     * D-1: the caller may grant only roles whose permissions it holds, and never the platform role (403 otherwise).
+     */
     @PostMapping("/users")
     @RequiresPermission(Permissions.CONFIG_ADMIN)
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> createUser(@Valid @RequestBody CreateUserRequest req) {
         String tenant = TenantContext.require();
-        passwordPolicy.validate(req.password(), req.userId());
         Set<String> roles = req.roles() == null ? Set.of() : req.roles();
+        authz.requireMayGrant(roles, Set.of());
+        passwordPolicy.validate(req.password(), req.userId());
         int n = jdbc.sql("""
             insert into app_user(tenant_id, user_id, display_name, password_hash, roles) values (:t, :u, :d, :h, :r)
             on conflict (tenant_id, user_id) do nothing
@@ -139,19 +143,32 @@ public class AuthController {
 
     public record IssueKeyRequest(String subjectId, Principal.Type type, Set<String> roles, Set<String> permissions, Integer trustTier, String label) {}
 
+    /**
+     * D-1: a key carries at most what its issuer holds: its roles' permissions and any explicit permissions must all be
+     * held by the caller, the platform role only a platform operator may grant, and a key is a USER, AGENT or SYSTEM
+     * (integration) principal, never a DECISION one.
+     */
     @PostMapping("/api-keys")
     @RequiresPermission(Permissions.CONFIG_ADMIN)
     public Map<String, Object> issueKey(@RequestBody IssueKeyRequest req) {
         Set<String> roles = req.roles() == null ? Set.of() : req.roles();
+        Principal.Type type = req.type() == null ? Principal.Type.USER : req.type();
+        if (type == Principal.Type.DECISION) throw new ValidationException("An API key is a USER, AGENT or SYSTEM principal");
+        authz.requireMayGrant(roles, req.permissions());
         Set<String> perms = req.permissions() == null ? Roles.permissionsFor(roles) : req.permissions();
-        var issued = apiKeys.issue(TenantContext.require(), req.type() == null ? Principal.Type.USER : req.type(), req.subjectId(), roles, perms,
+        var issued = apiKeys.issue(TenantContext.require(), type, req.subjectId(), roles, perms,
             req.trustTier() == null ? 1 : req.trustTier(), req.label());
+        audit.record("auth.api_key_issued", "api_key", issued.keyId(), req.label(), Map.of("subjectId", String.valueOf(req.subjectId()), "type", type.name(), "roles", List.copyOf(roles)));
         return Map.of("keyId", issued.keyId(), "apiKey", issued.plaintext(), "note", "Store this key now; it is not retrievable later.");
     }
 
+    /** Revokes one of this tenant's keys; another tenant's key id is not found (404). */
     @DeleteMapping("/api-keys/{keyId}")
     @RequiresPermission(Permissions.CONFIG_ADMIN)
-    public void revoke(@PathVariable String keyId) { apiKeys.revoke(keyId); }
+    public void revoke(@PathVariable String keyId) {
+        if (!apiKeys.revoke(TenantContext.require(), keyId)) throw new ai.intentoms.platform.error.NotFoundException("No API key " + keyId + " in this tenant");
+        audit.record("auth.api_key_revoked", "api_key", keyId, null, Map.of());
+    }
 
     /** Audit inside the request's tenant; a failed login for an unknown tenant has nowhere to go and is only logged. */
     private void auditIn(String tenantId, String action, String userId, String reason, Map<String, Object> details) {

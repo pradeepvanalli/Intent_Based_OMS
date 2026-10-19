@@ -13,7 +13,7 @@ import { fmtDateTime, fmtNum, fmtPct, humanize, relTime, valueLabel } from '../.
 import { toast } from '../../lib/toast';
 import { useSession } from '../../auth/session';
 import { DemoBadge, InfoTip, ReasonDialog, Technical } from './Bits';
-import { METHOD_WORDS, POSTAL_REASON_CODES, STATUS_TONE, STATUS_WORDS, TIER_WORDS, VERDICT, authorName, changeSentence, decisionLabel, familyName, isPostalScoped, proposalTitle, replayPhrase, personName, rewardDelta } from './copy';
+import { METHOD_WORDS, OUTCOME_SCORE_NOTE, POSTAL_REASON_CODES, STATUS_TONE, STATUS_WORDS, TIER_WORDS, VERDICT, authorName, changeSentence, decisionLabel, familyName, isPostalScoped, proposalTitle, replayPhrase, personName, rewardDelta } from './copy';
 
 type Dialogs = 'approve' | 'reject' | 'rollback' | 'override' | null;
 
@@ -142,7 +142,7 @@ function Replay({ card }: { card: ChangeCard }) {
       <div className="row wrap gap3" style={{ alignItems: 'baseline' }}>
         <Badge tone={phrase.tone} lg>{phrase.text}</Badge>
         {r.confidenceInterval && <span className="small muted">likely between {rewardDelta(r.confidenceInterval.lower)} and {rewardDelta(r.confidenceInterval.upper)} reward</span>}
-        {r.baselineReward !== undefined && r.proposedRewardEstimate !== undefined && <span className="small muted">outcome score {fmtNum(r.baselineReward, 3)} → {fmtNum(r.proposedRewardEstimate, 3)} (0 to 1)</span>}
+        {r.baselineReward !== undefined && r.proposedRewardEstimate !== undefined && <span className="small muted" data-testid="replay-outcome-score">outcome score {fmtNum(r.baselineReward, 3)} → {fmtNum(r.proposedRewardEstimate, 3)} (higher is better)<InfoTip text={OUTCOME_SCORE_NOTE} /></span>}
         {r.sampleSize !== undefined && <span className="small muted">{fmtNum(r.sampleSize)} past decisions</span>}
       </div>
       {r.method && <div className="xs muted mt1">{METHOD_WORDS[r.method] ?? humanize(r.method)}</div>}

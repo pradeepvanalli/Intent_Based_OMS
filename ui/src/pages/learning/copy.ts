@@ -231,7 +231,14 @@ export const POSTAL_REASON_CODES: { code: string; label: string }[] = [
   { code: 'natural_disaster', label: 'Natural disaster or emergency' },
 ];
 
-/** E-2: a lift is a difference in mean reward on the 0-1 scale, shown as a signed number, never as a percentage. */
+/**
+ * E3-N3: the outcome score is the objective's weighted sum of the outcome terms (each term is 0 to 1, but the weights
+ * add up to more than 1 and cost, splits, fraud and contacts subtract), so it is not a 0-1 scale and can be above 1 or
+ * below 0. Shown wherever the score itself appears.
+ */
+export const OUTCOME_SCORE_NOTE = 'Higher is better. The score adds up each outcome (shipped complete, on time, aged stock sold) and subtracts cost, extra parcels, fraud and customer contacts, each weighted by your objective, so it is not a 0 to 1 scale and can go above 1 or below 0.';
+
+/** E-2: a lift is a difference in mean outcome score, shown as a signed number, never as a percentage. */
 export const rewardDelta = (lift: number): string => `${lift >= 0 ? '+' : '−'}${Math.abs(lift).toFixed(3)}`;
 
 /** Replay result as one short phrase. */
