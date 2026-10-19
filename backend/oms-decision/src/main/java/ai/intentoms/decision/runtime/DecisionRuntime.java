@@ -275,6 +275,10 @@ public class DecisionRuntime implements DecisionService {
         final String recordId = Ids.id();
         final String inputHash;
         final long startNanos = System.nanoTime();
+        /** Time spent in the learning hooks before this evaluation started; counted in the recorded latency. */
+        long hookNanos;
+        /** Set when this evaluation reproduces a recorded decision (NF-04): its calibration and provider route are re-applied. */
+        DecisionRecord recorded;
         final long deadlineNanos;
         final Instant startedAt;
         Map<String, Object> state = Map.of();
@@ -314,7 +318,7 @@ public class DecisionRuntime implements DecisionService {
         }
 
         int remainingMs() { return (int) Math.max(0, (deadlineNanos - System.nanoTime()) / 1_000_000); }
-        long latencyMs() { return (System.nanoTime() - startNanos) / 1_000_000; }
+        long latencyMs() { return (System.nanoTime() - startNanos + hookNanos) / 1_000_000; }
 
         /** Provider chain: provider → fallbackProvider (GR-07, section 9 rule 9). Returns null when every option failed. */
         ProviderResponse ask(Object askState, Map<String, QuestionDef> questions) {
@@ -324,6 +328,10 @@ public class DecisionRuntime implements DecisionService {
                     chain.add(pref);
                     details.put("providerRouted", pref);
                 });
+            } else if (recorded != null && recorded.details() != null && recorded.details().get("providerRouted") != null) {
+                String pref = String.valueOf(recorded.details().get("providerRouted"));
+                chain.add(pref);
+                details.put("providerRouted", pref);
             }
             if (def.provider() != null && !chain.contains(def.provider())) chain.add(def.provider());
             if (def.fallbackProvider() != null && !chain.contains(def.fallbackProvider())) chain.add(def.fallbackProvider());
@@ -373,12 +381,52 @@ public class DecisionRuntime implements DecisionService {
         }
     }
 
+    /**
+     * NF-04: re-runs a recorded decision exactly as it was made: on {@code def} (normally the recorded version), from its
+     * recorded input (which already carries the learned facts it used), re-applying the calibration, provider route and
+     * experiment arm it recorded, so the result matches even after live versions, facts and promotions have moved on.
+     * Never acts, escalates or caches; persists a record in {@code mode} that points at the original.
+     */
+    public DecisionResult reproduce(DecisionDefinition def, DecisionRecord recorded, Mode mode, Actor actor) {
+        if (mode == Mode.LIVE || mode == Mode.SHADOW) throw new IllegalArgumentException("reproduce runs in REPLAY or SIMULATION mode only");
+        DecisionOptions opts = new DecisionOptions(recorded.subjectType(), recorded.subjectId(),
+            recorded.correlationId() == null ? recorded.subjectId() : recorded.correlationId(), mode, def.version(), actor, Map.of());
+        Eval ev = new Eval(def, recorded.input(), opts);
+        ev.recorded = recorded;
+        ev.details.put("replayOf", recorded.id());
+        if (recorded.details() != null && recorded.details().get("experiment") != null) ev.details.put("experiment", recorded.details().get("experiment"));
+        if (recorded.details() != null && recorded.details().get("learnedFacts") != null) ev.details.put("learnedFacts", recorded.details().get("learnedFacts"));
+        try {
+            pipeline(ev);
+        } catch (RuntimeException e) {
+            log.error("Reproducing decision {} failed, returning default", recorded.id(), e);
+            ev.failures.add("runtime: " + e.getMessage());
+            ev.toDefault("runtime_error");
+        }
+        return persist(ev);
+    }
+
+    /** The calibrated confidence the original evaluation used, re-applied when the raw confidence matches. */
+    private static void reapplyRecordedCalibration(Eval ev) {
+        Map<String, Object> d = ev.recorded.details();
+        if (d == null || !(d.get("rawConfidence") instanceof Number recordedRaw) || d.get("calibration") == null) return;
+        if (Math.abs(recordedRaw.doubleValue() - ev.confidence) > 1e-9) return;
+        double raw = ev.confidence;
+        ev.confidence = ev.recorded.confidence();
+        ev.details.put("rawConfidence", raw);
+        Map<String, Object> source = new LinkedHashMap<>();
+        if (d.get("calibration") instanceof Map<?, ?> m) m.forEach((k, v) -> source.put(String.valueOf(k), v));
+        source.put("reappliedFrom", ev.recorded.id());
+        ev.details.put("calibration", source);
+    }
+
     /** Evaluates one specific definition version (also used by shadow, simulation, impact diffs and golden evaluation). */
     public DecisionResult evaluate(DecisionDefinition def, Map<String, Object> input, DecisionOptions opts) {
         return evaluate(def, input, opts, null);
     }
 
     private DecisionResult evaluate(DecisionDefinition def, Map<String, Object> input, DecisionOptions opts, Map<String, Object> routing) {
+        long hookStart = System.nanoTime();
         List<Map<String, Object>> factsUsed = List.of();
         if (opts.mode() == Mode.LIVE || opts.mode() == Mode.SHADOW) {
             Map<String, Object> raw = input == null ? Map.of() : input;
@@ -387,17 +435,14 @@ public class DecisionRuntime implements DecisionService {
             factsUsed = c.factsUsed() == null ? List.of() : c.factsUsed();
         }
         Eval ev = new Eval(def, input, opts);
+        ev.hookNanos = ev.startNanos - hookStart;
         if (!factsUsed.isEmpty()) ev.details.put("learnedFacts", factsUsed);
         if (routing != null) ev.details.put("experiment", routing);
         if (opts.mode() == Mode.LIVE && def.cache() != null) {
             Optional<DecisionResult> hit = cache.get(def.key(), ev.inputHash, ev.startedAt);
             if (hit.isPresent()) {
                 metrics.count("oms.decision.cache", "decision", def.name(), "hit", "true");
-                Map<String, Object> d = new LinkedHashMap<>(hit.get().details());
-                d.put("cached", true);
-                DecisionResult c = hit.get();
-                return new DecisionResult(c.recordId(), c.decision(), c.version(), c.layer(), c.band(), c.value(), c.answers(), c.confidence(), c.action(), c.requiresHuman(),
-                    c.escalationId(), c.rulesFired(), c.reasonCodes(), c.latencyMs(), 0.0, c.provider(), c.modelVersion(), d);
+                return persistCacheHit(ev, hit.get());
             }
             metrics.count("oms.decision.cache", "decision", def.name(), "hit", "false");
         }
@@ -507,6 +552,8 @@ public class DecisionRuntime implements DecisionService {
                 ev.details.put("rawConfidence", raw);
                 ev.details.put("calibration", cal.source());
             }
+        } else if (ev.recorded != null) {
+            reapplyRecordedCalibration(ev);
         }
 
         // Reason codes by decomposition (section 9 rule 6).
@@ -628,12 +675,13 @@ public class DecisionRuntime implements DecisionService {
         details.put("preChecks", ev.preChecks);
         details.put("postChecks", ev.postChecks);
         details.put("mode", ev.opts.mode().name());
-        // SOO propensity logging (OC-01): arms are the main question's enumerated options (what could have been
-        // chosen), chosenArm the value acted on, and propensity 1.0 because this path chooses deterministically. A
-        // learner that samples among arms (the FS-01 sourcing-policy bandit) logs its own record with the real draw
-        // probability instead.
-        String chosenArm = ev.value == null ? null : String.valueOf(ev.value);
-        List<String> arms = armsOf(ev, chosenArm);
+        // SOO propensity logging (OC-01): arms are every candidate the decision could have chosen (choice options,
+        // ranked candidates, both answers of a yes/no, every score level), chosenArm the value actually applied (the
+        // default when the decision handed off to a person or fell back, with the model's answer kept in details), and
+        // propensity 1.0 because this path chooses deterministically. A learner that samples among arms (the FS-01
+        // sourcing-policy bandit) logs its own record with the real draw probability instead.
+        String chosenArm = appliedArm(ev.def, ev.value, ev.action, details);
+        List<String> arms = armsOf(ev.def, ev.input, details, ev.value, chosenArm);
         DecisionRecord record = new DecisionRecord(ev.recordId, ev.def.name(), ev.def.version(), ev.opts.mode(), ev.opts.subjectType(), ev.opts.subjectId(), ev.opts.correlationId(),
             ev.layer, ev.band, ev.action, ev.value, ev.answers, ev.confidence, ev.provider, ev.modelVersion, ev.inputHash, ev.state, ev.input, ev.rulesFired, ev.reasonCodes, latency,
             ev.costUsd, ev.inputTokens, ev.requiresHuman, ev.escalationId, ev.opts.actor().ref(), details, null, null, null, null, Map.of(), ev.startedAt,
@@ -678,13 +726,85 @@ public class DecisionRuntime implements DecisionService {
 
     // ------------------------------------------------------------------ helpers
 
-    private static List<String> armsOf(Eval ev, String chosenArm) {
-        Object mainKey = ev.details.get("mainQuestion");
-        QuestionDef q = mainKey == null ? null : ev.def.questions().get(String.valueOf(mainKey));
+    /**
+     * Every candidate a decision could have chosen (OC-01): ranked candidates (top-K decisions, by candidate id), the
+     * main question's choice options, both answers of a yes/no question, or every rubric level of a score question.
+     * The applied arm is always included.
+     */
+    static List<String> armsOf(DecisionDefinition def, Map<String, Object> input, Map<String, Object> details, Object value, String chosenArm) {
         List<String> arms = new ArrayList<>();
-        if (q != null && q.isChoice() && q.choiceCriteria() != null) arms.addAll(q.choiceCriteria().keySet());
+        if (def.topK() != null && input != null) {
+            Object raw = Json.path(input, def.topK().candidatesField());
+            if (raw instanceof List<?> l) for (int i = 0; i < l.size(); i++) arms.add(TopKStage.candidateId(l.get(i), i));
+        }
+        if (arms.isEmpty()) {
+            Object mainKey = details.get("mainQuestion");
+            QuestionDef q = mainKey == null ? def.main().orElse(null) : def.questions().get(String.valueOf(mainKey));
+            if (q != null && q.isChoice()) arms.addAll(q.choiceCriteria().keySet());
+            else if (q != null && q.isNoul()) arms.addAll(List.of("true", "false"));
+            else if (q != null && q.isScore()) for (int i = 0; i < q.levels(); i++) arms.add(value instanceof Double ? String.valueOf((double) i) : String.valueOf(i));
+        }
+        if (arms.isEmpty() && value instanceof Boolean) arms.addAll(List.of("true", "false"));
         if (chosenArm != null && !arms.contains(chosenArm)) arms.add(chosenArm);
         return arms;
+    }
+
+    /**
+     * The arm the system actually applied: the model's (or rule's) value when it acted, else the definition's default —
+     * a T1 confirm-band fallback applies the default, and an escalation applies the default until a person answers.
+     * When that differs from the model's answer, the answer is kept in {@code details.modelAnswer}.
+     */
+    static String appliedArm(DecisionDefinition def, Object value, String action, Map<String, Object> details) {
+        boolean confirmFallback = details.containsKey("confirmFallback");
+        boolean handedOff = DecisionResult.ESCALATE.equals(action);
+        if ((confirmFallback || handedOff) && def.dflt() != null && !String.valueOf(def.dflt()).equals(String.valueOf(value))) {
+            details.put("modelAnswer", nullSafe(value));
+            details.put("chosenArmSource", handedOff ? "default_pending_human" : "confirm_default");
+            return String.valueOf(def.dflt());
+        }
+        return value == null ? null : String.valueOf(value);
+    }
+
+    /**
+     * A cache hit is a decision too (OC-01: every decision is logged): it gets its own LIVE record and
+     * {@code decision.evaluated} event, pointing at the record whose answer it reused, at no model cost.
+     */
+    private DecisionResult persistCacheHit(Eval ev, DecisionResult c) {
+        long latency = ev.latencyMs();
+        Map<String, Object> details = new LinkedHashMap<>(c.details());
+        details.putAll(ev.details);
+        details.put("cached", true);
+        details.put("cachedFrom", c.recordId());
+        details.put("mode", ev.opts.mode().name());
+        String chosenArm = appliedArm(ev.def, c.value(), c.action(), details);
+        List<String> arms = armsOf(ev.def, ev.input, details, c.value(), chosenArm);
+        DecisionRecord record = new DecisionRecord(ev.recordId, ev.def.name(), ev.def.version(), ev.opts.mode(), ev.opts.subjectType(), ev.opts.subjectId(), ev.opts.correlationId(),
+            c.layer(), c.band(), c.action(), c.value(), c.answers(), c.confidence(), c.provider(), c.modelVersion(), ev.inputHash, Map.of(), ev.input, c.rulesFired(), c.reasonCodes(),
+            latency, 0.0, 0, c.requiresHuman(), null, ev.opts.actor().ref(), details, null, null, null, null, Map.of(), ev.startedAt,
+            Map.of(), arms, chosenArm, 1.0, ev.def.version());
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("decision", ev.def.name());
+        payload.put("version", ev.def.version());
+        payload.put("mode", ev.opts.mode().name());
+        payload.put("layer", c.layer().name());
+        payload.put("band", c.band().name());
+        payload.put("action", c.action());
+        payload.put("value", nullSafe(c.value()));
+        payload.put("confidence", c.confidence());
+        payload.put("requiresHuman", c.requiresHuman());
+        payload.put("latencyMs", latency);
+        payload.put("costUsd", 0.0);
+        payload.put("provider", c.provider() == null ? "" : c.provider());
+        payload.put("inputHash", ev.inputHash);
+        payload.put("cachedFrom", c.recordId());
+        Map<String, Object> meta = subjectMeta(ev.opts.subjectType(), ev.opts.subjectId());
+        tx.executeWithoutResult(s -> {
+            records.insert(record);
+            events.append("decision", ev.recordId, 0, List.of(new NewEvent("decision.evaluated", payload, ev.opts.actor(), null, ev.opts.correlationId(), meta)));
+        });
+        metrics.count("oms.decision.evaluated", "decision", ev.def.name(), "layer", c.layer().name(), "band", c.band().name(), "mode", ev.opts.mode().name());
+        return new DecisionResult(ev.recordId, c.decision(), c.version(), c.layer(), c.band(), c.value(), c.answers(), c.confidence(), c.action(), c.requiresHuman(),
+            null, c.rulesFired(), c.reasonCodes(), latency, 0.0, c.provider(), c.modelVersion(), details);
     }
 
     private static Object mainValue(Answer main, QuestionDef q) {

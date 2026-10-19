@@ -36,4 +36,6 @@ public final class Permissions {
     public static final String MARGIN_FLOOR_APPROVE = "margin.approve";
     public static final String LEARNING_READ = "learning.read";
     public static final String LEARNING_ADMIN = "learning.admin";
+    /** Right-to-erasure and PII key rotation (GV-06); only platform admins hold it (via "*"). */
+    public static final String PRIVACY_ERASE = "privacy.erase";
 }

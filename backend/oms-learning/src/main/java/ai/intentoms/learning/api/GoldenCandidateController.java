@@ -38,15 +38,17 @@ public class GoldenCandidateController {
     private final GoldenCaseRepository golden;
     private final LearningEvents events;
     private final AuthorizationService authz;
+    private final ai.intentoms.platform.audit.AuditLog audit;
 
     public GoldenCandidateController(HypothesisRepository hypotheses, DecisionRecordRepository decisionRecords, DecisionDefinitionRepository definitions,
-                                     GoldenCaseRepository golden, LearningEvents events, AuthorizationService authz) {
+                                     GoldenCaseRepository golden, LearningEvents events, AuthorizationService authz, ai.intentoms.platform.audit.AuditLog audit) {
         this.hypotheses = hypotheses;
         this.decisionRecords = decisionRecords;
         this.definitions = definitions;
         this.golden = golden;
         this.events = events;
         this.authz = authz;
+        this.audit = audit;
     }
 
     public record SignOff(String expectedValue, String notes) {}
@@ -85,15 +87,30 @@ public class GoldenCandidateController {
         GoldenCase gc = new GoldenCase(def.evaluation().goldenSet(), caseId, source.input(), Map.of("value", typed(expected)), notes);
         golden.upsert(gc);
         hypotheses.updateStatus(hypothesisId, Hypothesis.Status.DRAFTED);
-        events.hypothesisRaised(hypothesisId, Actor.parse(reviewer), Map.of("action", "golden_case_signed_off", "decision", decision, "goldenSet", gc.goldenSet(), "caseId", caseId));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("decision", decision);
+        payload.put("goldenSet", gc.goldenSet());
+        payload.put("caseId", caseId);
+        payload.put("expectedValue", expected);
+        payload.put("sourceRecordId", source.id());
+        payload.put("agreeingResolutions", h.evidence().size());
+        events.goldenCaseSignedOff(hypothesisId, Actor.parse(reviewer), payload);
+        audit.record("learning.golden_case.signed_off", "hypothesis", hypothesisId, body == null ? null : body.notes(), payload);
         return gc;
     }
 
     @PostMapping("/{hypothesisId}/reject")
     @RequiresPermission(Permissions.LEARNING_ADMIN)
-    public Map<String, Object> reject(@PathVariable String hypothesisId) {
-        candidate(hypothesisId);
+    public Map<String, Object> reject(@PathVariable String hypothesisId, @RequestBody(required = false) Map<String, String> body) {
+        Hypothesis h = candidate(hypothesisId);
         hypotheses.updateStatus(hypothesisId, Hypothesis.Status.REJECTED);
+        String reason = body == null ? null : body.get("reason");
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("decision", String.valueOf(h.lever().get("decision")));
+        payload.put("expectedValue", String.valueOf(h.lever().get("expectedValue")));
+        if (reason != null) payload.put("reason", reason);
+        events.goldenCaseRejected(hypothesisId, Actor.parse(authz.requirePrincipal().actorRef()), payload);
+        audit.record("learning.golden_case.rejected", "hypothesis", hypothesisId, reason, payload);
         return Map.of("hypothesisId", hypothesisId, "status", "REJECTED");
     }
 

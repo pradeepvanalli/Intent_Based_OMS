@@ -108,6 +108,28 @@ public class Tokenizer {
         if (publisher != null) publisher.publishEvent(new PiiShreddedEvent(tenant, null, "system:tokenizer", java.time.Instant.now()));
     }
 
+    /** What one subject erasure did: the pseudonym that replaces the customer reference, and whether it was the first request. */
+    public record Erasure(String pseudonym, boolean firstTime, java.time.Instant erasedAt) {}
+
+    /**
+     * Right to erasure for one customer (GV-06). Raw values cannot be un-tokenised, so the subject is erased where its raw
+     * data lives: listeners of {@link PiiShreddedEvent} (orders, decision inputs, learning) remove or pseudonymise
+     * everything tied to {@code customerRef}, replacing the reference with {@link Erasure#pseudonym()}. Idempotent: a
+     * repeated request re-runs the (idempotent) propagation and reports {@code firstTime=false}.
+     */
+    public Erasure shredSubject(String customerRef, String by) {
+        if (customerRef == null || customerRef.isBlank()) throw new IllegalArgumentException("customerRef is required");
+        String tenant = TenantContext.require();
+        String hash = ai.intentoms.platform.json.Json.sha256(java.util.Map.of("tenant", tenant, "subject", customerRef));
+        String pseudonym = token("cu", customerRef);
+        int inserted = jdbc.sql("insert into pii_erasure(tenant_id, subject_hash, pseudonym, erased_by) values (:t, :h, :p, :by) on conflict do nothing")
+            .param("t", tenant).param("h", hash).param("p", pseudonym).param("by", by).update();
+        java.time.Instant at = jdbc.sql("select erased_at from pii_erasure where tenant_id = :t and subject_hash = :h").param("t", tenant).param("h", hash)
+            .query(java.sql.Timestamp.class).single().toInstant();
+        if (publisher != null) publisher.publishEvent(new PiiShreddedEvent(tenant, customerRef, by, at, pseudonym));
+        return new Erasure(pseudonym, inserted == 1, at);
+    }
+
     private org.springframework.context.ApplicationEventPublisher publisher;
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)

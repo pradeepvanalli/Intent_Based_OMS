@@ -15,8 +15,9 @@ import java.util.Map;
  * event is tamper-evident on its own, besides the whole-ledger digest the evidence pack computes. Covered: the eight
  * §9.2 lifecycle events, proposal approval and rejection, objective drafts and approvals, learner autonomy, on/off,
  * pause and resume, the tenant kill switch, live-use promotion and revocation of learned parameters, digests,
- * retention runs and crypto-shred propagation. {@code proposal.drafted} and {@code hypothesis.raised} are written
- * once per aggregate, whichever writer (repository or LLM service) gets there first.
+ * retention runs, crypto-shred propagation and golden-case sign-off/rejection. Events of one learning aggregate are
+ * hash-chained ({@code previousChainDigest} → {@code chainDigest}). {@code proposal.drafted} and
+ * {@code hypothesis.raised} are written once per aggregate, by the repository, attributed to the real author.
  */
 @Component
 public class LearningEvents {
@@ -50,14 +51,36 @@ public class LearningEvents {
     public void retentionRun(Actor actor, Map<String, Object> payload) { append("retention", "learning.retention_run", actor, payload); }
     public void shredPropagated(Actor actor, Map<String, Object> payload) { append("crypto-shred", "learning.shred_propagated", actor, payload); }
 
+    /** DF-03: a reviewer signed a golden-case candidate off into a decision's golden set. */
+    public void goldenCaseSignedOff(String hypothesisId, Actor actor, Map<String, Object> payload) { append(hypothesisId, "golden_case.signed_off", actor, payload); }
+    /** DF-03: a reviewer dismissed a golden-case candidate. */
+    public void goldenCaseRejected(String hypothesisId, Actor actor, Map<String, Object> payload) { append(hypothesisId, "golden_case.rejected", actor, payload); }
+
     private void appendOnce(String aggregateId, String type, Actor actor, Map<String, Object> payload) {
         boolean seen = events.load(AGGREGATE, aggregateId).stream().anyMatch(e -> type.equals(e.type()));
         if (!seen) append(aggregateId, type, actor, payload);
     }
 
+    /**
+     * Each event carries the SHA-256 of its own payload and a chain digest over the previous event of the same learning
+     * aggregate ({@code chainDigest = sha256(previousChainDigest + payloadDigest)}), so removing or editing an earlier
+     * governance step of a proposal, learner or objective breaks every later digest of that stream.
+     */
     private void append(String aggregateId, String type, Actor actor, Map<String, Object> payload) {
         Map<String, Object> withDigest = new LinkedHashMap<>(payload);
-        withDigest.put("payloadDigest", Json.sha256(payload));
+        String digest = Json.sha256(payload);
+        String previous = lastChainDigest(aggregateId);
+        withDigest.put("payloadDigest", digest);
+        if (previous != null) withDigest.put("previousChainDigest", previous);
+        withDigest.put("chainDigest", previous == null ? digest : Json.sha256(Map.of("previous", previous, "payload", digest)));
         events.append(AGGREGATE, aggregateId, new NewEvent(type, withDigest, actor));
+    }
+
+    private String lastChainDigest(String aggregateId) {
+        var stream = events.load(AGGREGATE, aggregateId);
+        if (stream.isEmpty()) return null;
+        Map<String, Object> last = stream.get(stream.size() - 1).payload();
+        Object chain = last == null ? null : last.getOrDefault("chainDigest", last.get("payloadDigest"));
+        return chain == null ? null : String.valueOf(chain);
     }
 }

@@ -78,10 +78,24 @@ class DecisionFabricLearnersIntegrationTest extends DecisionFabricTestBase {
         assertThat(candidate.get("expectedValue")).isEqualTo("review");
         assertThat(golden.forSet(gold + "_gold")).isEmpty(); // nothing written before a reviewer signs off
 
-        GoldenCase gc = goldenCandidates.signOff((String) candidate.get("hypothesisId"), new GoldenCandidateController.SignOff(null, "matches policy"));
+        String hypothesisId = (String) candidate.get("hypothesisId");
+        // GV-04: the hypothesis is attributed to the learner that raised it, not a generic system actor.
+        assertThat(ledger(hypothesisId, "hypothesis.raised")).singleElement().satisfies(e -> assertThat(e.get("actor")).isEqualTo("system:golden_set_growth"));
+        assertThat(hypotheses.raisedBy(hypothesisId)).contains("system:golden_set_growth");
+
+        GoldenCase gc = goldenCandidates.signOff(hypothesisId, new GoldenCandidateController.SignOff(null, "matches policy"));
         assertThat(gc.expectedValue()).isEqualTo("review");
         assertThat(golden.forSet(gold + "_gold")).extracting(GoldenCase::caseId).contains(gc.caseId());
-        assertThat(hypotheses.find((String) candidate.get("hypothesisId")).orElseThrow().status()).isEqualTo(Hypothesis.Status.DRAFTED);
+        assertThat(hypotheses.find(hypothesisId).orElseThrow().status()).isEqualTo(Hypothesis.Status.DRAFTED);
+        // The sign-off is its own ledger event by the reviewer, with an audit row.
+        assertThat(ledger(hypothesisId, "golden_case.signed_off")).singleElement().satisfies(e -> assertThat(String.valueOf(e.get("actor"))).startsWith("user:"));
+        assertThat(jdbc.sql("select count(*) from audit_log where action = 'learning.golden_case.signed_off' and object_id = :id").param("id", hypothesisId)
+            .query(Long.class).single()).isEqualTo(1L);
+    }
+
+    private java.util.List<Map<String, Object>> ledger(String aggregateId, String type) {
+        return jdbc.sql("select type, actor, payload::text as payload from event where aggregate_type = 'learning' and aggregate_id = :id and type = :type order by sequence")
+            .param("id", aggregateId).param("type", type).query().listOfRows();
     }
 
     @Test

@@ -79,8 +79,12 @@ public class CoverageMonitor {
             long[] c = episodes.coverage(decision, since, observedBefore);
             if (c[0] < minEpisodes) continue; // too few mature-enough episodes to judge either way
             double coverage = (double) c[1] / c[0];
-            lastCoverage.put(TenantContext.require() + "|" + decision, coverage);
-            metrics.count("oms.learning.coverage", coverage, "decision", decision);
+            String coverageKey = TenantContext.require() + "|" + decision;
+            // A gauge (latest value per tenant and decision), not a counter: summing coverage ratios across sweeps is meaningless.
+            if (lastCoverage.put(coverageKey, coverage) == null) {
+                io.micrometer.core.instrument.Gauge.builder("oms.learning.decision.coverage", lastCoverage, m -> m.getOrDefault(coverageKey, Double.NaN))
+                    .tags("tenant", TenantContext.require(), "decision", decision).register(metrics.registry());
+            }
             if (coverage < threshold) metrics.count("oms.learning.coverage.breach", "decision", decision);
             for (String learner : registry.learnersReadingOutcomesOf(decision)) {
                 if (coverage < worst.getOrDefault(learner, Double.MAX_VALUE)) {

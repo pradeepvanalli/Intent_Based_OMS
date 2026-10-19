@@ -9,7 +9,7 @@ import java.util.Map;
 /**
  * What to replay an order against (FR-SIM-01; UI contract item 13).
  *
- * @param decisionVersionOverrides decision name → definition version to re-run with (absent = current live version)
+ * @param decisionVersionOverrides decision name → definition version to re-run with (absent = the recorded version, reproduced exactly; NF-04)
  * @param stateModelVersion        proposed state-model version to fold the recorded transitions through (null = skip)
  * @param stateModelId             model the version refers to (null = the order's line model)
  * @param overrides                what-if knobs for the re-sourcing comparison (null = none); only its sourcing knobs are used here
