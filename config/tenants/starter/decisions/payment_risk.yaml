@@ -4,14 +4,17 @@
 # or a hand-off to a person, places a payment_review hold that blocks release and capture; nothing is cancelled.
 # GR-16: state carries fraud signals only, no protected attributes, no card numbers or addresses (the address is a
 # token). Velocity = additional distinct cards the same customer used in the window; linkage counts = other customers
-# sharing this order's address / device / card in 30 days. agent.reputation_score, agent.dispute_rate and
+# sharing this order's address / device / card in 30 days. payment.learned_fraud_rate(s) (what each signal level has
+# meant on labelled outcomes), agent.history_fraud_rate / history_orders (the agent's mandated-order history) and
 # payment.address_reuse_count are learned facts merged in by the learning layer, only once promoted for live use.
 # The act-band threshold is tuned by the FraudThresholdTuner learner (FD-03) as reviewable ThresholdChange proposals.
 # v2: clean-order L0 rule (no signal, no model call, no task) and the learned-fact inputs. token_customer_count (other
 # customers on the same card) is left to the model rather than the rule because sandbox and gateway test tokens are
 # shared by every customer; a tenant on real card fingerprints can add "&& input.payment.token_customer_count <= 1".
+# v3: learned signal rates and the agent's mandate history replace the agent reputation score, which now feeds only the
+# manual trust-tier review (SOO FD-01, FD-05).
 decision: payment_risk
-version: 2
+version: 3
 owner: returns-and-risk
 tier: T2
 provider: jev
@@ -20,7 +23,7 @@ timeoutMs: 800
 default: false
 rules:
   - id: no_risk_signals
-    when: "input.payment.velocity_1h <= 1 && input.payment.velocity_24h <= 2 && input.payment.address_linkage_count <= 2 && input.payment.device_linkage_count <= 1 && input.payment.billing_shipping_mismatch == false && (!has(input.agent.reputation_score) || input.agent.reputation_score >= 0.5) && (!has(input.agent.dispute_rate) || input.agent.dispute_rate < 0.1) && (!has(input.payment.address_reuse_count) || input.payment.address_reuse_count < 3)"
+    when: "input.payment.velocity_1h <= 1 && input.payment.velocity_24h <= 2 && input.payment.address_linkage_count <= 2 && input.payment.device_linkage_count <= 1 && input.payment.billing_shipping_mismatch == false && (!has(input.payment.learned_fraud_rate) || input.payment.learned_fraud_rate < 0.2) && (!has(input.agent.history_fraud_rate) || input.agent.history_fraud_rate < 0.2) && (!has(input.payment.address_reuse_count) || input.payment.address_reuse_count < 3)"
     then: false
     reason: no_risk_signals
     priority: 50
@@ -33,9 +36,11 @@ state:
     - payment.token_customer_count
     - payment.billing_shipping_mismatch
     - payment.address_reuse_count
+    - payment.learned_fraud_rate
+    - payment.learned_fraud_rates
     - agent.mandate_present
-    - agent.reputation_score
-    - agent.dispute_rate
+    - agent.history_fraud_rate
+    - agent.history_orders
     - order.total
     - order.channel
 questions:
@@ -44,7 +49,7 @@ questions:
     statement: This payment is likely fraudulent and should be held before capture.
     feeds: payment_hold
     criteria:
-      "true": High velocity across cards/addresses/devices, billing/shipping mismatch, an address shared by many customers, or a low-reputation agent mandate order
+      "true": High velocity across cards/addresses/devices, billing/shipping mismatch, an address shared by many customers, signal levels that often turned out fraudulent here, or an agent whose mandated orders often did
       "false": Normal velocity, consistent billing and shipping, no linkage signals
 bands:
   act: { confidence_gte: 0.9 }

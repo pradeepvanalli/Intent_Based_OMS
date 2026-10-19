@@ -96,7 +96,11 @@ public class FraudThresholdTuner implements GovernedLearner {
     }
 
     private void tuneOne(String decision) {
-        Instant since = Instant.now().minus(Duration.ofDays(30));
+        // Defect 12: a provisional "no chargeback yet" counts only once the chargeback window has passed, so look back
+        // far enough for those labels to have matured.
+        int window = config.getInt(FraudLabels.WINDOW_KEY, FraudLabels.DEFAULT_WINDOW_DAYS);
+        Instant now = Instant.now();
+        Instant since = now.minus(Duration.ofDays(30L + window));
         List<Integer> versions = decisionRecords.activeVersions(decision, since).stream().map(a -> a[0]).toList();
         if (versions.isEmpty()) return;
         int version = versions.get(versions.size() - 1);
@@ -106,7 +110,7 @@ public class FraudThresholdTuner implements GovernedLearner {
 
         List<Case> cases = new ArrayList<>();
         for (int v : versions) for (DecisionRecord r : decisionRecords.labelledBetween(decision, v, since, Instant.now())) {
-            Boolean fraud = label(r);
+            Boolean fraud = FraudLabels.usable(r, now, window);
             if (fraud == null) continue;
             cases.add(new Case(r.confidence(), Boolean.TRUE.equals(r.value()) || "true".equals(String.valueOf(r.value())), fraud, amount(r)));
         }

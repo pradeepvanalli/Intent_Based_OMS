@@ -35,6 +35,10 @@ import java.util.List;
  * <p>Dispute rate: every chargeback on an order the agent placed under a mandate appends
  * {@code agent.dispute_recorded} to the agent (finance's {@code ChargebackService}); disputes per mandate are
  * published as a {@code DISPUTE_RATE} fact and lower the score by twice the rate, at most 0.5.
+ *
+ * <p>The typed result is an {@link AgentReputation} with every component and a suggested tier, served to the manual
+ * trust-tier review ({@code GET /api/v1/agents/reputation}). It feeds no decision and no live parameter family: the
+ * requirement says the manual tier change only.
  */
 @Component
 public class AgentReputationLearner implements GovernedLearner {
@@ -73,20 +77,33 @@ public class AgentReputationLearner implements GovernedLearner {
         if (!governance.begin(KEY).mayRun()) return;
         governance.recordRun(KEY);
         for (AgentIdentity agent : agents.list()) {
-            List<Mandate> m = mandates.forAgent(agent.id());
-            if (m.size() < 5) continue; // too little history to score meaningfully
-            long compliant = m.stream().filter(mm -> !Boolean.FALSE.equals(mm.signatureValid()) && !Mandate.REVOKED.equals(mm.status())).count();
-            double mandateScore = (double) compliant / m.size();
-            var agentEvents = events.load("agent", agent.id());
-            long flagged = agentEvents.stream().filter(e -> "agent.injection_flagged".equals(e.type())).count();
-            long disputes = agentEvents.stream().filter(e -> "agent.dispute_recorded".equals(e.type())).count();
-            double injectionPenalty = Math.min(0.5, flagged * 0.05);
-            double rate = disputeRate(disputes, m.size());
-            double score = score(mandateScore, injectionPenalty, rate);
-            writeFact(agent.id(), FactKey.DISPUTE_RATE, rate, m.size());
-            writeFact(agent.id(), FactKey.AGENT_REPUTATION, score, m.size());
+            AgentReputation r = reputation(agent);
+            if (!r.scored()) continue; // too little history to score meaningfully
+            writeFact(agent.id(), FactKey.DISPUTE_RATE, r.disputeRate(), r.mandates());
+            writeFact(agent.id(), FactKey.AGENT_REPUTATION, r.score(), r.mandates());
         }
     }
+
+    /** The agent's reputation from its real mandates, injection-screen hits and disputes (scored from 5 mandates). */
+    public AgentReputation reputation(AgentIdentity agent) {
+        List<Mandate> m = mandates.forAgent(agent.id());
+        long compliant = m.stream().filter(mm -> !Boolean.FALSE.equals(mm.signatureValid()) && !Mandate.REVOKED.equals(mm.status())).count();
+        var agentEvents = events.load("agent", agent.id());
+        long flagged = agentEvents.stream().filter(e -> "agent.injection_flagged".equals(e.type())).count();
+        long disputes = agentEvents.stream().filter(e -> "agent.dispute_recorded".equals(e.type())).count();
+        boolean scored = m.size() >= AgentReputation.MIN_MANDATES;
+        double compliance = m.isEmpty() ? 0 : (double) compliant / m.size();
+        double rate = disputeRate(disputes, m.size());
+        double score = scored ? score(compliance, Math.min(0.5, flagged * 0.05), rate) : 0;
+        return new AgentReputation(agent.id(), agent.trustTier(), m.size(), (int) compliant, round(compliance), flagged, disputes, round(rate), round(score), scored,
+            scored ? AgentReputation.suggestTier(agent.trustTier(), score) : agent.trustTier());
+    }
+
+    public List<AgentReputation> reputations() {
+        return agents.list().stream().map(this::reputation).toList();
+    }
+
+    private static double round(double v) { return Math.round(v * 1000) / 1000.0; }
 
     /** FD-05: chargebacks on the agent's orders per mandate it placed orders under. */
     static double disputeRate(long disputes, int mandates) { return mandates == 0 ? 0 : Math.min(1.0, (double) disputes / mandates); }
@@ -105,8 +122,8 @@ public class AgentReputationLearner implements GovernedLearner {
 
     @Override
     public LearnerDescriptor descriptor() {
-        return LearnerDescriptor.of(KEY, "Agent reputation", "Scores each AI shopping agent on mandate compliance, prompt-injection hits and disputes. A person decides any trust change.", LearnerDescriptor.Loop.FAST, "FD-05")
-            .feeds(ai.intentoms.learning.hooks.FraudFactFeatures.AGENT_REPUTATION, ai.intentoms.learning.hooks.FraudFactFeatures.AGENT_DISPUTE_RATE);
+        // No feeds(): the reputation goes to the manual trust-tier review only, never to a decision or live parameter.
+        return LearnerDescriptor.of(KEY, "Agent reputation", "Scores each AI shopping agent on mandate compliance, prompt-injection hits and disputes. A person decides any trust change.", LearnerDescriptor.Loop.FAST, "FD-05");
     }
 
     @Override public boolean runnable() { return true; }

@@ -2,6 +2,7 @@ package ai.intentoms.learning.hooks;
 
 import ai.intentoms.decision.model.DecisionOptions;
 import ai.intentoms.learning.governance.ParameterResolver;
+import ai.intentoms.learning.learner.FraudSignalLearner;
 import ai.intentoms.learning.model.FactKey;
 import ai.intentoms.learning.model.LearnedFact;
 import ai.intentoms.learning.model.SubjectType;
@@ -15,24 +16,22 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * FD-01 / FD-04 / FD-05 on the live path: adds learned fraud facts to a {@code payment_risk} decision's input. The
- * caller (the order workflow) supplies the raw signals it can count itself plus the agent id and address token; this
- * adds what only the learners know:
- * <ul>
- *   <li>{@code agent.reputation_score} and {@code agent.dispute_rate} from the agent-reputation learner (FD-05);</li>
- *   <li>{@code payment.address_reuse_count}, distinct customers on this address over 30 days, from the abuse-pattern
- *       finder's ring detection (FD-04).</li>
- * </ul>
- * Each family reaches the decision only while promoted for live use and its learner is on and above L0
- * ({@link ParameterResolver}); otherwise the fact is listed as considered but not used, and the decision sees the input
- * exactly as the caller built it.
+ * FD-01 / FD-04 on the live path for {@code payment_risk}. Each raw signal the workflow computed (card velocity,
+ * address / device / card linkage) is joined with what that level has meant for this tenant
+ * ({@code FRAUD_SIGNAL_RATE}, learned by {@link FraudSignalLearner}): {@code payment.learned_fraud_rates.<signal>} and
+ * the highest of them as {@code payment.learned_fraud_rate}. The agent's mandate history becomes
+ * {@code agent.history_fraud_rate} and {@code agent.history_orders}. The address-reuse count of a ring the abuse
+ * scanner found is {@code payment.address_reuse_count}. Each reaches the decision only while its family
+ * ({@code fraud.signal_risk}, {@code fraud.address_reuse_count}) is promoted for live use and its learner is above L0;
+ * every fact consulted is listed on the decision record. The agent reputation score (FD-05) is deliberately not here:
+ * it feeds the manual trust-tier review only.
  */
 @Component
 public class FraudFactFeatures implements FeatureContributor {
     public static final String DECISION = "payment_risk";
-    public static final String AGENT_REPUTATION = "fraud.agent_reputation";
-    public static final String AGENT_DISPUTE_RATE = "fraud.agent_dispute_rate";
+    public static final String SIGNAL_RISK = "fraud.signal_risk";
     public static final String ADDRESS_REUSE = "fraud.address_reuse_count";
+    static final int MIN_AGENT_ORDERS = 5;
 
     private final LearnedFactCache facts;
     private final ParameterResolver resolver;
@@ -47,23 +46,39 @@ public class FraudFactFeatures implements FeatureContributor {
     @Override
     @SuppressWarnings("unchecked")
     public void contribute(String decision, Map<String, Object> input, DecisionOptions opts, List<Map<String, Object>> factsUsed) {
+        if (input.get("payment") instanceof Map<?, ?> pm) {
+            Map<String, Object> payment = (Map<String, Object>) pm;
+            Map<String, Object> rates = new LinkedHashMap<>();
+            for (String signal : FraudSignalLearner.SIGNALS) {
+                if (!(payment.get(signal) instanceof Number count)) continue;
+                String subject = FraudSignalLearner.subject(signal, FraudSignalLearner.level(count.doubleValue()));
+                serve(SubjectType.DECISION, subject, FactKey.FRAUD_SIGNAL_RATE, SIGNAL_RISK, 1, factsUsed).ifPresent(v -> rates.put(signal, v));
+            }
+            if (!rates.isEmpty()) {
+                payment.put("learned_fraud_rates", rates);
+                payment.put("learned_fraud_rate", rates.values().stream().mapToDouble(v -> ((Number) v).doubleValue()).max().orElse(0));
+            }
+            if (input.get("address") instanceof Map<?, ?> addr && addr.get("token") != null) {
+                serve(SubjectType.ADDRESS, String.valueOf(addr.get("token")), FactKey.ADDRESS_REUSE_COUNT, ADDRESS_REUSE, 0, factsUsed)
+                    .ifPresent(v -> payment.put("address_reuse_count", (int) Math.round(v)));
+            }
+        }
         if (input.get("agent") instanceof Map<?, ?> a && a.get("id") != null) {
             Map<String, Object> agent = (Map<String, Object>) a;
             String agentId = String.valueOf(a.get("id"));
-            apply(agent, "reputation_score", AGENT_REPUTATION, SubjectType.AGENT, agentId, FactKey.AGENT_REPUTATION, factsUsed);
-            apply(agent, "dispute_rate", AGENT_DISPUTE_RATE, SubjectType.AGENT, agentId, FactKey.DISPUTE_RATE, factsUsed);
-        }
-        if (input.get("address") instanceof Map<?, ?> addr && addr.get("token") != null && input.get("payment") instanceof Map<?, ?> pay) {
-            apply((Map<String, Object>) pay, "address_reuse_count", ADDRESS_REUSE, SubjectType.ADDRESS, String.valueOf(addr.get("token")), FactKey.ADDRESS_REUSE_COUNT, factsUsed);
+            Optional<LearnedFact> history = facts.active(SubjectType.AGENT, agentId, FactKey.FRAUD_SIGNAL_RATE);
+            serve(SubjectType.AGENT, agentId, FactKey.FRAUD_SIGNAL_RATE, SIGNAL_RISK, MIN_AGENT_ORDERS, factsUsed).ifPresent(v -> {
+                agent.put("history_fraud_rate", v);
+                agent.put("history_orders", history.map(LearnedFact::sampleSize).orElse(0));
+            });
         }
     }
 
-    private void apply(Map<String, Object> target, String field, String parameter, SubjectType st, String subjectId, FactKey key, List<Map<String, Object>> used) {
-        Optional<LearnedFact> fact = facts.active(st, subjectId, key).filter(f -> f.value() instanceof TypedValue.NumberValue);
-        if (fact.isEmpty()) return;
+    private Optional<Double> serve(SubjectType st, String subjectId, FactKey key, String parameter, int minSamples, List<Map<String, Object>> used) {
+        Optional<LearnedFact> fact = facts.active(st, subjectId, key).filter(f -> f.value() instanceof TypedValue.NumberValue && f.sampleSize() >= minSamples);
+        if (fact.isEmpty()) return Optional.empty();
         double learned = ((TypedValue.NumberValue) fact.get().value()).value();
         ParameterResolver.Resolution r = resolver.explain(parameter, null, learned);
-        if (r.learnedServed()) target.put(field, key == FactKey.ADDRESS_REUSE_COUNT ? (Object) (int) Math.round(r.value()) : r.value());
         Map<String, Object> u = new LinkedHashMap<>();
         u.put("subjectType", st.name());
         u.put("subjectId", subjectId);
@@ -74,5 +89,6 @@ public class FraudFactFeatures implements FeatureContributor {
         u.put("source", r.source());
         u.put("reason", r.reason());
         used.add(u);
+        return r.learnedServed() ? Optional.of(r.value()) : Optional.empty();
     }
 }

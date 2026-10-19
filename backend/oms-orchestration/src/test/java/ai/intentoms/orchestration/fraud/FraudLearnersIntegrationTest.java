@@ -54,10 +54,13 @@ class FraudLearnersIntegrationTest extends OrchestrationTestBase {
     @Autowired ParameterResolver parameters;
     @Autowired PaymentRiskGate gate;
     @Autowired ai.intentoms.learning.store.LearnedFactCache factCache;
+    @Autowired ai.intentoms.decision.definition.DecisionDefinitionRepository definitions;
+
+    private int liveVersion() { return definitions.byStatus("payment_risk", "live").get(0).definition().version(); }
 
     private DecisionRecord paymentRisk(boolean saidRisky, double confidence, Map<String, Object> input, Instant at) {
         String id = Ids.prefixed("dr");
-        return new DecisionRecord(id, "payment_risk", 2, Mode.LIVE, "order", "ord_" + id, "ord_" + id, Layer.L1_SYSTEM_ONE, Band.ACT, "act", saidRisky, Map.of(), confidence,
+        return new DecisionRecord(id, "payment_risk", liveVersion(), Mode.LIVE, "order", "ord_" + id, "ord_" + id, Layer.L1_SYSTEM_ONE, Band.ACT, "act", saidRisky, Map.of(), confidence,
             "test", "t-1", Json.sha256(input), input, input, List.of(), List.of(), 0, 0, 0, false, null, "system:test", Map.of("mode", "LIVE"), null, null, null, null,
             Map.of(), at, input, List.of("true", "false"), String.valueOf(saidRisky), 1.0, 2);
     }
@@ -67,11 +70,21 @@ class FraudLearnersIntegrationTest extends OrchestrationTestBase {
             "billing_shipping_mismatch", false), "order", Map.of("total", total, "channel", "web"));
     }
 
+    /** Fraud is confirmed by a chargeback; "not fraud" is the provisional delivered label, matured past the 120-day window. */
     private void labelled(boolean saidRisky, double confidence, boolean fraud, int n) {
         for (int i = 0; i < n; i++) {
-            DecisionRecord r = paymentRisk(saidRisky, confidence, input(0, 120.0), Instant.now().minus(Duration.ofDays(2)));
+            DecisionRecord r = paymentRisk(saidRisky, confidence, input(0, 120.0), Instant.now().minus(Duration.ofDays(fraud ? 2 : 130)));
             records.insert(r);
-            records.label(r.id(), "fraud_outcome", Map.of("confirmed", fraud, "kind", fraud ? "chargeback_fraud" : "delivered_no_chargeback"));
+            records.label(r.id(), "fraud_outcome", Map.of("confirmed", fraud, "kind", fraud ? "chargeback_fraud" : "delivered_no_chargeback", "provisional", !fraud));
+        }
+    }
+
+    /** Defect 12: delivered last week, no chargeback yet: not ground truth until the chargeback window has passed. */
+    private void freshProvisional(boolean saidRisky, int n) {
+        for (int i = 0; i < n; i++) {
+            DecisionRecord r = paymentRisk(saidRisky, 0.95, input(0, 120.0), Instant.now().minus(Duration.ofDays(7)));
+            records.insert(r);
+            records.label(r.id(), "fraud_outcome", Map.of("confirmed", false, "kind", "delivered_no_chargeback", "provisional", true));
         }
     }
 
@@ -80,6 +93,7 @@ class FraudLearnersIntegrationTest extends OrchestrationTestBase {
         labelled(true, 0.92, false, 10);   // good orders the model wrongly calls risky
         labelled(false, 0.95, false, 15);  // good orders it gets right
         labelled(true, 0.97, true, 5);     // fraud it catches
+        freshProvisional(true, 10);        // still inside the chargeback window: not counted
 
         tuner.runNow();
 
@@ -156,5 +170,11 @@ class FraudLearnersIntegrationTest extends OrchestrationTestBase {
         assertThat(governance.gate(FraudThresholdTuner.KEY).reason()).startsWith("paused: fraud feature drift");
         assertThat(governance.gate(FraudAbuseHypothesisScanner.KEY).mayRun()).isFalse();
         assertThat(facts.active(SubjectType.DECISION, "payment_risk", FactKey.FEATURE_DRIFT_PSI)).isPresent();
+        // FD-07: an operator alert, not just a log line.
+        var alert = jdbc.sql("select severity, title, body from alert where tenant_id = :t and key = :k").param("t", tenant).param("k", "learning:fraud_drift:" + tenant)
+            .query().listOfRows();
+        assertThat(alert).hasSize(1);
+        assertThat(alert.get(0)).containsEntry("severity", "high");
+        assertThat(String.valueOf(alert.get(0).get("body"))).contains("payment.velocity_1h").contains(FraudThresholdTuner.KEY);
     }
 }
