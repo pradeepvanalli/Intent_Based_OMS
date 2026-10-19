@@ -9,6 +9,10 @@ import ai.intentoms.learning.learner.ProviderRoutingLearner;
 import ai.intentoms.learning.model.HumanResolution;
 import ai.intentoms.orchestration.OrchestrationTestBase;
 import ai.intentoms.platform.ids.Ids;
+import ai.intentoms.platform.security.Principal;
+import ai.intentoms.platform.security.PrincipalAuthentication;
+import ai.intentoms.platform.tenant.TenantContext;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -67,5 +71,44 @@ class HumanResolutionLabelIntegrationTest extends OrchestrationTestBase {
         all.add(acc);
         long overridesTheModelGotRight = all.subList(0, 3).stream().filter(r -> "ship_complete".equalsIgnoreCase(String.valueOf(r.value()))).count();
         assertThat(ProviderRoutingLearner.accuracy(all)).isEqualTo((1 + overridesTheModelGotRight) / 4.0);
+    }
+
+    /**
+     * E3-N1: an agent's {@code task_complete} (the MCP tool calls exactly this, as the agent principal) is labelled as an
+     * agent's resolution, and the learners that imitate human judgement read none of it; a person's answer to the same
+     * question still counts.
+     */
+    @Test
+    void anAgentsCompletionIsLabelledAsTheAgentsAndNoLearnerImitatesIt() {
+        List<DecisionResult> byAgent = List.of(escalate(), escalate(), escalate());
+        var prev = SecurityContextHolder.getContext().getAuthentication();
+        SecurityContextHolder.getContext().setAuthentication(new PrincipalAuthentication(
+            new Principal(Principal.Type.AGENT, "ops-copilot", TenantContext.require(), java.util.Set.of("ops_copilot"), java.util.Set.of("task.complete"), 3)));
+        try {
+            for (DecisionResult r : byAgent) tasks.complete(taskOf(r), "override", "agent thinks so", Map.of("value", "ship_complete"));
+        } finally {
+            SecurityContextHolder.getContext().setAuthentication(prev);
+        }
+        DecisionResult byPerson = escalate();
+        tasks.complete(taskOf(byPerson), "override", "outside the buyer's instruction", Map.of("value", "ship_complete"));
+        drainOutbox();
+
+        for (DecisionResult r : byAgent) {
+            DecisionRecord rec = decisions.record(r.recordId());
+            assertThat(HumanResolution.label(rec).orElseThrow()).containsEntry("resolvedBy", "agent:ops-copilot").containsEntry("resolvedByType", "agent")
+                .containsEntry("value", "ship_complete");
+            assertThat(HumanResolution.byPerson(rec)).isFalse();
+            assertThat(HumanResolution.anyValue(rec)).as("what happened is still on record").contains("ship_complete");
+            assertThat(HumanResolution.value(rec)).as("but it is not a human judgement to learn from").isEmpty();
+            assertThat(HumanResolution.agreedWithModel(rec)).isEmpty();
+        }
+        DecisionRecord person = decisions.record(byPerson.recordId());
+        assertThat(HumanResolution.label(person).orElseThrow()).containsEntry("resolvedByType", "person").containsEntry("resolvedBy", "user:tester");
+        assertThat(HumanResolution.value(person)).contains("ship_complete");
+        // Provider accuracy (DF-05) is measured on the person's answer only.
+        List<DecisionRecord> all = new java.util.ArrayList<>(byAgent.stream().map(r -> decisions.record(r.recordId())).toList());
+        all.add(person);
+        boolean modelRight = "ship_complete".equalsIgnoreCase(String.valueOf(person.value()));
+        assertThat(ProviderRoutingLearner.accuracy(all)).isEqualTo(modelRight ? 1.0 : 0.0);
     }
 }

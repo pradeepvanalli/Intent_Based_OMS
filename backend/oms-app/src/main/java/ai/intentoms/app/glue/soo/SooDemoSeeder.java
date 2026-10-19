@@ -350,6 +350,9 @@ public class SooDemoSeeder {
         registry.ensureRegistered();
         governance.setAutonomy("node_reliability", AutonomyLevel.L2_ACT_WITH_APPROVAL, STRATEGY);
         governance.setAutonomy("lane_transit", AutonomyLevel.L2_ACT_WITH_APPROVAL, STRATEGY);
+        // EX-01: exception triage (T0) explores 10% of its live classifications, so its records log real propensities
+        // and a threshold change on it is evaluated with IPS that has support (ExplorationFloor governs the rest).
+        config.set(ai.intentoms.learning.hooks.ExplorationFloor.KEY_PREFIX + "exception_classify", 0.10);
     }
 
     // ------------------------------------------------------------------ proposals in every status
@@ -376,6 +379,8 @@ public class SooDemoSeeder {
             {"prop_demo_live_buffer", "promise.buffer_days", "promise_buffer", 0.0, 3.0, 1.0, "Add the learned promise buffer per customer segment"},
             {"prop_demo_live_fraud_signals", "fraud.signal_risk", "fraud_signals", 0.0, 1.0, 0.2, "Give the payment-risk check the learned fraud rate of each signal level"},
             {"prop_demo_live_backorder", "inventory.backorder_conversion", "inventory_backorder", 0.0, 1.0, 0.2, "Give the backorder decision each option's learned conversion rate"},
+            // DF-02: decisions whose learned curve has a well-filled bin (return_risk, sla_breach_risk) use it live.
+            {"prop_demo_live_calibration", "decision.calibration", "confidence_calibrator", null, null, null, "Use each decision's learned confidence curve, so a 60%-sure answer is treated as right as often as such answers really are"},
         };
         List<String> promoted = new ArrayList<>();
         for (Object[] m : families) {

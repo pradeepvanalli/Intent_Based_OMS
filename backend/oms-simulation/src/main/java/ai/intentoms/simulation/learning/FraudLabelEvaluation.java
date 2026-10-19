@@ -25,9 +25,15 @@ import java.util.function.Predicate;
  * loss let through and the cost of blocking good orders.
  *
  * <p>Only confirmed labels count, and goods and frauds come from the same window: decisions made between
- * {@code lookback} and the chargeback window ago ({@code learning.fraud.chargeback_window_days}, default 120), whose
- * chargeback window has closed, so a good order is as settled as a fraud one. Taking frauds of any age but goods only
- * after the window would make the sample fraud-heavy and the false-positive rate meaningless (audit C4).
+ * {@code lookback} and the decision's observation window ago ({@link FraudLabels#windowDays}: the chargeback window,
+ * default 120 days, for card payments; the outcome window, default 30, for return_risk and rto_risk, audit C-N6), whose
+ * window has closed, so a good order is as settled as a fraud one. Taking frauds of any age but goods only after the
+ * window would make the sample fraud-heavy and the false-positive rate meaningless (audit C4).
+ *
+ * <p>A new abuse pattern (an address-reuse ring) only exists in recent orders, so it is also evaluated on what exists
+ * (FD-04): confirmed frauds decided since the cohort closed (a fraud chargeback, a refused parcel or a return graded as
+ * fraud is final at once) are reported separately, with how many of them the current and the proposed policy would
+ * stop; goods from that period are not settled and are not counted. The report says plainly what it covers.
  */
 @Component
 public class FraudLabelEvaluation {
@@ -62,32 +68,60 @@ public class FraudLabelEvaluation {
      * says whether the proposed policy would block a logged decision.
      */
     public Map<String, Object> evaluate(String decision, Predicate<DecisionRecord> proposedBlocks) {
-        int window = Math.max(0, config.getInt(FraudLabels.WINDOW_KEY, FraudLabels.DEFAULT_WINDOW_DAYS));
+        return evaluate(decision, FraudLabelEvaluation::loggedBlocks, proposedBlocks);
+    }
+
+    /**
+     * As {@link #evaluate(String, Predicate)} with the current policy given too ({@code currentBlocks}); a replay that
+     * re-simulates the proposed policy compares it with the current one re-simulated the same way, or with the logged
+     * answer where the change makes no difference, never with a different provider's answer (audit C-N1).
+     */
+    public Map<String, Object> evaluate(String decision, Predicate<DecisionRecord> currentBlocks, Predicate<DecisionRecord> proposedBlocks) {
+        int window = Math.max(0, FraudLabels.windowDays(config, decision));
         double blockCost = config.getDouble(BLOCK_COST_KEY, 25.0);
         Instant now = Instant.now();
         Instant until = now.minus(Duration.ofDays(window));
         Instant since = until.minus(Duration.ofDays(Math.max(1, lookbackDays)));
         Tally current = new Tally(), proposed = new Tally();
-        int skipped = 0;
+        int skipped = 0, changed = 0;
         for (int[] v : records.activeVersions(decision, since)) {
             for (DecisionRecord r : records.labelledBetween(decision, v[0], since, until)) {
                 Boolean fraud = FraudLabels.usable(r, now, window);
                 if (fraud == null) { skipped++; continue; }
                 double amount = amount(r);
-                current.add(fraud, loggedBlocks(r), amount, blockCost);
-                proposed.add(fraud, proposedBlocks.test(r), amount, blockCost);
+                boolean cur = currentBlocks.test(r), prop = proposedBlocks.test(r);
+                if (cur != prop) changed++;
+                current.add(fraud, cur, amount, blockCost);
+                proposed.add(fraud, prop, amount, blockCost);
+            }
+        }
+        // FD-04: confirmed frauds since the cohort closed (final at once), counted apart; their goods are not settled.
+        int recentFrauds = 0, recentCaughtNow = 0, recentCaughtProposed = 0;
+        for (int[] v : records.activeVersions(decision, until)) {
+            for (DecisionRecord r : records.labelledBetween(decision, v[0], until, now)) {
+                if (!Boolean.TRUE.equals(FraudLabels.usable(r, now, window))) continue;
+                recentFrauds++;
+                if (currentBlocks.test(r)) recentCaughtNow++;
+                if (proposedBlocks.test(r)) recentCaughtProposed++;
             }
         }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("method", "fraud_label_replay");
         out.put("decision", decision);
-        out.put("window", Map.of("from", since.toString(), "to", until.toString(), "chargebackWindowDays", window,
-            "rule", "goods and frauds decided in the same period, after their chargeback window closed; confirmed labels only"));
+        out.put("window", Map.of("from", since.toString(), "to", until.toString(), "observationWindowDays", window,
+            "rule", "goods and frauds decided in the same period, after their observation window closed; confirmed labels only"));
         out.put("labelled", current.n());
         out.put("frauds", current.frauds);
         out.put("goods", current.goods);
         out.put("skippedUnconfirmed", skipped);
+        out.put("decisionsChanged", changed);
         out.put("blockCost", blockCost);
+        out.put("recentConfirmedFrauds", Map.of("since", until.toString(), "count", recentFrauds, "caughtNow", recentCaughtNow, "caughtProposed", recentCaughtProposed));
+        out.put("coverage", String.format(Locale.ROOT,
+            "%d confirmed labels (%d fraud, %d good) on %s orders decided %s to %s, whose %d-day observation window has closed; the proposed policy decides %d of them differently. "
+                + "Since %s: %d confirmed frauds (the proposed policy would stop %d, the current %d); goods from that period are not settled yet and are not counted.",
+            current.n(), current.frauds, current.goods, decision, since.toString().substring(0, 10), until.toString().substring(0, 10), window, changed,
+            until.toString().substring(0, 10), recentFrauds, recentCaughtProposed, recentCaughtNow));
         if (current.frauds == 0 || current.goods == 0 || current.n() < minLabelled) {
             out.put("sufficient", false);
             out.put("reason", String.format(Locale.ROOT, "only %d confirmed labels (%d fraud, %d good) on %s decided between %s and %s; need %d with both kinds",

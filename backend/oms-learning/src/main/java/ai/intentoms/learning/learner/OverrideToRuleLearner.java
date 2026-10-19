@@ -32,6 +32,16 @@ import java.util.stream.Collectors;
  * {@link SituationKey} of what the decision reads, not the raw input hash. Agreement is measured over <i>every</i>
  * human resolution of the situation, including people who confirmed the model (defect 22: counting only overrides
  * hid the dissent); a rule is only worth drafting when most of those resolutions overrode the model.
+ *
+ * <p><b>Generalising</b> (audit C-N3): situations people overrode to the same answer are merged when the cases support
+ * it: the merged condition keeps only what the cases agree on (equal text and flags, the range of numbers that vary,
+ * {@link SituationKey#when}), and the merge is kept only while every person-resolved case that condition would match
+ * still agrees on the answer (at least {@code min-agreement}) and mostly overrode the model. Identical cases therefore
+ * still give an exact rule, and differing ones give the rule their shared fields describe. The {@code min-cases}
+ * count applies to the cases the condition matches.
+ *
+ * <p>Its candidates are its own: the key is {@code rule:<decision>:<condition>} and only earlier {@code add_rule}
+ * hypotheses block a new one, so a golden-set candidate for the same situation (DF-03) no longer starves it.
  */
 @Component
 public class OverrideToRuleLearner implements GovernedLearner {
@@ -80,13 +90,88 @@ public class OverrideToRuleLearner implements GovernedLearner {
             List<DecisionRecord> resolved = decisionRecords.labelledBetween(name, def.version(), since, Instant.now()).stream()
                 .filter(r -> r.labels() != null && r.labels().containsKey(HUMAN_RESOLUTION_LABEL) && action(r) != null)
                 .toList();
-            Map<String, List<DecisionRecord>> bySituation = resolved.stream().collect(Collectors.groupingBy(r -> SituationKey.key(r.input(), def.stateInclude())));
-            for (var entry : bySituation.entrySet()) {
-                if (entry.getValue().size() < minCases) continue;
-                if (raiseIfAgreedAndNew(def, entry.getKey(), entry.getValue())) n++;
+            for (List<DecisionRecord> group : generalisedGroups(resolved, def.stateInclude())) {
+                if (group.size() < minCases) continue;
+                if (raiseIfAgreedAndNew(def, group)) n++;
             }
         }
         return n;
+    }
+
+    /**
+     * Situations people resolved, merged where the cases support it (see the class comment). Each result is the set of
+     * person-resolved cases a candidate condition matches.
+     */
+    List<List<DecisionRecord>> generalisedGroups(List<DecisionRecord> resolved, List<String> includes) {
+        Map<String, List<DecisionRecord>> bySituation = resolved.stream()
+            .collect(Collectors.groupingBy(r -> SituationKey.key(r.input(), includes), java.util.LinkedHashMap::new, Collectors.toList()));
+        // Seeds: situations whose own resolutions agree and mostly override; biggest first.
+        List<List<DecisionRecord>> seeds = bySituation.values().stream()
+            .filter(g -> { Agreement a = agreement(g); return a.top() != null && a.rate() >= minAgreement && a.overrides() * 2 >= a.resolutions(); })
+            .sorted((x, y) -> Integer.compare(y.size(), x.size())).toList();
+        List<List<DecisionRecord>> out = new java.util.ArrayList<>();
+        java.util.Set<List<DecisionRecord>> used = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        for (List<DecisionRecord> seed : seeds) {
+            if (used.contains(seed)) continue;
+            used.add(seed);
+            String answer = agreement(seed).top();
+            List<DecisionRecord> agreeing = new java.util.ArrayList<>(seed.stream().filter(r -> answer.equals(action(r))).toList());
+            List<DecisionRecord> matched = seed;
+            for (List<DecisionRecord> other : seeds) {
+                if (used.contains(other) || !answer.equals(agreement(other).top())) continue;
+                List<DecisionRecord> trial = new java.util.ArrayList<>(agreeing);
+                other.stream().filter(r -> answer.equals(action(r))).forEach(trial::add);
+                Condition c = Condition.of(trial.stream().map(DecisionRecord::input).toList(), includes);
+                if (c.isEmpty()) continue; // a rule must say when it applies
+                List<DecisionRecord> m = resolved.stream().filter(r -> c.matches(r.input(), includes)).toList();
+                Agreement a = agreement(m);
+                if (!answer.equals(a.top()) || a.rate() < minAgreement || a.overrides() * 2 < a.resolutions()) continue;
+                agreeing = trial;
+                matched = m;
+                used.add(other);
+            }
+            out.add(matched);
+        }
+        return out;
+    }
+
+    /**
+     * What a set of cases agrees on, as a matcher for the condition {@link SituationKey#when} writes: equal text and flags
+     * on the leaves every case shares, and the range of numbers.
+     */
+    record Condition(Map<String, Object> equal, Map<String, double[]> range) {
+        static Condition of(List<Map<String, Object>> inputs, List<String> includes) {
+            Map<String, Object> equal = new java.util.TreeMap<>();
+            Map<String, double[]> range = new java.util.TreeMap<>();
+            if (inputs.isEmpty()) return new Condition(equal, range);
+            List<Map<String, Object>> all = inputs.stream().map(i -> SituationKey.leaves(i, includes)).toList();
+            for (Map.Entry<String, Object> e : all.get(0).entrySet()) {
+                String path = e.getKey();
+                if (!all.stream().allMatch(m -> m.containsKey(path))) continue;
+                List<Object> values = all.stream().map(m -> m.get(path)).toList();
+                if (values.stream().allMatch(v -> v instanceof Number)) {
+                    range.put(path, new double[]{values.stream().mapToDouble(v -> ((Number) v).doubleValue()).min().orElse(0),
+                        values.stream().mapToDouble(v -> ((Number) v).doubleValue()).max().orElse(0)});
+                } else if (values.stream().distinct().count() == 1) {
+                    Object v = values.get(0);
+                    if (v instanceof Boolean || v instanceof String) equal.put(path, v); // a shared list compares as its rendered leaf
+                }
+            }
+            return new Condition(equal, range);
+        }
+
+        boolean isEmpty() { return equal.isEmpty() && range.isEmpty(); }
+
+        boolean matches(Map<String, Object> input, List<String> includes) {
+            Map<String, Object> leaves = SituationKey.leaves(input, includes);
+            for (var e : equal.entrySet()) if (!e.getValue().equals(leaves.get(e.getKey()))) return false;
+            for (var e : range.entrySet()) {
+                if (!(leaves.get(e.getKey()) instanceof Number n)) return false;
+                double d = n.doubleValue();
+                if (d < e.getValue()[0] - 1e-9 || d > e.getValue()[1] + 1e-9) return false;
+            }
+            return true;
+        }
     }
 
     /** The value the person chose (OC-06), never the task's outcome word. */
@@ -112,24 +197,29 @@ public class OverrideToRuleLearner implements GovernedLearner {
         return new Agreement(top.getKey(), group.size(), top.getValue(), overrides);
     }
 
-    private boolean raiseIfAgreedAndNew(DecisionDefinition def, String situation, List<DecisionRecord> group) {
+    /** Key prefix of this learner's candidates (DF-03 uses its own), so the two never block each other. */
+    static final String GROUP_PREFIX = "rule:";
+
+    private boolean raiseIfAgreedAndNew(DecisionDefinition def, List<DecisionRecord> group) {
         String decisionName = def.name();
         Agreement a = agreement(group);
         if (a.top() == null || a.rate() < minAgreement) return false;
         if (a.overrides() * 2 < a.resolutions()) return false; // people mostly confirm the model: no rule needed
 
-        String refKey = decisionName + ":" + situation;
-        boolean already = hypotheses.byStatus("OPEN", 500).stream().anyMatch(h -> refKey.equals(h.lever().get("groupKey")))
-            || hypotheses.byStatus("DRAFTED", 500).stream().anyMatch(h -> refKey.equals(h.lever().get("groupKey")));
-        if (already) return false;
-
         List<DecisionRecord> agreeing = group.stream().filter(r -> a.top().equals(action(r))).toList();
         String when = SituationKey.when(agreeing.stream().map(DecisionRecord::input).toList(), def.stateInclude());
+        String situation = ai.intentoms.platform.json.Json.sha256(Map.of("when", when, "then", a.top()));
+        String refKey = GROUP_PREFIX + decisionName + ":" + situation;
+        boolean already = java.util.stream.Stream.of("OPEN", "DRAFTED", "ACCEPTED").flatMap(st -> hypotheses.byStatus(st, 500).stream())
+            .anyMatch(h -> "add_rule".equals(h.lever().get("action")) && refKey.equals(h.lever().get("groupKey")));
+        if (already) return false;
+
         Map<String, Object> lever = new java.util.LinkedHashMap<>();
         lever.put("action", "add_rule");
         lever.put("decision", decisionName);
         lever.put("groupKey", refKey);
         lever.put("inputHash", situation);
+        lever.put("situations", group.stream().map(r -> SituationKey.key(r.input(), def.stateInclude())).distinct().count());
         lever.put("suggestedThen", a.top());
         lever.put("when", when);
         lever.put("resolutions", a.resolutions());

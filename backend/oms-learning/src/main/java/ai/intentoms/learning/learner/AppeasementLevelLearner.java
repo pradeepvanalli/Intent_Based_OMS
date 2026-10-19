@@ -129,7 +129,9 @@ public class AppeasementLevelLearner implements GovernedLearner {
     /** USD credit actually given: the person's resolution when present, else the recommended option. */
     static Double creditGiven(DecisionRecord r) {
         Object value = r.overriddenValue() != null ? r.overriddenValue() : r.value();
-        if (r.labels() != null && r.labels().get("human_resolution") instanceof Map<?, ?> h && h.get("value") != null) value = h.get("value");
+        // E3-N1: a person's resolution; an agent's or a job's answer is already the record's overridden value.
+        java.util.Optional<String> person = ai.intentoms.learning.model.HumanResolution.value(r);
+        if (person.isPresent()) value = person.get();
         if (value instanceof Number n) return n.doubleValue();
         String s = value == null ? "" : String.valueOf(value);
         return switch (s) {

@@ -40,6 +40,21 @@ public interface DecisionLearningHooks {
      */
     default Optional<Route> route(String decision, String routingKey, int resolvedVersion) { return Optional.empty(); }
 
+    /**
+     * EX-01 / requirements §11 ("exploration floor per arm; clipped estimators"): for a LIVE decision that acts, which arm
+     * to apply and the true probability of applying it. On a governed share of decisions another allowed arm is applied
+     * (probability share / other arms), otherwise the decision's own choice (probability 1 - share), so off-policy
+     * evaluation has support for the arms the decision would not pick. Empty means no exploration: the choice is applied
+     * with probability 1. The runtime asks only for T0 decisions that acted on a model answer, never in shadow, replay or
+     * simulation.
+     */
+    default Optional<Exploration> explore(String decision, ai.intentoms.decision.model.Tier tier, List<String> arms, String chosen, String routingKey) { return Optional.empty(); }
+
+    /** The arm to apply, its true probability, the exploration share and the seed of the draw (stored for replay). */
+    record Exploration(String applied, double propensity, double share, long seed) {
+        public boolean explored(String chosen) { return applied != null && !applied.equals(chosen); }
+    }
+
     record Contribution(Map<String, Object> input, List<Map<String, Object>> factsUsed) {
         public static Contribution none(Map<String, Object> input) { return new Contribution(input, List.of()); }
     }

@@ -91,11 +91,20 @@ public final class SituationKey {
             } else if (values.stream().distinct().count() == 1) {
                 Object v = values.get(0);
                 if (v instanceof Boolean b) clauses.add(ref + " == " + b);
-                else if (v instanceof String s && !s.startsWith("[")) clauses.add(ref + " == '" + s.replace("\\", "\\\\").replace("'", "\\'") + "'");
+                else if (v instanceof String s && !s.startsWith("[")) clauses.add(ref + " == '" + quote(s) + "'");
+                else if (v instanceof String && Json.path(inputs.get(0), path) instanceof List<?> list) {
+                    // A list every case shares (order notes, intent choices): same size, every element present.
+                    List<String> parts = new ArrayList<>();
+                    parts.add("size(" + ref + ") == " + list.size());
+                    for (Object el : list) parts.add((el instanceof Number || el instanceof Boolean ? String.valueOf(el) : "'" + quote(String.valueOf(el)) + "'") + " in " + ref);
+                    clauses.add(String.join(" && ", parts));
+                }
             }
         }
         return clauses.isEmpty() ? "true" : String.join(" && ", clauses);
     }
+
+    private static String quote(String s) { return s.replace("\\", "\\\\").replace("'", "\\'"); }
 
     private static String num(double d) { return d == Math.rint(d) ? String.valueOf((long) d) : String.valueOf(d); }
 }

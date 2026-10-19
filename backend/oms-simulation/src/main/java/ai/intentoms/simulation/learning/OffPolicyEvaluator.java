@@ -97,6 +97,45 @@ public final class OffPolicyEvaluator {
             round(ipsEstimate), round(ipsLift), round(ipsLift - 1.96 * ipsSe), round(ipsLift + 1.96 * ipsSe));
     }
 
+    /**
+     * EX-01 for a stochastic target policy (a bandit with another exploration share, the bandit switched on or off): each
+     * record's weight is the probability the target policy gives the logged arm over the logged propensity, the latter
+     * floored at {@link #PROPENSITY_FLOOR} (clipped). IPS is the weighted reward; doubly robust adds the direct-method
+     * value of the target's whole arm distribution (per-arm mean reward) and corrects it by the weighted residual. A
+     * record whose target distribution is unknown (null) is left out.
+     */
+    public static Result evaluateStochastic(List<LoggedRecord> records, Function<LoggedRecord, Map<String, Double>> targetDistribution) {
+        List<LoggedRecord> usable = new java.util.ArrayList<>();
+        List<Map<String, Double>> targets = new java.util.ArrayList<>();
+        for (LoggedRecord r : records) {
+            Map<String, Double> t = targetDistribution.apply(r);
+            if (t == null || t.isEmpty()) continue;
+            usable.add(r);
+            targets.add(t);
+        }
+        int n = usable.size();
+        if (n == 0) return new Result("ips_doubly_robust", 0, 0, 0, 0, 0, 0, 0);
+        double baselineReward = usable.stream().mapToDouble(LoggedRecord::reward).average().orElse(0);
+        Map<String, Double> q = perArmMeanReward(usable);
+        int clipped = 0;
+        double[] dr = new double[n], ips = new double[n];
+        for (int i = 0; i < n; i++) {
+            LoggedRecord r = usable.get(i);
+            Map<String, Double> t = targets.get(i);
+            double mu = r.propensity();
+            if (mu < PROPENSITY_FLOOR) { mu = PROPENSITY_FLOOR; clipped++; }
+            double w = t.getOrDefault(r.chosenArm(), 0.0) / mu;
+            double direct = 0;
+            for (var e : t.entrySet()) direct += e.getValue() * q.getOrDefault(e.getKey(), baselineReward);
+            ips[i] = w * r.reward();
+            dr[i] = direct + w * (r.reward() - q.getOrDefault(r.chosenArm(), baselineReward));
+        }
+        double est = mean(dr), se = Math.sqrt(sampleVariance(dr, est) / n), lift = est - baselineReward;
+        double ipsEst = mean(ips), ipsSe = Math.sqrt(sampleVariance(ips, ipsEst) / n), ipsLift = ipsEst - baselineReward;
+        return new Result("ips_doubly_robust", n, round(baselineReward), round(est), round(lift), round(lift - 1.96 * se), round(lift + 1.96 * se), clipped,
+            round(ipsEst), round(ipsLift), round(ipsLift - 1.96 * ipsSe), round(ipsLift + 1.96 * ipsSe));
+    }
+
     private static Map<String, Double> perArmMeanReward(List<LoggedRecord> records) {
         Map<String, List<Double>> byArm = new LinkedHashMap<>();
         for (LoggedRecord r : records) byArm.computeIfAbsent(r.chosenArm(), k -> new java.util.ArrayList<>()).add(r.reward());

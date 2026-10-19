@@ -16,5 +16,6 @@ import java.util.Map;
 public record Hypothesis(String hypothesisId, Map<String, Object> scope, String targetMetric, Direction expectedDirection, Map<String, Object> lever,
                           @DecimalMin("0") @DecimalMax("1") double priorConfidence, List<String> evidence,
                           @Size(max = 280) String rationale, Status status, Instant createdAt) {
-    public enum Status { OPEN, DRAFTED, REJECTED, SUPERSEDED }
+    /** ACCEPTED: a reviewer signed the candidate off and it took effect (a golden case written), nothing left to draft. */
+    public enum Status { OPEN, DRAFTED, REJECTED, SUPERSEDED, ACCEPTED }
 }

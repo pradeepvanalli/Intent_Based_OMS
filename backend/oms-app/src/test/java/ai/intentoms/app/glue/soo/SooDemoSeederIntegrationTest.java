@@ -37,6 +37,7 @@ class SooDemoSeederIntegrationTest extends PostgresTestBase {
     private static final String DEMO = "demo";
 
     @Autowired SooDemoSeeder seeder;
+    @Autowired ai.intentoms.learning.hooks.CurveConfidenceCalibration curveCalibration;
     @Autowired ProposalRepository proposals;
     @Autowired EpisodeRepository episodes;
     @Autowired LearnerGovernance governance;
@@ -99,8 +100,8 @@ class SooDemoSeederIntegrationTest extends PostgresTestBase {
             assertThat(liveParameters.all().stream().filter(LiveParameterRepository.LiveParameter::live).map(LiveParameterRepository.LiveParameter::parameter))
                 .contains("sourcing.node_reject_rate", "sourcing.node_on_time_rate", "promise.lane_transit_days", "promise.lane_calibration", "sourcing.policy_bandit",
                     "sourcing.reject_penalty", "customer.preferences", "sourcing.node_backlog_breach", "monitoring.warn_early_threshold", "promise.buffer_days",
-                    "fraud.signal_risk")
-                .doesNotContain("inventory.reservation_ttl", "decision.calibration", "fraud.agent_reputation", "fraud.agent_dispute_rate");
+                    "fraud.signal_risk", "decision.calibration")
+                .doesNotContain("inventory.reservation_ttl", "fraud.agent_reputation", "fraud.agent_dispute_rate");
 
             // B-1: every seeded live range sits inside its family's domain, and a learner feeding the family has learned something.
             for (LiveParameterRepository.LiveParameter p : liveParameters.all().stream().filter(LiveParameterRepository.LiveParameter::live).toList()) {
@@ -130,6 +131,14 @@ class SooDemoSeederIntegrationTest extends PostgresTestBase {
                 .as("the fraud threshold tuner proposed from the matured cohort").isPositive();
             assertThat(jdbc.sql("select count(*) from learned_fact where tenant_id = :t and fact_key = 'CALIBRATION_CURVE' and subject_id = 'sla_breach_risk' and valid_to is null")
                 .param("t", DEMO).query(Long.class).single()).as("calibration curve from labelled breach-risk resolutions").isEqualTo(1);
+            // EX-01: one T0 decision explores on the demo tenant, so its live records carry real propensities.
+            assertThat(jdbc.sql("select value::text from tenant_config where tenant_id = :t and key = 'learning.exploration.exception_classify'")
+                .param("t", DEMO).query(String.class).optional()).hasValueSatisfying(v -> assertThat(Double.parseDouble(v.replace("\"", ""))).isEqualTo(0.1));
+            // C-N2: labelled resolutions are stored the way the live path stores them (escalated, L3_HUMAN), and they still calibrate.
+            assertThat(jdbc.sql("select count(*) from decision_record where tenant_id = :t and labels->'human_resolution' is not null and layer <> 'L3_HUMAN'")
+                .param("t", DEMO).query(Long.class).single()).as("seeded resolutions not stored as escalations").isZero();
+            // DF-02: decision.calibration is live through the governed path, so a curve with a filled bin reaches decisions.
+            assertThat(curveCalibration.calibrate("return_risk", 2, 0.65)).as("return_risk's learned curve is applied live").isPresent();
             Map<String, Object> label = jdbc.sql("select labels->'human_resolution' as l from decision_record where tenant_id = :t and id = 'dr-demo-sla_breach_risk-demo-esc-001'")
                 .param("t", DEMO).query((rs, i) -> ai.intentoms.platform.json.Json.readMap(rs.getString("l"))).single();
             assertThat(label).containsKeys("value", "outcome", "reasonCode", "recommendedValue", "resolvedBy");

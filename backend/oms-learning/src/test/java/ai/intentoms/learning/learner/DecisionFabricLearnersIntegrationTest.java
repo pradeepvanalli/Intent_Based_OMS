@@ -86,7 +86,7 @@ class DecisionFabricLearnersIntegrationTest extends DecisionFabricTestBase {
         GoldenCase gc = goldenCandidates.signOff(hypothesisId, new GoldenCandidateController.SignOff(null, "matches policy"));
         assertThat(gc.expectedValue()).isEqualTo("review");
         assertThat(golden.forSet(gold + "_gold")).extracting(GoldenCase::caseId).contains(gc.caseId());
-        assertThat(hypotheses.find(hypothesisId).orElseThrow().status()).isEqualTo(Hypothesis.Status.DRAFTED);
+        assertThat(hypotheses.find(hypothesisId).orElseThrow().status()).as("C-N3: a signed-off candidate is done, not left DRAFTED").isEqualTo(Hypothesis.Status.ACCEPTED);
         // The sign-off is its own ledger event by the reviewer, with an audit row.
         assertThat(ledger(hypothesisId, "golden_case.signed_off")).singleElement().satisfies(e -> assertThat(String.valueOf(e.get("actor"))).startsWith("user:"));
         assertThat(jdbc.sql("select count(*) from audit_log where action = 'learning.golden_case.signed_off' and object_id = :id").param("id", hypothesisId)

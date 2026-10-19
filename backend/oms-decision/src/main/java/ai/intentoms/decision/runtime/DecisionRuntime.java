@@ -580,6 +580,11 @@ public class DecisionRuntime implements DecisionService {
             ev.reasonCodes.add("low_confidence");
         } else ev.action = switch (ev.band) { case ACT -> DecisionResult.ACT; case CONFIRM -> DecisionResult.CONFIRM; case ESCALATE -> DecisionResult.ESCALATE; };
 
+        // EX-01 exploration floor: on a governed share of T0 decisions another allowed arm is applied, with its true
+        // propensity logged (1 - share for the normal choice). Only on the live path and only for a model answer.
+        if (ev.opts.mode() == Mode.LIVE && def.tier() == Tier.T0 && DecisionResult.ACT.equals(ev.action) && ev.layer == Layer.L1_SYSTEM_ONE) explore(ev, mainQ);
+        else if (ev.recorded != null) reapplyRecordedExploration(ev, mainQ);
+
         // Post-checks (GR-01): a violating answer is discarded and logged.
         Map<String, Object> postVars = CelVars.withAnswers(vars, ev.answers, ev.value, ev.confidence, ev.band.name());
         ev.postChecks = checks.evaluate(def.postChecks(), postVars);
@@ -615,6 +620,52 @@ public class DecisionRuntime implements DecisionService {
         if (ev.band == Band.CONFIRM || (ev.band == Band.ESCALATE && def.tier() != Tier.T0)) {
             escalate(ev, escape ? "escape_option" : def.tier().neverActs() ? "t3_recommendation" : "low_confidence");
         }
+    }
+
+    /** Asks the learning layer whether this decision explores, and applies the arm it draws (see {@link DecisionLearningHooks#explore}). */
+    private void explore(Eval ev, QuestionDef mainQ) {
+        if (ev.value == null) return;
+        String chosen = String.valueOf(ev.value);
+        List<String> arms = armsOf(ev.def, ev.input, ev.details, ev.value, chosen);
+        Optional<DecisionLearningHooks.Exploration> x = safely(() -> hooks().explore(ev.def.name(), ev.def.tier(), List.copyOf(arms), chosen, routingKey(ev.opts)), Optional.empty());
+        if (x.isEmpty() || x.get().applied() == null || x.get().propensity() <= 0 || x.get().propensity() > 1) return;
+        applyExploration(ev, chosen, x.get().applied(), x.get().propensity(), x.get().share(), x.get().seed());
+    }
+
+    /** NF-04: a replay re-applies the arm the recorded decision explored, so it reproduces what was applied. */
+    private void reapplyRecordedExploration(Eval ev, QuestionDef mainQ) {
+        Map<String, Object> d = ev.recorded.details();
+        if (d == null || !(d.get("exploration") instanceof Map<?, ?> x) || !Boolean.TRUE.equals(x.get("explored")) || x.get("applied") == null) return;
+        if (ev.value == null || !String.valueOf(ev.value).equals(String.valueOf(x.get("normalArm")))) return;
+        double p = x.get("propensity") instanceof Number n ? n.doubleValue() : 1.0;
+        double share = x.get("share") instanceof Number n ? n.doubleValue() : 0.0;
+        long seed = x.get("seed") instanceof Number n ? n.longValue() : 0L;
+        applyExploration(ev, String.valueOf(ev.value), String.valueOf(x.get("applied")), p, share, seed);
+    }
+
+    private void applyExploration(Eval ev, String chosen, String applied, double propensity, double share, long seed) {
+        boolean explored = !applied.equals(chosen);
+        Map<String, Object> info = new LinkedHashMap<>();
+        info.put("share", share);
+        info.put("explored", explored);
+        info.put("normalArm", chosen);
+        info.put("applied", applied);
+        info.put("propensity", propensity);
+        info.put("seed", seed);
+        ev.details.put("exploration", info);
+        if (!explored) return;
+        ev.details.put("modelAnswer", nullSafe(ev.value));
+        ev.value = typedLike(applied, ev.value);
+        ev.reasonCodes.add("explored");
+    }
+
+    /** An arm (always a string) in the type of the value it replaces: a score level stays a number, a yes/no a boolean. */
+    static Object typedLike(String arm, Object like) {
+        if (like instanceof Boolean) return Boolean.parseBoolean(arm);
+        if (like instanceof Number) {
+            try { return arm.contains(".") ? (Object) Double.parseDouble(arm) : (Object) Long.parseLong(arm); } catch (NumberFormatException e) { return arm; }
+        }
+        return arm;
     }
 
     /** L2: the LLM may propose one of the same enumerated options; accepted only when valid, non-escape and above the act threshold (GR-04). */
@@ -687,10 +738,13 @@ public class DecisionRuntime implements DecisionService {
         // sourcing-policy bandit) logs its own record with the real draw probability instead.
         String chosenArm = appliedArm(ev.def, ev.value, ev.action, details);
         List<String> arms = armsOf(ev.def, ev.input, details, ev.value, chosenArm);
+        // EX-01: under the exploration floor the applied arm's true probability (1 - share for the normal choice).
+        double propensity = details.get("exploration") instanceof Map<?, ?> x && x.get("propensity") instanceof Number p ? p.doubleValue() : 1.0;
+        boolean explored = details.get("exploration") instanceof Map<?, ?> x2 && Boolean.TRUE.equals(x2.get("explored"));
         DecisionRecord record = new DecisionRecord(ev.recordId, ev.def.name(), ev.def.version(), ev.opts.mode(), ev.opts.subjectType(), ev.opts.subjectId(), ev.opts.correlationId(),
             ev.layer, ev.band, ev.action, ev.value, ev.answers, ev.confidence, ev.provider, ev.modelVersion, ev.inputHash, ev.state, ev.input, ev.rulesFired, ev.reasonCodes, latency,
             ev.costUsd, ev.inputTokens, ev.requiresHuman, ev.escalationId, ev.opts.actor().ref(), details, null, null, null, null, Map.of(), ev.startedAt,
-            ev.state, arms, chosenArm, 1.0, ev.def.version());
+            ev.state, arms, chosenArm, propensity, ev.def.version());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("decision", ev.def.name());
         payload.put("version", ev.def.version());
@@ -719,7 +773,7 @@ public class DecisionRuntime implements DecisionService {
             events.append("decision", ev.recordId, 0, evs);
             var day = ev.startedAt.atZone(ZoneOffset.UTC).toLocalDate();
             ev.spendCalls.forEach((p, c) -> spend.add(day, ev.def.name(), p, c[0], ev.spendCost.get(p)[0], c[1]));
-            if (ev.opts.mode() == Mode.LIVE && ev.def.cache() != null && ev.layer != Layer.DEFAULT && !ev.requiresHuman) {
+            if (ev.opts.mode() == Mode.LIVE && ev.def.cache() != null && ev.layer != Layer.DEFAULT && !ev.requiresHuman && !explored) {
                 cache.put(ev.def.key(), ev.inputHash, result, ev.startedAt.plus(ev.def.cache().ttl()));
             }
         });
