@@ -125,7 +125,7 @@ public class RuleUtilizationLearner implements GovernedLearner {
         }
 
         List<DecisionRecord> labelled = decisionRecords.labelledBetween(name, def.version(), since, Instant.now()).stream()
-            .filter(r -> r.labels() != null && r.labels().get(HUMAN_RESOLUTION_LABEL) instanceof Map<?, ?> m && m.get("action") != null).toList();
+            .filter(ai.intentoms.learning.model.HumanResolution::hasValue).toList();
         for (RuleDef rule : def.rules()) {
             List<DecisionRecord> decidedByRule = labelled.stream().filter(r -> r.rulesFired() != null && r.rulesFired().contains(rule.id())).limit(replayLimit).toList();
             if (decidedByRule.size() < minLabelled) continue;
@@ -147,7 +147,7 @@ public class RuleUtilizationLearner implements GovernedLearner {
         catch (RuntimeException e) { log.warn("Could not build {} without rule {}: {}", def.name(), rule.id(), e.toString()); return null; }
         int ruleAgree = 0, l1Agree = 0;
         for (DecisionRecord r : cases) {
-            String human = String.valueOf(((Map<?, ?>) r.labels().get(HUMAN_RESOLUTION_LABEL)).get("action"));
+            String human = ai.intentoms.learning.model.HumanResolution.value(r).orElse("");
             if (human.equalsIgnoreCase(String.valueOf(r.value()))) ruleAgree++;
             DecisionResult sim = SystemPrincipal.call(() -> runtime.evaluate(candidate, r.input(),
                 new DecisionOptions(r.subjectType(), r.subjectId(), r.correlationId(), Mode.SIMULATION, def.version(), Actor.system(KEY), Map.of())));

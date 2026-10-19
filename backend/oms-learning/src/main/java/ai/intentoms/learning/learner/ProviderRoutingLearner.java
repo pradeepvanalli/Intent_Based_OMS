@@ -117,7 +117,8 @@ public class ProviderRoutingLearner implements GovernedLearner {
         List<DecisionRecord> answered = decisionRecords.recentLive(name, def.version(), since, 20_000).stream()
             .filter(r -> r.provider() != null && r.layer() != ai.intentoms.decision.model.Layer.L0_RULE && r.layer() != ai.intentoms.decision.model.Layer.DEFAULT).toList();
         List<DecisionRecord> labelled = decisionRecords.labelledBetween(name, def.version(), since, Instant.now()).stream()
-            .filter(r -> r.labels() != null && r.labels().containsKey(HUMAN_RESOLUTION_LABEL)).toList();
+            .filter(r -> r.labels() != null && r.labels().containsKey(HUMAN_RESOLUTION_LABEL))
+            .filter(ai.intentoms.learning.model.HumanResolution::hasValue).toList();
         List<ProviderStats> stats = stats(answered, labelled, spendPerCall);
         for (ProviderStats st : stats) {
             if (st.costPerCall() != null) writeFact(name, st.provider(), FactKey.PROVIDER_COST_PER_CALL, st.costPerCall(), st.answers());
@@ -204,15 +205,12 @@ public class ProviderRoutingLearner implements GovernedLearner {
         return out;
     }
 
-    @SuppressWarnings("unchecked")
-    private static double accuracy(List<DecisionRecord> labelled) {
-        if (labelled.isEmpty()) return 0;
-        long kept = labelled.stream().filter(r -> {
-            Map<String, Object> res = (Map<String, Object>) r.labels().get(HUMAN_RESOLUTION_LABEL);
-            Object action = res == null ? null : res.get("action");
-            return action == null || String.valueOf(action).isBlank() || String.valueOf(action).equalsIgnoreCase(String.valueOf(r.value()));
-        }).count();
-        return kept / (double) labelled.size();
+    /** Share of resolved answers the person kept (OC-06: compares the value they chose with the model's answer). */
+    public static double accuracy(List<DecisionRecord> labelled) {
+        List<Boolean> known = labelled.stream().map(ai.intentoms.learning.model.HumanResolution::agreedWithModel)
+            .filter(java.util.Optional::isPresent).map(java.util.Optional::get).toList();
+        if (known.isEmpty()) return 0;
+        return known.stream().filter(Boolean::booleanValue).count() / (double) known.size();
     }
 
     private void writeFact(String decisionName, String provider, FactKey key, double value, int sampleSize) {
