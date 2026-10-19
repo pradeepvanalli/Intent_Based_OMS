@@ -180,22 +180,40 @@ public class ProposalEvaluationService {
         r.put("decisionsChanged", flips);
         r.put("baseVersion", base.version());
         r.put("rewards", rewardMix(replayed));
-        // FD-04: the labelled orders re-run through the candidate (up to the same cap; beyond it the logged answer stands).
+        // FD-04 / C-N1: like with like. Each labelled order is re-run through the candidate and through the base it was
+        // drafted against, with the same provider; only where the change itself turns the outcome does the proposed
+        // policy differ from what was logged. Comparing the logged answer with today's provider re-simulating the
+        // candidate would charge the rule with every difference between the two providers (a rule matching no labelled
+        // order used to "lose" every fraud the logged model had caught). Up to the same cap; beyond it the logged answer stands.
         int[] simulated = {0};
-        addFraudLabels(r, decision, rec -> {
+        Map<String, Boolean> proposedByRecord = new java.util.HashMap<>();
+        addFraudLabels(r, decision, FraudLabelEvaluation::loggedBlocks, rec -> proposedByRecord.computeIfAbsent(rec.id(), id -> {
             if (simulated[0]++ >= maxResimulated) return FraudLabelEvaluation.loggedBlocks(rec);
-            DecisionResult sim = runtime.evaluate(candidate, rec.input(), new DecisionOptions(rec.subjectType(), rec.subjectId(),
-                rec.correlationId(), Mode.SIMULATION, base.version(), Actor.system("proposal-replay"), Map.of()));
-            return FraudLabelEvaluation.risky(sim.value()) && (sim.band() == Band.ACT || candidate.tier() == Tier.T0);
-        });
+            boolean withChange = blocks(runtime.evaluate(candidate, rec.input(), simulationOf(rec, base.version())), candidate);
+            boolean withoutChange = blocks(runtime.evaluate(base, rec.input(), simulationOf(rec, base.version())), base);
+            return withChange == withoutChange ? FraudLabelEvaluation.loggedBlocks(rec) : withChange;
+        }));
         return r;
+    }
+
+    private static DecisionOptions simulationOf(DecisionRecord rec, int version) {
+        return new DecisionOptions(rec.subjectType(), rec.subjectId(), rec.correlationId(), Mode.SIMULATION, version, Actor.system("proposal-replay"), Map.of());
+    }
+
+    /** Whether a simulated answer would block the order: it says "risky" and acts on it (a T0 always acts). */
+    private static boolean blocks(DecisionResult sim, DecisionDefinition def) {
+        return FraudLabelEvaluation.risky(sim.value()) && (sim.band() == Band.ACT || def.tier() == Tier.T0);
     }
 
     /** FD-04: a fraud decision's change is also scored on its labelled fraud history. */
     private void addFraudLabels(Map<String, Object> report, String decision, Predicate<DecisionRecord> proposedBlocks) {
+        addFraudLabels(report, decision, FraudLabelEvaluation::loggedBlocks, proposedBlocks);
+    }
+
+    private void addFraudLabels(Map<String, Object> report, String decision, Predicate<DecisionRecord> currentBlocks, Predicate<DecisionRecord> proposedBlocks) {
         if (fraudLabels == null || !FraudLabelEvaluation.FRAUD_DECISIONS.contains(decision)) return;
         try {
-            report.put("fraudLabels", fraudLabels.evaluate(decision, proposedBlocks));
+            report.put("fraudLabels", fraudLabels.evaluate(decision, currentBlocks, proposedBlocks));
         } catch (RuntimeException e) {
             log.warn("Labelled-history evaluation of {} failed: {}", decision, e.toString());
             report.put("fraudLabels", Map.of("method", "fraud_label_replay", "sufficient", false, "reason", "could not be computed: " + e.getMessage()));
