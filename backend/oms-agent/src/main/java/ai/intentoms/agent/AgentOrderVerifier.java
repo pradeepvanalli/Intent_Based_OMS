@@ -80,7 +80,7 @@ public class AgentOrderVerifier {
         int tier = registry.find(p.agentId()).map(AgentIdentity::trustTier).orElse(0);
 
         Map<String, Object> m = new LinkedHashMap<>();
-        m.put("instruction_text", p.instructionText() == null ? "" : ai.intentoms.platform.pii.FreeTextRedactor.redact(p.instructionText())); // NF-07
+        m.put("instruction_text", p.instructionText() == null ? "" : ai.intentoms.platform.pii.FreeTextRedactor.redact(p.instructionText(), ai.intentoms.order.model.OrderPii.known(order))); // NF-07
         m.put("spend_limit", mandate.map(x -> x.spendLimit().amount()).orElse(p.spendLimit() == null ? null : p.spendLimit().amount()));
         m.put("scope", mandate.map(Mandate::scopeLabels).orElse(List.of()));
         m.put("expires_at", mandate.map(x -> x.expiresAt().toString()).orElse(null));

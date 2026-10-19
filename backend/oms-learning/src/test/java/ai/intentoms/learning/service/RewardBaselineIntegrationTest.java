@@ -41,7 +41,8 @@ class RewardBaselineIntegrationTest extends PostgresTestBase {
             assertThat(stored).containsKeys("scales", "samples", "computedAt");
             Map<String, Double> scales = baseline.current();
             assertThat(scales.get("cost")).isCloseTo(0.19025, within(0.0005)); // percentile_cont(0.95) of 0.005..0.200
-            assertThat(scales).doesNotContainKey("split");                   // no nonzero samples
+            assertThat(scales.get("split")).as("no nonzero samples: the documented default").isEqualTo(1.0);
+            assertThat(scales).containsOnlyKeys(RewardCalculator.TERMS);
             assertThat(config.getMap(RewardBaselineService.KEY)).containsKey("scales");
         });
     }

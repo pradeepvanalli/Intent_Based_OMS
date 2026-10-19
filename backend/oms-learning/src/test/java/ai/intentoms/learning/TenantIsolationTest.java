@@ -107,6 +107,10 @@ class TenantIsolationTest extends PostgresTestBase {
     }
 
     private double number(String tenant, SubjectType type, String subject, FactKey key) {
-        return TenantContext.supplyAs(tenant, () -> ((TypedValue.NumberValue) facts.active(type, subject, key).orElseThrow().value()).value());
+        // NF-07: customers are keyed by the vault token of their reference, which differs per tenant (per-tenant keys).
+        return TenantContext.supplyAs(tenant, () -> ((TypedValue.NumberValue) facts.active(type, type == SubjectType.CUSTOMER ? customerSubjects.key(subject) : subject, key)
+            .orElseThrow().value()).value());
     }
+
+    @org.springframework.beans.factory.annotation.Autowired ai.intentoms.learning.store.CustomerSubjects customerSubjects;
 }

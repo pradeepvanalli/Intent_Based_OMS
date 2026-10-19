@@ -30,6 +30,12 @@ public class CustomerFeatures implements FeatureContributor {
     private final ParameterResolver resolver;
     private final Set<String> decisions;
 
+    private ai.intentoms.learning.store.CustomerSubjects subjects;
+
+    /** NF-07: facts are keyed by the customer's vault token; the decision input names the raw reference. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCustomerSubjects(ai.intentoms.learning.store.CustomerSubjects subjects) { this.subjects = subjects; }
+
     public CustomerFeatures(CustomerFactContext context, CustomerEvidenceRepository evidence, ParameterResolver resolver,
                             @Value("${oms.learning.customer-features.decisions:split_acceptability,fulfilment_intent}") List<String> decisions) {
         this.context = context;
@@ -46,8 +52,11 @@ public class CustomerFeatures implements FeatureContributor {
         String customerRef = customerRef(input, opts);
         if (customerRef == null) return;
         Map<FactKey, LearnedFact> found = context.facts(customerRef);
-        if (found.isEmpty()) return;
+        // Typed (non-number) facts follow the same gate as numbers: not promoted, learner off or observe-only, or a holdout
+        // customer kept on the baseline (C-N8: every STATIC fact of a holdout customer gives the holdout reason).
         boolean live = resolver.isLive(CustomerFeatureFamilies.PREFERENCES);
+        String gateReason = live ? null : resolver.explain(CustomerFeatureFamilies.PREFERENCES, null, 0.0).reason();
+        if (found.isEmpty()) return;
         Map<String, Object> served = new LinkedHashMap<>();
         for (var e : found.entrySet()) {
             LearnedFact f = e.getValue();
@@ -60,7 +69,7 @@ public class CustomerFeatures implements FeatureContributor {
                 reason = r.reason();
             } else {
                 servedValue = live ? value : null;
-                reason = live ? "promoted for live use" : "not promoted for live use";
+                reason = live ? "promoted for live use" : gateReason;
             }
             if (servedValue != null) served.put(CustomerFactContext.field(e.getKey()), servedValue);
             Map<String, Object> u = new LinkedHashMap<>();
@@ -80,12 +89,14 @@ public class CustomerFeatures implements FeatureContributor {
         input.put("customer", customer);
     }
 
-    @SuppressWarnings("unchecked")
+    /** The customer's learning subject (vault token): from the input's reference, a customer subject, or the order's. */
     private String customerRef(Map<String, Object> input, DecisionOptions opts) {
-        if (input.get("customer") instanceof Map<?, ?> c && c.get("ref") != null) return String.valueOf(c.get("ref"));
-        if (input.get("customerRef") != null) return String.valueOf(input.get("customerRef"));
-        if ("customer".equals(opts.subjectType()) && opts.subjectId() != null) return opts.subjectId();
-        if ("order".equals(opts.subjectType()) && opts.subjectId() != null) return evidence.customerOfOrder(opts.subjectId()).orElse(null);
+        if (input.get("customer") instanceof Map<?, ?> c && c.get("ref") != null) return key(String.valueOf(c.get("ref")));
+        if (input.get("customerRef") != null) return key(String.valueOf(input.get("customerRef")));
+        if ("customer".equals(opts.subjectType()) && opts.subjectId() != null) return key(opts.subjectId());
+        if ("order".equals(opts.subjectType()) && opts.subjectId() != null) return evidence.customerOfOrder(opts.subjectId()).map(this::key).orElse(null);
         return null;
     }
+
+    private String key(String ref) { return subjects == null ? ref : subjects.key(ref); }
 }

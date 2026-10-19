@@ -250,13 +250,22 @@ public class LearningController {
         SubjectType st;
         try { st = SubjectType.valueOf(type.trim().toUpperCase(java.util.Locale.ROOT)); }
         catch (IllegalArgumentException e) { throw new ValidationException("Unknown subject type '" + type + "'; one of " + java.util.Arrays.toString(SubjectType.values())); }
-        return facts.activeForSubject(st, id);
+        return facts.activeForSubject(st, subjectKey(st, id));
     }
 
     @GetMapping("/facts/{subjectType}/{subjectId}/{key}")
     @RequiresPermission(Permissions.LEARNING_READ)
     public LearnedFact fact(@PathVariable SubjectType subjectType, @PathVariable String subjectId, @PathVariable FactKey key) {
-        return facts.active(subjectType, subjectId, key).orElseThrow(() -> new ai.intentoms.platform.error.NotFoundException("No active fact " + key + " for " + subjectType + ":" + subjectId));
+        return facts.active(subjectType, subjectKey(subjectType, subjectId), key)
+            .orElseThrow(() -> new ai.intentoms.platform.error.NotFoundException("No active fact " + key + " for " + subjectType + ":" + subjectId));
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ai.intentoms.learning.store.CustomerSubjects customerSubjects;
+
+    /** NF-07: a customer is asked for by reference (or token) and found by vault token, the only key learning stores. */
+    private String subjectKey(SubjectType type, String id) {
+        return type == SubjectType.CUSTOMER && customerSubjects != null ? customerSubjects.key(id) : id;
     }
 
     @GetMapping("/proposals")

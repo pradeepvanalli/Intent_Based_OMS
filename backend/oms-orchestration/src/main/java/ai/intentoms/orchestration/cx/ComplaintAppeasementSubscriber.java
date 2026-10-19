@@ -95,7 +95,7 @@ public class ComplaintAppeasementSubscriber implements EventSubscriber {
 
         Map<String, Object> p = e.payload() == null ? Map.of() : e.payload();
         Map<String, Object> input = new LinkedHashMap<>();
-        input.put("case", Map.of("issue", ai.intentoms.platform.pii.FreeTextRedactor.redact(str(p.getOrDefault("issue", p.getOrDefault("reason", "complaint")))), "severity", str(p.getOrDefault("severity", "medium")),
+        input.put("case", Map.of("issue", ai.intentoms.platform.pii.FreeTextRedactor.redact(str(p.getOrDefault("issue", p.getOrDefault("reason", "complaint"))), ai.intentoms.order.model.OrderPii.known(order)), "severity", str(p.getOrDefault("severity", "medium")),
             "customer_sentiment", str(p.getOrDefault("sentiment", "negative")), "source_event", e.id()));
         Map<String, Object> ord = new LinkedHashMap<>();
         ord.put("total", amount(order.totals() == null ? null : order.totals().grandTotal()));

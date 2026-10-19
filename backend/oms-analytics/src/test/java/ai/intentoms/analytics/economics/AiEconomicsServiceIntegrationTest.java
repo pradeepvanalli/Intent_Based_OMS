@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.within;
  */
 class AiEconomicsServiceIntegrationTest extends AnalyticsTestBase {
     @Autowired AiEconomicsService economics;
+    @Autowired ai.intentoms.decision.record.DecisionRecordRepository decisionRecords;
 
     @Test
     void reportOverOwnedWindow() {
@@ -35,7 +36,8 @@ class AiEconomicsServiceIntegrationTest extends AnalyticsTestBase {
         record(d1, "fulfilment_intent", "L0_RULE", "ACT", "act", 1.0, 5, 0, false);
         record(d2, "fulfilment_intent", "L3_HUMAN", "ESCALATE", "escalate", 0.4, 50, 0, true);
         record(d2, "exception_classify", "L1_SYSTEM_ONE", "ACT", "act", 0.7, 200, 0.00001, false);
-        jdbc.sql("update decision_record set overridden_at = now(), overridden_by = 'ops', override_reason = 'judgement', overridden_value = '\"ship_complete\"'::jsonb where id = :id").param("id", r1).update();
+        // decision_record is append-only (V405): an override is an annotation through the repository.
+        ai.intentoms.platform.tenant.TenantContext.runAs(TENANT, () -> decisionRecords.override(r1, "ship_complete", "judgement", "ops", java.time.Instant.now()));
         Order o = newOrder("released", List.of(group("x", 0, "DC-NJ", "8.00", d1.plusDays(3))), null);
         placedOn(o.id(), d1);
 

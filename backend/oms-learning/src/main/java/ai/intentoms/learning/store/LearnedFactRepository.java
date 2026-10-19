@@ -66,7 +66,10 @@ public class LearnedFactRepository {
             payload.put("subjectId", f.subjectId());
             payload.put("factKey", f.factKey().name());
             payload.put("version", f.version());
-            payload.put("value", f.value());
+            // NF-07 / GV-06: a customer fact's event names the vault token and never carries the learned value, which lives
+            // only in learned_fact (deleted on erasure); the append-only ledger keeps no fact about a person.
+            if (f.subjectType() == SubjectType.CUSTOMER) payload.put("valueOmitted", "customer fact: the value is kept in learned_fact only");
+            else payload.put("value", f.value());
             payload.put("confidence", f.confidence());
             payload.put("sampleSize", f.sampleSize());
             payload.put("learner", f.learner());

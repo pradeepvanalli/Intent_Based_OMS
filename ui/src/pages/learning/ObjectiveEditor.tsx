@@ -13,7 +13,7 @@ import { DemoBadge, InfoTip, Meter, Technical } from './Bits';
 import { personName } from './copy';
 
 const TERMS: { key: keyof ObjectiveWeights; label: string; hint: string }[] = [
-  { key: 'fill', label: 'Ship everything ordered', hint: 'Reward for shipping every unit that was ordered' },
+  { key: 'fill', label: 'Ship everything ordered', hint: 'Reward for shipping every unit ordered from the first sourcing attempt' },
   { key: 'otd', label: 'Deliver on time', hint: 'Reward for arriving on or before the promised date' },
   { key: 'cost', label: 'Keep costs down', hint: 'Penalty for fulfilment and shipping cost, relative to order value' },
   { key: 'split', label: 'Avoid split shipments', hint: 'Penalty for sending one order in several boxes when it was avoidable' },

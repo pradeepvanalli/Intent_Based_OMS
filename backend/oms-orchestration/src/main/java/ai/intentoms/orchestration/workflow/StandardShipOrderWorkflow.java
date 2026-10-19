@@ -201,6 +201,10 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         // §7 fill: every unit the customer ordered, backordered and cancelled ones included, and whether this parcel
         // comes from the order's first plan (not from a re-sourcing after a reject, a shortage or a backorder).
         m.put("orderUnits", order.lines().stream().mapToInt(OrderLine::qty).sum());
+        // §2 perfect-order rate is judged per line: every line of the order with the units ordered.
+        Map<String, Integer> orderLines = new LinkedHashMap<>();
+        for (OrderLine l : order.lines()) orderLines.merge(l.lineId(), l.qty(), Integer::sum);
+        m.put("orderLines", orderLines);
         m.put("firstAttempt", firstAttempt);
         m.put("fulfillmentCost", group == null || group.estimatedCost() == null ? 0.0 : group.estimatedCost().amount().doubleValue());
         m.put("orderValue", order.totals() == null || order.totals().grandTotal() == null ? 0.0 : order.totals().grandTotal().amount().doubleValue());

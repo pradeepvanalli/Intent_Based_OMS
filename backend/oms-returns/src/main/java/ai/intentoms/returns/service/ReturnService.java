@@ -247,6 +247,12 @@ public class ReturnService {
 
     private record ReasonOutcome(String code, String recordId) {}
 
+    /** NF-07: the order's own names, addresses and contact details, to redact from a return's free text. */
+    private ai.intentoms.platform.pii.KnownPii orderPii(String orderId) {
+        try { return orderId == null ? ai.intentoms.platform.pii.KnownPii.NONE : ai.intentoms.order.model.OrderPii.known(orders.get(orderId)); }
+        catch (RuntimeException e) { return ai.intentoms.platform.pii.KnownPii.NONE; }
+    }
+
     /** T0 reason normalisation: acts at confidence ≥ 0.5, the escape option ({@code unclear}) and anything off-taxonomy become {@code other}. */
     private ReasonOutcome normaliseReason(String rmaId, ReturnRequest req, List<ReturnLine> lines, List<String> taxonomy, Actor who) {
         String providedCode = lines.stream().map(ReturnLine::reasonCode).filter(Objects::nonNull).findFirst()
@@ -255,7 +261,7 @@ public class ReturnService {
         boolean allCoded = lines.stream().allMatch(l -> l.reasonCode() != null);
         if (allCoded && (text == null || text.isBlank())) return new ReasonOutcome(providedCode, null);
         Map<String, Object> ret = new LinkedHashMap<>();
-        ret.put("customer_reason_text", text == null ? "" : FreeTextRedactor.redact(text)); // NF-07: free text, no contact details in the decision log
+        ret.put("customer_reason_text", text == null ? "" : FreeTextRedactor.redact(text, orderPii(req.orderId()))); // NF-07: free text, no contact details, names or addresses in the decision log
         ret.put("reason_code", providedCode == null ? "" : providedCode);
         ret.put("item_condition", "unknown");
         Map<String, Object> item = new LinkedHashMap<>();
@@ -711,7 +717,7 @@ public class ReturnService {
             Map<String, Object> ret = new LinkedHashMap<>();
             ret.put("reason", nz(r.reasonCode()));
             ret.put("item_condition", r.condition());
-            ret.put("inspection_notes", FreeTextRedactor.redact(nz(r.inspectionNote())));
+            ret.put("inspection_notes", FreeTextRedactor.redact(nz(r.inspectionNote()), ai.intentoms.order.model.OrderPii.known(order)));
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("sku", first.sku());
             item.put("category", nz(first.attributes().get("category")));
@@ -1103,6 +1109,16 @@ public class ReturnService {
         p.putIfAbsent("disposition", rma.disposition());
         p.putIfAbsent("rmaId", rma.rmaId());
         p.put("fraudConfirmed", ItemCondition.isFraud(rma.condition()));
+        // §2 perfect-order rate: which lines came back, with each line's own reason and inspection grading.
+        List<Map<String, Object>> returned = new ArrayList<>();
+        for (ReturnLine l : rma.lines()) {
+            Map<String, Object> rl = new LinkedHashMap<>();
+            rl.put("lineId", l.lineId());
+            rl.put("reasonCode", l.reasonCode() != null ? l.reasonCode() : rma.reasonCode());
+            rl.put("condition", l.condition() != null ? l.condition() : rma.condition());
+            returned.add(rl);
+        }
+        p.putIfAbsent("returnLines", returned);
         p.putIfAbsent("refundAmount", refundValue(rma));
         return p;
     }

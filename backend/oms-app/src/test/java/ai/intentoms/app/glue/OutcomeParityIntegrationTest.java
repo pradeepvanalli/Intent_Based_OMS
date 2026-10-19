@@ -53,10 +53,16 @@ class OutcomeParityIntegrationTest extends PostgresTestBase {
         assertThat(r.flags()).anyMatch(f -> f.startsWith("Rural customers: on-time rate"));
     }
 
+    @org.springframework.beans.factory.annotation.Autowired ai.intentoms.learning.store.CustomerSubjects customerSubjects;
+
     private void customerWithOrder(String customer, String segment, String decision, double onTime) {
-        facts.insert(new LearnedFact(Ids.prefixed("fact"), SubjectType.CUSTOMER, customer, FactKey.SEGMENT_MEMBERSHIP, new TypedValue.TextValue(segment), 0.9, 10,
+        // NF-07: learning knows the customer by vault token: their facts and the order attribution the learner records.
+        String subject = customerSubjects.key(customer);
+        facts.insert(new LearnedFact(Ids.prefixed("fact"), SubjectType.CUSTOMER, subject, FactKey.SEGMENT_MEMBERSHIP, new TypedValue.TextValue(segment), 0.9, 10,
             "ci_segment_discovery", 1, Instant.now(), null, Instant.now()));
         String orderId = "ord_" + Ids.shortId();
+        jdbc.sql("insert into customer_order_ref(tenant_id, order_id, customer_ref, cohort) values (:t, :o, :c, 'web|single|IL')")
+            .param("t", TENANT).param("o", orderId).param("c", subject).update();
         jdbc.sql("""
             insert into orders(id, tenant_id, channel, channel_order_id, order_type, customer_ref, customer, state_model_id, state_model_version, status, placed_at, search_text)
             values (:id, :t, 'web', :ch, 'standard_ship', :c, cast('{}' as jsonb), 'order', 1, 'delivered', now(), :id)

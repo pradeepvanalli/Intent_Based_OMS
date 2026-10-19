@@ -20,8 +20,10 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * decision_record persistence (FR-DEC-06). Rows are inserted once; the only updates are the override columns (GR-13)
- * and labels (FR-DEC-10). Everything else is immutable by convention and mirrored in the ledger.
+ * decision_record persistence (FR-DEC-06). Rows are inserted once and are append-only in the database (§9.1
+ * decision_log, migration V405): a trigger refuses any change to the decision itself. What arrives later, overrides
+ * (GR-13) and labels (FR-DEC-10), is appended to {@code decision_annotation} by {@link #annotate}, the one method that
+ * also refreshes the record's labels and override columns, which are a read cache of those annotations.
  */
 @Repository
 public class DecisionRecordRepository {
@@ -113,14 +115,53 @@ public class DecisionRecordRepository {
         return jdbc.sql("select distinct tenant_id from decision_record where created_at >= :f order by tenant_id").param("f", Timestamp.from(since)).query(String.class).list();
     }
 
+    /** A person replaced the decision's value (GR-13): appended as an override annotation. */
     public void override(String id, Object newValue, String reason, String by, Instant at) {
-        jdbc.sql("update decision_record set overridden_value = :v, override_reason = :r, overridden_by = :by, overridden_at = :at where tenant_id = :t and id = :id")
-            .param("v", Jsonb.of(Json.write(newValue))).param("r", reason).param("by", by).param("at", Timestamp.from(at)).param("t", TenantContext.require()).param("id", id).update();
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("value", newValue);
+        payload.put("reason", reason);
+        payload.put("by", by);
+        payload.put("at", at == null ? null : at.toString());
+        annotate(id, "override", "override", payload, by, at,
+            "overridden_value = :v, override_reason = :r, overridden_by = :by, overridden_at = :at",
+            Map.of("v", Jsonb.of(Json.write(newValue)), "r", reason == null ? "" : reason, "by", by == null ? "" : by, "at", Timestamp.from(at == null ? Instant.now() : at)));
     }
 
-    /** Merges a label into the labels jsonb (FR-DEC-10). */
+    /** A label (FR-DEC-10): appended as a label annotation; the record's labels cache merges it. */
     public void label(String id, String label, Map<String, Object> details) {
-        jdbc.sql("update decision_record set labels = labels || :l where tenant_id = :t and id = :id")
-            .param("l", Jsonb.of(Map.of(label, details == null ? Map.of() : details))).param("t", TenantContext.require()).param("id", id).update();
+        Map<String, Object> payload = details == null ? Map.of() : details;
+        Object by = payload.get("resolvedBy") != null ? payload.get("resolvedBy") : payload.get("by");
+        annotate(id, "label", label, payload, by == null ? null : String.valueOf(by), Instant.now(), "labels = labels || :l", Map.of("l", Jsonb.of(Map.of(label, payload))));
+    }
+
+    /**
+     * The one write path after insert (§9.1 append-only): appends the annotation and refreshes the record's cache
+     * columns in the same statement. The statement sets {@code oms.decision_annotation} for its own transaction first,
+     * which is what the decision_record trigger lets through, and only for the cache columns.
+     */
+    private void annotate(String id, String kind, String name, Map<String, Object> payload, String by, Instant at, String cacheSet, Map<String, Object> cacheParams) {
+        var spec = jdbc.sql("""
+            with allow as (select set_config('oms.decision_annotation', 'on', true) as on_),
+                 ann as (insert into decision_annotation(annotation_id, tenant_id, decision_record_id, kind, name, payload, created_by, created_at)
+                         select :aid, :t, :id, :kind, :name, :payload, :createdBy, :createdAt
+                         where exists (select 1 from decision_record where tenant_id = :t and id = :id) returning 1)
+            update decision_record set %s from allow where tenant_id = :t and id = :id and allow.on_ = 'on'
+            """.formatted(cacheSet))
+            .param("aid", ai.intentoms.platform.ids.Ids.prefixed("ann")).param("t", TenantContext.require()).param("id", id).param("kind", kind).param("name", name)
+            .param("payload", Jsonb.of(payload)).param("createdBy", by).param("createdAt", Timestamp.from(at == null ? Instant.now() : at));
+        for (Map.Entry<String, Object> e : cacheParams.entrySet()) spec = spec.param(e.getKey(), e.getValue());
+        spec.update();
+        // Scoped to this statement: an enclosing transaction gets no leftover licence to touch the cache columns.
+        jdbc.sql("select set_config('oms.decision_annotation', '', true)").query(String.class).single();
+    }
+
+    /** Every annotation of one record, oldest first (labels, overrides and human resolutions as they were appended). */
+    public List<Map<String, Object>> annotations(String id) {
+        return jdbc.sql("select annotation_id, kind, name, payload::text as payload, created_by, created_at from decision_annotation where tenant_id = :t and decision_record_id = :id order by created_at, annotation_id")
+            .param("t", TenantContext.require()).param("id", id).query().listOfRows().stream().map(r -> {
+                Map<String, Object> m = new java.util.LinkedHashMap<>(r);
+                m.put("payload", Json.readMap((String) r.get("payload")));
+                return m;
+            }).toList();
     }
 }

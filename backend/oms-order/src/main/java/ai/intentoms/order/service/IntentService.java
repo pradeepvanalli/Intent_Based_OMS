@@ -81,7 +81,8 @@ public class IntentService {
         o.put("channel", order.channel());
         // NF-07: notes, gift messages and instructions are free text; contact details typed into them never reach the
         // decision log or a model prompt.
-        o.put("notes", order.notes() == null ? List.of() : order.notes().stream().map(Note::text).filter(t -> t != null && !t.isBlank()).map(FreeTextRedactor::redact).toList());
+        ai.intentoms.platform.pii.KnownPii known = ai.intentoms.order.model.OrderPii.known(order); // names and street addresses too
+        o.put("notes", order.notes() == null ? List.of() : order.notes().stream().map(Note::text).filter(t -> t != null && !t.isBlank()).map(t -> FreeTextRedactor.redact(t, known)).toList());
         o.put("intent_choices", order.intent() == null || order.intent().explicitChoices() == null ? List.of() : order.intent().explicitChoices());
         o.put("has_hazmat", order.hasHazmat());
         o.put("order_type", order.orderType());

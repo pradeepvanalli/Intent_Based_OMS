@@ -20,7 +20,8 @@ test('erasing a customer twice: the second call is a repeat, and their learned f
     if (facts.length > 0) { customer = ref; before = facts; }
   }
   expect(customer, 'a seeded customer with learned facts').not.toBe('');
-  expect(before.every((f) => f.subjectId === customer)).toBe(true);
+  // NF-07: asked for by reference, stored under the vault token (never the raw cust- reference).
+  expect(before.every((f) => /^cu_[0-9a-f]{20}$/.test(f.subjectId) && f.subjectId === before[0].subjectId), JSON.stringify(before.map((f) => f.subjectId))).toBe(true);
 
   // Only a privacy officer may erase (admin holds privacy.erase); a CS rep may not.
   expect((await (await apiAs('cs')).post(`/api/v1/admin/customers/${customer}/erase`)).status()).toBe(403);
@@ -28,6 +29,7 @@ test('erasing a customer twice: the second call is a repeat, and their learned f
   const first = await ok<Erasure>(admin.post(`/api/v1/admin/customers/${customer}/erase`));
   expect(first).toMatchObject({ firstTime: true, erased: true });
   expect(first.pseudonym).toMatch(/^cu_/);
+  expect(first.pseudonym, 'the erasure pseudonym is the token the facts were kept under').toBe(before[0].subjectId);
   const second = await ok<Erasure>(admin.post(`/api/v1/admin/customers/${customer}/erase`));
   expect(second).toMatchObject({ firstTime: false, erased: true, pseudonym: first.pseudonym });
 

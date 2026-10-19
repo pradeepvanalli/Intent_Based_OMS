@@ -108,12 +108,17 @@ public class AgentOrderService {
         if (instruction == null || instruction.isBlank()) throw new ValidationException("instructionText is required as evidence on agent orders (FR-CAP-07)");
 
         List<ScreenResult> screens = new ArrayList<>();
-        screens.add(screen.screen("agent_instruction", instruction));
+        // NF-07: the buyer's own name, address lines and contact details are removed from the screened text too.
+        java.util.List<String> names = new ArrayList<>(), lines1 = new ArrayList<>(), emails = new ArrayList<>(), phones = new ArrayList<>();
+        if (in.customer() != null) { names.add(in.customer().name()); emails.add(in.customer().email()); phones.add(in.customer().phone()); }
+        if (in.addresses() != null) for (CaptureRequest.AddressInput a : in.addresses()) { if (a == null) continue; names.add(a.name()); lines1.add(a.line1()); lines1.add(a.line2()); phones.add(a.phone()); }
+        ai.intentoms.platform.pii.KnownPii known = new ai.intentoms.platform.pii.KnownPii(names, lines1, emails, phones);
+        screens.add(screen.screen("agent_instruction", instruction, "agent_text", "agent_instruction", known));
         List<CaptureRequest.NoteInput> notes = new ArrayList<>();
         for (CaptureRequest.NoteInput n : in.notes()) {
             String text = AgentTextSanitizer.sanitize(n.text());
             if (text == null || text.isBlank()) continue;
-            screens.add(screen.screen("agent_note", text));
+            screens.add(screen.screen("agent_note", text, "agent_text", "agent_note", known));
             notes.add(new CaptureRequest.NoteInput("agent", agent.id(), text, Boolean.TRUE.equals(n.customerVisible())));
         }
         boolean flagged = screens.stream().anyMatch(ScreenResult::flagged);

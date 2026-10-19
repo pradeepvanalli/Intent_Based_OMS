@@ -56,8 +56,8 @@ export function areaOf(requirement: string | null | undefined): string {
 export const EVENT_DRIVEN = new Set(['node_reliability', 'lane_transit', 'inventory_backorder', 'sourcing_policy_bandit']);
 
 const METRIC: Record<string, string> = {
-  reward: 'Overall outcome score', fill: 'Units shipped', otd: 'On-time delivery', cost: 'Cost to serve', split: 'Split shipments',
-  fraud: 'Fraud loss', cx: 'Customer contacts', inv: 'Aged stock sold', perfect: 'Perfect orders', perfect_order_rate: 'Perfect-order rate',
+  reward: 'Overall outcome score', fill: 'Units shipped on the first attempt', fill_all_attempts: 'Units shipped (any attempt)', otd: 'On-time delivery', cost: 'Cost to serve', split: 'Split shipments',
+  fraud: 'Fraud loss', cx: 'Customer contacts', inv: 'Aged stock sold', perfect: 'Perfect orders', perfect_lines: 'Perfect lines', lines: 'Order lines', perfect_order_rate: 'Perfect-order rate',
 };
 export const metricName = (m: string): string => METRIC[m] ?? humanize(m);
 

@@ -87,6 +87,24 @@ public class ExperimentController {
         return experiments.ensureHoldout(share, actorRef());
     }
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ai.intentoms.learning.experiment.ExperimentTrafficRouter router;
+
+    /**
+     * EX-04: whether a customer is in the running persistent holdout. Membership is a sticky hash of the customer's vault
+     * token (NF-07), which only the server can compute, so tools and people ask here instead of re-hashing the reference.
+     */
+    @GetMapping("/experiments/holdout/members/{customerRef}")
+    @RequiresPermission(Permissions.LEARNING_READ)
+    public Map<String, Object> holdoutMember(@PathVariable String customerRef) {
+        Experiment holdout = experiments.running().stream().filter(e -> e.mode() == ExperimentMode.HOLDOUT).findFirst().orElse(null);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("customerRef", customerRef);
+        out.put("experimentId", holdout == null ? null : holdout.experimentId());
+        out.put("inHoldout", holdout != null && router != null && router.inHoldout("customer:" + customerRef));
+        return out;
+    }
+
     /** XP-01: cumulative lift against the persistent holdout, per metric, with confidence intervals. */
     @GetMapping("/lift")
     @RequiresPermission(Permissions.LEARNING_READ)
