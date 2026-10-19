@@ -121,6 +121,7 @@ Values are JSON. Strings written through the API are plain JSON strings. Default
 | `sourcing.backorder_lead_days` | 14 | Promise offset when nothing is in stock |
 | `sourcing.order_type_constraints` | from `order-types.yaml` | `{orderType: {nodeTypes, capabilities, maxDistanceKm, allowBackorder, includeInbound}}` |
 | `sourcing.reject_penalty` | 0.3 | Penalty added to node+SKU on a store reject or timeout |
+| `sourcing.aged_stock_tiebreak_cost_pct` | 0.03 | IU-03 base cost tolerance of the aged-stock tie-break (only while `sourcing.aged_stock_tiebreak` is promoted). The tolerance applied is this base × the live objective's aged-stock weight ÷ its cost weight: a same-policy plan that ships older stock, keeps the margin floor and is no later is preferred when it costs at most that much more. Balanced weights → the base; aged stock weighted 2× cost → twice the base; aged-stock weight 0 → never |
 
 ### Inventory
 | Key | Default | Meaning |
