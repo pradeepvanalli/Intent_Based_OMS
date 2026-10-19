@@ -16,6 +16,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.UnexpectedRollbackException;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -44,6 +47,7 @@ class ReservationServiceTest extends PostgresTestBase {
     @Autowired InventoryService inventory;
     @Autowired EventStore events;
     @Autowired TimeSource time;
+    @Autowired PlatformTransactionManager txManager;
 
     @AfterEach
     void resetClock() { time.reset(); }
@@ -126,6 +130,38 @@ class ReservationServiceTest extends PostgresTestBase {
         assertThat(inventory.atp(a, "dc1").available()).isZero();
         assertThat(inventory.atp(b, "dc1").available()).isZero();
         assertThat(inventory.networkAtp(List.of(a, b))).containsEntry(a, 0).containsEntry(b, 0);
+    }
+
+    @Test
+    void aShortageInsideACallersTransactionIsAResultAndTheTransactionStillCommits() {
+        String sku = sku(), held = ref(), late = ref();
+        inventory.upsert(List.of(InventoryPosition.onHand(sku, "dc1", 3)), "wms");
+        TransactionTemplate outer = new TransactionTemplate(txManager);
+
+        // Audit A1: a workflow step reserves inside its own transaction. The shortage must come back as a value, so the
+        // step's other writes (here the first reservation) commit and the caller can re-source.
+        ReservationService.ReserveAttempt attempt = outer.execute(s -> {
+            reservations.reserveAll(List.of(new ReservationLine(sku, "dc1", 2)), "order", held, null);
+            return reservations.tryReserveAll(List.of(new ReservationLine(sku, "dc1", 2)), "order", late, null);
+        });
+        assertThat(attempt.ok()).isFalse();
+        assertThat(attempt.reserved()).isEmpty();
+        assertThat(attempt.shortage()).containsEntry("sku", sku).containsEntry("nodeId", "dc1").containsEntry("available", 1).containsEntry("requested", 2);
+        assertThat(reservations.forRef(held)).hasSize(1);
+        assertThat(reservations.forRef(late)).isEmpty();
+
+        // The throwing variant, caught by the caller, leaves the same transaction rollback-only: the A1 defect.
+        String other = ref();
+        assertThatThrownBy(() -> outer.executeWithoutResult(s -> {
+            reservations.reserveAll(List.of(new ReservationLine(sku, "dc1", 1)), "order", other, null);
+            try { reservations.reserveAll(List.of(new ReservationLine(sku, "dc1", 5)), "order", ref(), null); } catch (ConflictException expected) { /* caught */ }
+        })).isInstanceOf(UnexpectedRollbackException.class);
+        assertThat(reservations.forRef(other)).isEmpty();
+
+        ReservationService.ReserveAttempt fits = reservations.tryReserveAll(List.of(new ReservationLine(sku, "dc1", 1)), "order", late, null);
+        assertThat(fits.ok()).isTrue();
+        assertThat(fits.reserved()).singleElement().satisfies(r -> assertThat(r.qty()).isEqualTo(1));
+        assertThat(inventory.atp(sku, "dc1").available()).isZero();
     }
 
     @Test

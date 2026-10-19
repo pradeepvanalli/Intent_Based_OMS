@@ -75,6 +75,19 @@ public class DefaultReservationService implements ReservationService {
     @Override
     @Transactional
     public List<Reservation> reserveAll(List<ReservationLine> lines, String source, String refId, Duration ttl) {
+        ReserveAttempt attempt = attempt(lines, source, refId, ttl);
+        if (!attempt.ok()) throw new ConflictException(INSUFFICIENT, attempt.shortage());
+        return attempt.reserved();
+    }
+
+    @Override
+    @Transactional
+    public ReserveAttempt tryReserveAll(List<ReservationLine> lines, String source, String refId, Duration ttl) {
+        return attempt(lines, source, refId, ttl);
+    }
+
+    /** The reservation itself; a shortage is a result here, so it never crosses a transactional boundary as an exception. */
+    private ReserveAttempt attempt(List<ReservationLine> lines, String source, String refId, Duration ttl) {
         if (lines == null || lines.isEmpty()) throw new ValidationException("At least one reservation line is required");
         if (source == null || source.isBlank()) throw new ValidationException("source is required");
         if (refId == null || refId.isBlank()) throw new ValidationException("refId is required");
@@ -103,7 +116,7 @@ public class DefaultReservationService implements ReservationService {
                 metrics.count("oms.inventory.insufficient", "source", source);
                 Map<String, Object> details = new LinkedHashMap<>(shortfalls.get(0));
                 if (shortfalls.size() > 1) details.put("lines", shortfalls);
-                throw new ConflictException(INSUFFICIENT, details);
+                return new ReserveAttempt(List.of(), details);
             }
 
             Actor actor = Actor.parse(authz.actorRef());
@@ -119,7 +132,7 @@ public class DefaultReservationService implements ReservationService {
             }
             cache.invalidateAll(tenant, skus);
             metrics.count("oms.inventory.reserved", "source", source);
-            return out;
+            return new ReserveAttempt(List.copyOf(out), null);
         }, "lines", lines.size() == 1 ? "single" : "multi");
     }
 
