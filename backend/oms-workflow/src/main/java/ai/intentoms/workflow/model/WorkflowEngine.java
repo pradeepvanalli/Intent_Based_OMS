@@ -24,7 +24,22 @@ public interface WorkflowEngine {
 
     void signalById(String workflowId, String name, Map<String, Object> payload, String idempotencyKey);
 
+    /**
+     * Signals the instance when it exists and returns whether it did. Use this instead of catching
+     * {@code NotFoundException} from {@link #signal}: an exception thrown inside the caller's transaction marks that
+     * transaction rollback-only even when it is caught.
+     */
+    default boolean signalIfPresent(String type, String businessKey, String name, Map<String, Object> payload, String idempotencyKey) {
+        if (find(type, businessKey).isEmpty()) return false;
+        signal(type, businessKey, name, payload, idempotencyKey);
+        return true;
+    }
+
     Optional<WorkflowView> find(String type, String businessKey);
+
+    /** Non-throwing lookup: check before signalling, because a {@code NotFoundException} thrown inside a caller's
+     * transaction marks that whole transaction rollback-only even when the caller catches it. */
+    Optional<WorkflowView> findById(String workflowId);
 
     WorkflowView get(String workflowId);
 

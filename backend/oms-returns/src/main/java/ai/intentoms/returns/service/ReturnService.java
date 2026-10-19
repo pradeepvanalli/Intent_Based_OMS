@@ -1070,11 +1070,37 @@ public class ReturnService {
     }
 
     private void append(ReturnRma rma, String type, Map<String, Object> payload, Actor who, String causationId) {
+        if (ReturnEvents.DISPOSITIONED.equals(type) || ReturnEvents.REFUNDED.equals(type)) payload = outcomeFacts(rma, payload);
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("orderId", rma.orderId());
         meta.put("channel", rma.channel());
         if (rma.customerRef() != null) meta.put("customerRef", rma.customerRef());
         events.append(ENTITY, rma.rmaId(), -1, List.of(new NewEvent(type, payload, who, causationId, rma.orderId(), meta)));
+    }
+
+    /**
+     * OC-03 / FD-06: what the self-optimizing layer needs to score the decisions behind the order this return came back
+     * from. {@code fraudConfirmed} comes from return grading: an inspection that found a different item than the one
+     * sold ({@code wrong_item}) is confirmed return fraud. {@code refundAmount} is the refund issued, or the value of
+     * the returned lines while the refund is still pending.
+     */
+    static Map<String, Object> outcomeFacts(ReturnRma rma, Map<String, Object> payload) {
+        Map<String, Object> p = new LinkedHashMap<>(payload);
+        p.putIfAbsent("orderId", rma.orderId());
+        if (rma.customerRef() != null) p.putIfAbsent("customerRef", rma.customerRef());
+        if (rma.reasonCode() != null) p.putIfAbsent("reasonCode", rma.reasonCode());
+        if (rma.condition() != null) p.putIfAbsent("condition", rma.condition());
+        p.putIfAbsent("disposition", rma.disposition());
+        p.put("fraudConfirmed", ItemCondition.WRONG_ITEM.equals(rma.condition()));
+        p.putIfAbsent("refundAmount", refundValue(rma));
+        return p;
+    }
+
+    private static double refundValue(ReturnRma rma) {
+        if (rma.refund() != null && rma.refund().amount() != null && RefundInfo.SUCCEEDED.equals(rma.refund().status())) return rma.refund().amount().doubleValue();
+        double v = 0;
+        for (ReturnLine l : rma.lines()) if (l.unitPrice() != null && l.unitPrice().amount() != null) v += l.unitPrice().amount().doubleValue() * l.qty();
+        return Math.round(v * 100) / 100.0;
     }
 
     private void completeTask(String taskId, String outcome, String reason) {

@@ -22,7 +22,8 @@ import java.util.Optional;
 @Component
 public class LlmSegmentNamer implements SegmentNamer {
     private static final Logger log = LoggerFactory.getLogger(LlmSegmentNamer.class);
-    static final String FEATURE = "learning.segment_naming";
+    /** Metered as a {@code learning_*} feature so it counts against the monthly learning LLM budget (NF-03). */
+    static final String FEATURE = "learning_segment_naming";
     static final String SYSTEM = """
         You name customer segments for an order-management team. Each segment comes with its size and the average of four
         behaviours: split_tolerance (0..1, how happily they accept an order in several packages), speed_vs_cost (-1 cost
@@ -37,13 +38,26 @@ public class LlmSegmentNamer implements SegmentNamer {
             "label", JsonSchema.string("Five words or fewer"),
             "description", JsonSchema.string("One sentence, max 200 characters")))));
 
+    static final String ROLE = "analyst";
+    static final String PROMPT = "segment-naming";
+
     private final CopilotLlmClient llm;
+    private final LearningLlmAudit audit;
 
-    public LlmSegmentNamer(CopilotLlmClient llm) { this.llm = llm; }
+    public LlmSegmentNamer(CopilotLlmClient llm, LearningLlmAudit audit) {
+        this.llm = llm;
+        this.audit = audit;
+    }
 
+    /**
+     * NF-03 / §6.3: the call counts against the tenant's monthly learning LLM budget (its feature is metered with the
+     * other {@code learning_*} features) and is written to the learning LLM audit with its schema and prompt hashes;
+     * when the budget is spent the call is skipped and the template names are used.
+     */
     @Override
     public Optional<List<Name>> name(List<Profile> profiles, Map<String, Double> overallMeans) {
         if (!llm.available() || profiles.isEmpty()) return Optional.empty();
+        if (!audit.withinBudget(ROLE, FEATURE, "segments", null, SCHEMA, PROMPT)) return Optional.empty();
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("overall", overallMeans);
         List<Map<String, Object>> segs = new ArrayList<>();
@@ -55,11 +69,14 @@ public class LlmSegmentNamer implements SegmentNamer {
             for (JsonNode n : out.path("segments")) {
                 String label = n.path("label").asText("").trim();
                 String desc = n.path("description").asText("").trim();
-                if (label.isEmpty()) return Optional.empty();
+                if (label.isEmpty()) { audit.record(ROLE, FEATURE, "segments", null, SCHEMA, PROMPT, SYSTEM, "invalid", null); return Optional.empty(); }
                 names.add(new Name(label.length() > 60 ? label.substring(0, 60) : label, desc.length() > 240 ? desc.substring(0, 240) : desc));
             }
-            return names.size() == profiles.size() ? Optional.of(names) : Optional.empty();
+            boolean ok = names.size() == profiles.size();
+            audit.record(ROLE, FEATURE, "segments", null, SCHEMA, PROMPT, SYSTEM, ok ? "ok" : "invalid", null);
+            return ok ? Optional.of(names) : Optional.empty();
         } catch (RuntimeException e) {
+            audit.record(ROLE, FEATURE, "segments", null, SCHEMA, PROMPT, SYSTEM, "error", null);
             log.warn("Segment naming by the analyst model failed, using template names: {}", e.toString());
             return Optional.empty();
         }

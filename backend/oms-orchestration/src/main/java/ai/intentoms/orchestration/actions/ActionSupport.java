@@ -45,8 +45,9 @@ public class ActionSupport {
 
     /** Signals the order's workflow; a missing instance is logged, never thrown. Returns whether it was delivered. */
     public boolean signal(Order order, String name, Map<String, Object> payload, String idempotencyKey) {
-        try { engine.signal(workflowType(order), order.id(), name, payload, idempotencyKey); return true; }
-        catch (NotFoundException e) { log.debug("No workflow for order {}: signal {} dropped", order.id(), name); return false; }
+        if (engine.signalIfPresent(workflowType(order), order.id(), name, payload, idempotencyKey)) return true;
+        log.debug("No workflow for order {}: signal {} dropped", order.id(), name);
+        return false;
     }
 
     public WorkflowEngine engine() { return engine; }

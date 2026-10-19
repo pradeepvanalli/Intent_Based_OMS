@@ -151,7 +151,7 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         evt.put("lines", shippedByLine);
         evt.put("captured", capture.get("captured"));
         evt.put("allShipped", allShipped);
-        evt.putAll(outcomeFacts(fresh, group, nodeId, shipLines));
+        evt.putAll(outcomeFacts(fresh, group, nodeId, shipLines, shipment.id()));
         if (!groupsDone.isEmpty()) s.markGroups(order.id(), groupsDone, "shipped", null);
         s.appendOrderEvent(order.id(), "order.shipped", evt);
         notifier.notify(order.id(), "email", "shipped", "Your order has shipped", "Shipment " + shipment.tracking() + " (" + shipment.carrier() + ") with " + shipLines.size() + " line(s)",
@@ -167,25 +167,27 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
     }
 
     /**
-     * OC-03: what the self-optimizing layer needs to score the fulfilment decisions behind this shipment (reward fill,
-     * cost and split terms). {@code packageCount} counts the order's live packages (rejected or cancelled groups do not
-     * ship); {@code storeRejected} says some node rejected part of the order before it shipped; {@code splitAvoided} is
-     * a multi-line order going out as one package. Units are per package: planned for this package versus shipped in
-     * it, so fill sums correctly across an order's shipments. Cost is the package's planned fulfilment cost; order value
-     * is the order's grand total.
+     * OC-03: what the self-optimizing layer needs to score the fulfilment decisions behind this parcel (reward fill,
+     * cost and split terms). The event is one parcel ({@code shipmentId}, the units in it); {@code unitsOrdered} and
+     * {@code fulfillmentCost} are its fulfilment group's planned units and cost and {@code orderValue} the order's total,
+     * so a consumer counts them once per group / order however many parcels a group ships in, and counts parcels by
+     * distinct {@code shipmentId}. {@code packageCount} is how many live packages the order's plan has (customer
+     * preference learning reads it as the split the customer saw); {@code storeRejected} says some node rejected part of
+     * the order before it shipped; {@code splitAvoided} is a multi-line order planned as one package.
      */
-    static Map<String, Object> outcomeFacts(Order order, FulfilmentGroup group, String nodeId, List<ShipmentRecord.Line> shipLines) {
+    static Map<String, Object> outcomeFacts(Order order, FulfilmentGroup group, String nodeId, List<ShipmentRecord.Line> shipLines, String shipmentId) {
         List<FulfilmentGroup> live = order.fulfilmentGroups().stream().filter(g -> !Set.of("rejected", "cancelled").contains(String.valueOf(g.status()).toLowerCase(java.util.Locale.ROOT))).toList();
-        int packages = Math.max(1, live.size());
+        int plannedPackages = Math.max(1, live.size());
         int unitsShipped = shipLines.stream().mapToInt(ShipmentRecord.Line::qty).sum();
         int unitsPlanned = group != null ? group.allocations().stream().mapToInt(FulfilmentGroup.Allocation::qty).sum() : order.lines().stream().mapToInt(OrderLine::qty).sum();
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("orderId", order.id());
         if (order.customerRef() != null) m.put("customerRef", order.customerRef());
         if (group != null) m.put("fulfilmentGroupId", group.id());
+        if (shipmentId != null) m.put("shipmentId", shipmentId);
         m.put("nodeIds", nodeId == null ? List.of() : List.of(nodeId));
-        m.put("packageCount", packages);
-        m.put("splitAvoided", packages == 1 && order.lines().size() > 1);
+        m.put("packageCount", plannedPackages);
+        m.put("splitAvoided", plannedPackages == 1 && order.lines().size() > 1);
         m.put("storeRejected", order.fulfilmentGroups().stream().anyMatch(g -> "rejected".equalsIgnoreCase(g.status())));
         m.put("unitsOrdered", Math.max(unitsPlanned, unitsShipped));
         m.put("unitsShipped", unitsShipped);
@@ -246,7 +248,9 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         details.put("reason", String.valueOf(payload.getOrDefault("reason", kind)));
         details.put("resourceStatus", resource.get("status"));
         String message = Signals.SHORT_PICK.equals(kind) ? "Short pick: inventory shortage at " + nodeId : "Store rejected the release at " + nodeId;
-        Map<String, Object> exc = s.raise("wms", kind, message + " for lines " + affected.keySet(), order.id(), affected.size() == 1 ? affected.keySet().iterator().next() : null, nodeId, details, null);
+        // The workflow has already re-sourced (and penalised the rejecting node); "" records the exception without
+        // running the taxonomy playbook, which would re-source a second time and penalise the new, innocent node.
+        Map<String, Object> exc = s.raise("wms", kind, message + " for lines " + affected.keySet(), order.id(), affected.size() == 1 ? affected.keySet().iterator().next() : null, nodeId, details, null, "");
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("transitions", transitions);
         out.put("reservationsReleased", released);
@@ -329,50 +333,119 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         }
     }
 
+    /**
+     * A carrier delivery scan delivers exactly the parcels it names: their line units move to delivered, a fulfilment
+     * group becomes delivered once every parcel of a fully shipped group has arrived, and the order is delivered only
+     * when every line is delivered or cancelled. One {@code order.delivered} event is appended per fulfilment group the
+     * scan touched, with on-time against that group's own promise date, so the self-optimizing layer scores each
+     * package's decision once. The webhook may already have moved the parcels' shipment records to delivered; the line
+     * units still move here, bounded by what is actually in the shipped state (a re-delivered scan changes nothing).
+     */
     Map<String, Object> deliver(Order order, Map<String, Object> payload) {
         List<Map<String, Object>> transitions = new ArrayList<>();
-        List<String> delivered = new ArrayList<>();
-        for (ShipmentRecord sh : shipmentsFor(order, payload)) {
-            if ("delivered".equals(sh.status())) continue;
-            shipments.markDelivered(sh.id(), OrderWorkflowSupport.ACTOR);
-            for (ShipmentRecord.Line l : sh.lines()) transitions.add(s.fireLine(order.id(), l.lineId(), "event.delivered", l.qty(), Map.of()));
-            delivered.add(sh.id());
+        List<ShipmentRecord> targets = deliveryTargets(order, payload);
+        Map<String, List<String>> deliveredByGroup = new LinkedHashMap<>();
+        Map<String, Set<String>> linesByGroup = new LinkedHashMap<>();
+        for (ShipmentRecord sh : targets) {
+            if (!"delivered".equals(sh.status())) shipments.markDelivered(sh.id(), OrderWorkflowSupport.ACTOR);
+            String group = sh.fulfilmentGroupId() == null ? "" : sh.fulfilmentGroupId();
+            for (ShipmentRecord.Line l : sh.lines()) {
+                int qty = Math.min(l.qty(), s.qtyIn(order, l.lineId(), "shipped"));
+                if (qty > 0) transitions.add(s.fireLine(order.id(), l.lineId(), "event.delivered", qty, Map.of()));
+                linesByGroup.computeIfAbsent(group, k -> new LinkedHashSet<>()).add(l.lineId());
+            }
+            deliveredByGroup.computeIfAbsent(group, k -> new ArrayList<>()).add(sh.id());
         }
-        if (delivered.isEmpty()) {
-            // No shipment matched (e.g. shipped before shipments were tracked): deliver whatever is shipped.
+        if (targets.isEmpty() && shipments.forOrder(order.id()).isEmpty()) {
+            // Shipped before shipments were tracked: no parcel identity exists, so deliver whatever is shipped.
             for (OrderLine l : order.lines()) if (s.qtyIn(order, l.lineId(), "shipped") > 0) transitions.add(s.fireLine(order.id(), l.lineId(), "event.delivered", null, Map.of()));
+            deliveredByGroup.put("", List.of());
         }
         Order fresh = s.orders().get(order.id());
         boolean all = s.allLinesIn(fresh, Set.of("delivered", "cancelled"));
-        Set<String> groups = new LinkedHashSet<>();
-        if (all) for (FulfilmentGroup g : fresh.fulfilmentGroups()) if ("shipped".equalsIgnoreCase(g.status()) || "released".equalsIgnoreCase(g.status())) groups.add(g.id());
-        if (!groups.isEmpty()) s.markGroups(fresh.id(), groups, "delivered", null);
-        Map<String, Object> evt = new LinkedHashMap<>();
-        evt.put("shipments", delivered);
-        evt.put("tracking", String.valueOf(payload.getOrDefault("tracking", "")));
-        evt.put("allDelivered", all);
-        // On-time/late/damaged, computed here against each group's own promise date rather than left for a consumer
-        // to guess (SOO's OutcomeObserver, and the reward's otd term, read these fields directly and otherwise have
-        // no basis to compute them). A group with no promiseDate (not every policy sets one) doesn't penalize.
-        java.time.LocalDate today = java.time.LocalDate.now();
-        boolean onTime = true;
-        long lateByHours = 0;
+        List<ShipmentRecord> allShipments = shipments.forOrder(order.id());
+        Set<String> groupsDone = new LinkedHashSet<>();
         for (FulfilmentGroup g : fresh.fulfilmentGroups()) {
-            if (g.promiseDate() == null || !"delivered".equalsIgnoreCase(g.status())) continue;
-            if (today.isAfter(g.promiseDate())) {
-                onTime = false;
-                lateByHours = Math.max(lateByHours, java.time.temporal.ChronoUnit.HOURS.between(g.promiseDate().atStartOfDay(), today.atStartOfDay()));
-            }
+            boolean shippedGroup = "shipped".equalsIgnoreCase(g.status()) || (all && "released".equalsIgnoreCase(g.status()));
+            if (!shippedGroup) continue;
+            List<ShipmentRecord> parcels = allShipments.stream().filter(sh -> g.id().equals(sh.fulfilmentGroupId())).toList();
+            boolean arrived = all || (!parcels.isEmpty() && parcels.stream().allMatch(sh -> "delivered".equals(sh.status())));
+            if (arrived) groupsDone.add(g.id());
         }
-        evt.put("onTime", onTime);
-        evt.put("lateByHours", lateByHours);
-        evt.put("damaged", Boolean.TRUE.equals(payload.get("damaged")));
-        evt.put("lost", Boolean.TRUE.equals(payload.get("lost")));
-        s.appendOrderEvent(order.id(), "order.delivered", evt);
+        if (!groupsDone.isEmpty()) s.markGroups(fresh.id(), groupsDone, "delivered", null);
+        Order afterGroups = s.orders().get(order.id());
+
+        java.time.LocalDate today = java.time.LocalDate.now();
+        boolean damaged = Boolean.TRUE.equals(payload.get("damaged"));
+        boolean lost = Boolean.TRUE.equals(payload.get("lost"));
+        boolean anyLate = false;
+        long worstLate = 0;
+        List<String> deliveredIds = new ArrayList<>();
+        for (Map.Entry<String, List<String>> entry : deliveredByGroup.entrySet()) {
+            String groupId = entry.getKey();
+            FulfilmentGroup g = groupId.isEmpty() ? null : afterGroups.fulfilmentGroups().stream().filter(x -> x.id().equals(groupId)).findFirst().orElse(null);
+            boolean onTime = true;
+            long lateByHours = 0;
+            // On-time against the group's own promise date (a group with no promise date, e.g. no policy set one, is
+            // not penalised); the legacy no-parcel case judges every delivered group of the order.
+            List<FulfilmentGroup> judged = g != null ? List.of(g) : afterGroups.fulfilmentGroups().stream().filter(x -> "delivered".equalsIgnoreCase(x.status())).toList();
+            for (FulfilmentGroup jg : judged) {
+                if (jg.promiseDate() != null && today.isAfter(jg.promiseDate())) {
+                    onTime = false;
+                    lateByHours = Math.max(lateByHours, java.time.temporal.ChronoUnit.HOURS.between(jg.promiseDate().atStartOfDay(), today.atStartOfDay()));
+                }
+            }
+            anyLate |= !onTime;
+            worstLate = Math.max(worstLate, lateByHours);
+            deliveredIds.addAll(entry.getValue());
+            Map<String, Object> evt = new LinkedHashMap<>();
+            evt.put("orderId", order.id());
+            if (g != null) evt.put("fulfilmentGroupId", g.id());
+            if (g != null && g.nodeId() != null) evt.put("nodeIds", List.of(g.nodeId()));
+            evt.put("shipments", entry.getValue());
+            evt.put("lineIds", List.copyOf(linesByGroup.getOrDefault(groupId, Set.of())));
+            evt.put("tracking", String.valueOf(payload.getOrDefault("tracking", "")));
+            evt.put("groupDelivered", g == null || groupsDone.contains(g.id()));
+            evt.put("allDelivered", all);
+            evt.put("onTime", onTime);
+            evt.put("lateByHours", lateByHours);
+            evt.put("damaged", damaged);
+            evt.put("lost", lost);
+            s.appendOrderEvent(order.id(), "order.delivered", evt);
+        }
         if (all) notifier.notify(order.id(), "email", "delivered", "Your order was delivered", "All items of order " + order.id() + " were delivered", Map.of());
-        Map<String, Object> out = new LinkedHashMap<>(evt);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("shipments", deliveredIds);
+        out.put("groupsDelivered", List.copyOf(groupsDone));
+        out.put("allDelivered", all);
+        out.put("onTime", !anyLate);
+        out.put("lateByHours", worstLate);
         out.put("transitions", transitions);
         return out;
+    }
+
+    /**
+     * The parcels a delivery scan refers to: the list the webhook resolved ({@code shipments}), else the named shipment,
+     * else the tracking number, else (only when the scan identifies nothing) every undelivered parcel of the order.
+     */
+    @SuppressWarnings("unchecked")
+    private List<ShipmentRecord> deliveryTargets(Order order, Map<String, Object> payload) {
+        if (payload.get("shipments") instanceof List<?> named && !named.isEmpty()) {
+            List<ShipmentRecord> out = new ArrayList<>();
+            for (Object o : named) {
+                String id = o instanceof Map<?, ?> m ? OrderWorkflowSupport.str(((Map<String, Object>) m).get("shipmentId")) : OrderWorkflowSupport.str(o);
+                if (id != null) shipments.find(id).filter(sh -> sh.orderId().equals(order.id())).ifPresent(out::add);
+            }
+            return out;
+        }
+        String id = OrderWorkflowSupport.str(payload.get("shipmentId"));
+        if (id != null) return shipments.find(id).map(List::of).orElse(List.of());
+        String tracking = OrderWorkflowSupport.str(payload.get("tracking"));
+        if (tracking != null) {
+            List<ShipmentRecord> byTracking = shipments.byTracking(tracking).stream().filter(sh -> sh.orderId().equals(order.id())).toList();
+            if (!byTracking.isEmpty()) return byTracking;
+        }
+        return shipments.forOrder(order.id()).stream().filter(sh -> !"delivered".equals(sh.status())).toList();
     }
 
     /**

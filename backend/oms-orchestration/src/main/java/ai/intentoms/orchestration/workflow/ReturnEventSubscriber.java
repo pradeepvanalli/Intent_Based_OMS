@@ -47,6 +47,9 @@ public class ReturnEventSubscriber implements EventSubscriber {
 
     private void onTaskCompleted(Event e) {
         if (!"return".equals(e.payload().get("subjectType")) || e.payload().get("workflowId") != null) return;
+        // A decision-escalation task on a return subject belongs to the decision fabric
+        // (DecisionEscalationTaskSubscriber), not to the return workflow.
+        if ("decision_escalation".equals(e.payload().get("type"))) return;
         String rmaId = String.valueOf(e.payload().get("subjectId"));
         String taskId = String.valueOf(e.payload().get("taskId"));
         Map<String, Object> payload = new LinkedHashMap<>(e.payload());
@@ -55,13 +58,13 @@ public class ReturnEventSubscriber implements EventSubscriber {
     }
 
     private void signal(String rmaId, String name, Map<String, Object> payload, String idempotencyKey) {
-        try {
-            engine.signal(ReturnWorkflow.TYPE, rmaId, name, payload, idempotencyKey);
-        } catch (NotFoundException missing) {
+        // Look first rather than catching NotFoundException: the engine's signal is transactional, and an exception
+        // thrown inside the delivery transaction marks it rollback-only even when caught here.
+        if (engine.find(ReturnWorkflow.TYPE, rmaId).isEmpty()) {
             // RMA created before the workflow existed (or by a direct store write): start it, then deliver the signal.
             engine.start(ReturnWorkflow.TYPE, rmaId, Map.of("rmaId", rmaId));
-            engine.signal(ReturnWorkflow.TYPE, rmaId, name, payload, idempotencyKey);
             log.info("Started return workflow for {} on late event {}", rmaId, name);
         }
+        engine.signal(ReturnWorkflow.TYPE, rmaId, name, payload, idempotencyKey);
     }
 }

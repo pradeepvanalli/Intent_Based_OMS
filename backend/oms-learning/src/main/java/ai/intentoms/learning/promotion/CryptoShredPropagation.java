@@ -21,12 +21,15 @@ import java.util.Map;
  * sizes are recounted from the memberships that remain, and the live fact cache is emptied so no decision reads a
  * deleted fact afterwards. Learners then retrain on what is left: customer learners only ever see new events.
  *
- * <p>Episodes and outcomes are not deleted: they hold order ids, reward numbers and typed outcome fields, never a
- * name, email, address or customer token, so there is nothing personal in them to shred (NF-07).
+ * <p>The preference evidence and order attribution those facts were learned from are deleted too, so a learner never
+ * re-learns an erased customer from what was kept. Episodes whose decision was about the customer go; episodes of
+ * their orders stay, since they hold order ids, reward numbers and typed outcome fields, never a name, email, address
+ * or customer token (NF-07).
  *
- * <p>Triggered two ways: {@link ai.intentoms.platform.pii.Tokenizer#shred} (the tenant's whole PII key is rotated, so
- * every customer- and address-scoped fact goes) publishes {@link PiiShreddedEvent}; a single customer deletion calls
- * {@link #purgeSubject}. Both are ledger events ({@code learning.shred_propagated}).
+ * <p>Triggered by {@link PiiShreddedEvent}: {@link ai.intentoms.platform.pii.Tokenizer#shred} (the tenant's whole PII
+ * key is rotated, so every customer- and address-scoped fact goes) or {@link ai.intentoms.platform.pii.Tokenizer#shredSubject}
+ * (one customer, from {@code POST /api/v1/admin/customers/{ref}/erase}). Both are ledger events
+ * ({@code learning.shred_propagated}).
  */
 @Service
 public class CryptoShredPropagation {
@@ -52,11 +55,26 @@ public class CryptoShredPropagation {
     @Transactional
     public Map<String, Object> purgeSubject(String customerId) { return purgeSubject(customerId, "system:crypto-shred"); }
 
+    /**
+     * One customer: their facts, the preference evidence and order attribution the facts were learned from (so nothing
+     * is re-learned about them from what was kept), and episodes whose decision was about the customer themselves.
+     * Episodes of their orders stay: they hold order ids and reward numbers only.
+     */
     @Transactional
     public Map<String, Object> purgeSubject(String customerId, String by) {
         String t = TenantContext.require();
         int facts = jdbc.sql("delete from learned_fact where tenant_id = :t and subject_type = 'CUSTOMER' and subject_id = :c").param("t", t).param("c", customerId).update();
-        return finish("customer", facts, 0, by);
+        int evidence = jdbc.sql("delete from customer_preference_evidence where tenant_id = :t and subject_kind = 'customer' and subject_id = :c")
+            .param("t", t).param("c", customerId).update();
+        int orderRefs = jdbc.sql("delete from customer_order_ref where tenant_id = :t and customer_ref = :c").param("t", t).param("c", customerId).update();
+        jdbc.sql("delete from outcome o using episode e where o.tenant_id = :t and e.tenant_id = :t and o.episode_id = e.episode_id and e.subject_type = 'customer' and e.subject_id = :c")
+            .param("t", t).param("c", customerId).update();
+        int episodes = jdbc.sql("delete from episode where tenant_id = :t and subject_type = 'customer' and subject_id = :c").param("t", t).param("c", customerId).update();
+        Map<String, Object> extra = new LinkedHashMap<>();
+        extra.put("evidenceDeleted", evidence);
+        extra.put("orderRefsDeleted", orderRefs);
+        extra.put("episodesDeleted", episodes);
+        return finish("customer", facts, 0, by, extra);
     }
 
     /** Tenant-wide purge, matching {@code Tokenizer.shred}'s tenant-level key rotation. */
@@ -68,21 +86,31 @@ public class CryptoShredPropagation {
         String t = TenantContext.require();
         int customer = jdbc.sql("delete from learned_fact where tenant_id = :t and subject_type = 'CUSTOMER'").param("t", t).update();
         int address = jdbc.sql("delete from learned_fact where tenant_id = :t and subject_type = 'ADDRESS'").param("t", t).update();
-        return finish("tenant", customer, address, by);
+        int evidence = jdbc.sql("delete from customer_preference_evidence where tenant_id = :t and subject_kind = 'customer'").param("t", t).update();
+        int orderRefs = jdbc.sql("delete from customer_order_ref where tenant_id = :t").param("t", t).update();
+        Map<String, Object> extra = new LinkedHashMap<>();
+        extra.put("evidenceDeleted", evidence);
+        extra.put("orderRefsDeleted", orderRefs);
+        return finish("tenant", customer, address, by, extra);
     }
 
-    private Map<String, Object> finish(String scope, int customerFacts, int addressFacts, String by) {
+    /**
+     * Segment sizes are recounted for the current segmentation only, matching each membership fact's segment key
+     * ({@code definition.key}, the slug the membership stores) — comparing it with {@code segment_id} zeroed every size.
+     */
+    private Map<String, Object> finish(String scope, int customerFacts, int addressFacts, String by, Map<String, Object> extra) {
         String t = TenantContext.require();
         int segments = jdbc.sql("""
             update segment s set size = (select count(*) from learned_fact f where f.tenant_id = s.tenant_id and f.subject_type = 'CUSTOMER'
-                                         and f.fact_key = 'SEGMENT_MEMBERSHIP' and f.valid_to is null and f.value->>'value' = s.segment_id)
-            where s.tenant_id = :t
+                                         and f.fact_key = 'SEGMENT_MEMBERSHIP' and f.valid_to is null and f.value->>'value' = s.definition->>'key')
+            where s.tenant_id = :t and s.version = (select max(version) from segment where tenant_id = :t)
             """).param("t", t).update();
         cache.invalidateAll();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("scope", scope);
         result.put("customerFactsDeleted", customerFacts);
         result.put("addressFactsDeleted", addressFacts);
+        result.putAll(extra);
         result.put("segmentsRecounted", segments);
         events.shredPropagated(Actor.parse(by), result);
         log.info("GV-06: crypto-shred propagated for tenant {} ({}): {}", t, scope, result);

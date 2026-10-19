@@ -18,8 +18,8 @@ public class CoreOutcomeMapper implements OutcomeMapper {
 
     @Override
     public List<String> eventTypes() {
-        return List.of("order.delivered", "event.delivered", "order.shipped", "event.shipped", "refund.issued", "oms.returns.refunded",
-            "refund.failed", "payment.failed", "return.dispositioned", "oms.returns.disposition", "cs.wismo");
+        return List.of("order.delivered", "event.delivered", "order.shipped", "event.shipped",
+            "return.refunded", "return.dispositioned", "refund.issued", "oms.returns.refunded", "oms.returns.disposition", "cs.wismo");
     }
 
     @Override
@@ -31,11 +31,13 @@ public class CoreOutcomeMapper implements OutcomeMapper {
             case "order.shipped", "event.shipped" -> new OutcomeData.FulfillmentOutcome(
                 Math.max(1, num(p.get("packageCount")).intValue()), bool(p.get("splitAvoided"), false), strings(p.get("nodeIds")),
                 bool(p.get("storeRejected"), false), num(p.get("unitsOrdered")).intValue(), num(p.get("unitsShipped")).intValue(),
-                num(p.get("fulfillmentCost")).doubleValue(), num(p.get("orderValue")).doubleValue());
-            case "refund.issued", "oms.returns.refunded" -> new OutcomeData.PaymentOutcome(false, false, num(p.get("amount")).doubleValue());
-            case "refund.failed", "payment.failed" -> new OutcomeData.PaymentOutcome(false, true, num(p.get("amount")).doubleValue());
-            case "return.dispositioned", "oms.returns.disposition" -> new OutcomeData.ReturnOutcome(
-                str(p.get("reasonCode")), str(p.get("disposition")), bool(p.get("fraudConfirmed"), false), num(p.get("refundAmount")).doubleValue());
+                num(p.get("fulfillmentCost")).doubleValue(), num(p.get("orderValue")).doubleValue(),
+                str(p.getOrDefault("fulfilmentGroupId", p.get("fulfillmentGroupId"))), str(p.get("shipmentId")));
+            // A return is an outcome for the order it came back from (the event carries orderId): grading sets
+            // fraudConfirmed (FD-06) and the refund is the loss when it was abuse.
+            case "return.refunded", "return.dispositioned", "refund.issued", "oms.returns.refunded", "oms.returns.disposition" -> new OutcomeData.ReturnOutcome(
+                str(p.get("reasonCode")), p.get("disposition") == null ? ("return.refunded".equals(e.type()) ? "refunded" : null) : str(p.get("disposition")),
+                bool(p.get("fraudConfirmed"), false), num(p.getOrDefault("refundAmount", p.get("amount"))).doubleValue());
             case "cs.wismo" -> new OutcomeData.ContactOutcome(p.get("channel") == null ? "cs" : str(p.get("channel")), "wismo", false);
             default -> null;
         };
