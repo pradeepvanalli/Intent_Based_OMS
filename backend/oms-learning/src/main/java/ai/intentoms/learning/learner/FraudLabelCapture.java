@@ -134,6 +134,8 @@ public class FraudLabelCapture implements EventSubscriber {
     @SuppressWarnings("unchecked")
     private void onReview(Event e, Map<String, Object> p) {
         if (!ESCALATION_TASK.equals(p.get("type")) || p.get("taskId") == null) return;
+        // E3-N1 / FD-06: a reviewer's verdict is a human label only when a person gave it; an agent's task_complete is not.
+        if (!ai.intentoms.learning.model.HumanResolution.PERSON.equals(ai.intentoms.learning.model.HumanResolution.resolverType(e.actor() == null ? null : e.actor().ref()))) return;
         HumanTask task = tasks.get(String.valueOf(p.get("taskId")));
         Map<String, Object> tp = task.payload() == null ? Map.of() : task.payload();
         String decision = tp.get("decision") == null ? null : String.valueOf(tp.get("decision"));

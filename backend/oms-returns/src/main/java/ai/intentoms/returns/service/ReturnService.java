@@ -512,12 +512,12 @@ public class ReturnService {
             ReturnRma rma = returns.lock(rmaId);
             if (!ReturnTasks.TYPE_RETURN_DENIAL.equals(rma.reviewTaskType())) throw new ConflictException("Return " + rmaId + " has no denial recommendation pending");
             if (approved) {
-                completeTask(rma.reviewTaskId(), "approved", reason);
+                completeTask(rma.reviewTaskId(), "approved", reason, denialDetails(rma, null));
                 ReturnRma rejected = rejectTx(rma, reason, who, true);
                 return new DecideOutcome(rejected, false);
             }
             if (rma.riskDecisionRecordId() != null) decisions.override(rma.riskDecisionRecordId(), "approve", reason);
-            completeTask(rma.reviewTaskId(), "rejected", reason);
+            completeTask(rma.reviewTaskId(), "rejected", reason, denialDetails(rma, "approve"));
             audit.record("return.denial_overridden", ENTITY, rmaId, reason, Map.of("by", who.ref(), "decisionRecordId", nz(rma.riskDecisionRecordId())));
             Eligibility elig = rma.eligibility() == null ? new Eligibility(true, List.of("overridden_by_human"), null, null, false)
                 : rma.eligibility().withEligible(true, concat(rma.eligibility().reasons(), "overridden_by_human"));
@@ -551,11 +551,15 @@ public class ReturnService {
             ReturnRma rma = returns.lock(rmaId);
             if (!ReturnTasks.TYPE_RETURN_REVIEW.equals(rma.reviewTaskType())) throw new ConflictException("Return " + rmaId + " has no refund-timing review pending");
             if ("reject".equals(timing)) {
-                completeTask(rma.reviewTaskId(), "reject", reason);
+                Map<String, Object> resolution = reviewResolution(rma, timing);
+                completeTask(rma.reviewTaskId(), "reject", reason, resolution);
+                resolveRiskEscalation(rma, resolution, reason, who);
                 return new DecideOutcome(rejectTx(rma, reason, who, false), false);
             }
             if (rma.riskDecisionRecordId() != null) decisions.override(rma.riskDecisionRecordId(), timing, reason);
-            completeTask(rma.reviewTaskId(), timing, reason);
+            Map<String, Object> resolution = reviewResolution(rma, timing);
+            completeTask(rma.reviewTaskId(), timing, reason, resolution);
+            resolveRiskEscalation(rma, resolution, reason, who);
             audit.record("return.review_applied", ENTITY, rmaId, reason, Map.of("by", who.ref(), "refundTiming", timing, "decisionRecordId", nz(rma.riskDecisionRecordId())));
             Eligibility elig = rma.eligibility() == null ? new Eligibility(true, List.of(), null, null, false) : rma.eligibility();
             ReturnRma patched = rma.patch().eligibility(elig).refundTiming(timing).keepIt(new KeepIt(false, "human_review", null, null)).build();
@@ -1110,11 +1114,114 @@ public class ReturnService {
         return Math.round(v * 100) / 100.0;
     }
 
-    private void completeTask(String taskId, String outcome, String reason) {
+    // ------------------------------------------------------------------- OC-06: the review answers the risk decision
+
+    private ai.intentoms.decision.record.DecisionEscalationRepository escalations;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setEscalations(ai.intentoms.decision.record.DecisionEscalationRepository escalations) { this.escalations = escalations; }
+
+    /** Representative return_risk score of each refund timing (the bands of {@link RefundTimingMapper#byScore}); reject is the top. */
+    static final Map<String, Integer> SCORE_OF_TIMING = Map.of(RefundTiming.INSTANT, 0, RefundTiming.ON_CARRIER_SCAN, 1, RefundTiming.ON_INSPECTION, 2,
+        RefundTiming.STORE_CREDIT_ONLY, 3, "reject", 4);
+
+    /**
+     * OC-06 (audit C-N5): the person's refund-timing review is the answer to the return_risk question that escalated, in
+     * that decision's own terms. Choosing the timing the model's score maps to keeps the model's score ({@code accept});
+     * another timing is an override to the representative score of that timing's band. Returned as task details, so the
+     * return_review task and the decision's escalation task carry the same answer.
+     */
+    Map<String, Object> reviewResolution(ReturnRma rma, String chosenTiming) {
+        Map<String, Object> d = new LinkedHashMap<>();
+        d.put("refundTiming", chosenTiming);
+        d.put("resolvedVia", ReturnTasks.TYPE_RETURN_REVIEW);
+        String recordId = rma.riskDecisionRecordId();
+        if (recordId == null) return d;
+        d.put("decisionRecordId", recordId);
+        d.put("recordId", recordId);
+        Object model = null;
+        try { model = decisions.record(recordId).value(); } catch (RuntimeException e) { log.debug("Risk record {} not readable: {}", recordId, e.toString()); }
+        Double modelScore = model instanceof Number n ? n.doubleValue() : null;
+        boolean agrees = modelScore != null && RefundTimingMapper.byScore(modelScore).equals(chosenTiming);
+        Object value = agrees ? model : SCORE_OF_TIMING.get(chosenTiming);
+        if (value != null) d.put("value", value);
+        if (model != null) d.put("recommendedValue", model);
+        d.put("outcome", agrees ? "accept" : "override");
+        return d;
+    }
+
+    /**
+     * OC-06 (audit C-N5): closes the return_risk escalation the review answered. The escalation is marked resolved with
+     * the person's answer first (so the decision fabric's subscriber does not override the record a second time: the
+     * review already recorded the override with its reason), then its {@code decision_escalation} task is completed by the
+     * same person with that answer, which is what labels the decision ({@code human_resolution}) for the learners.
+     */
+    private void resolveRiskEscalation(ReturnRma rma, Map<String, Object> resolution, String reason, Actor who) {
+        if (escalations == null || rma.riskDecisionRecordId() == null) return;
+        Optional<ai.intentoms.decision.model.DecisionEscalation> anchor = escalations.openAnchorForSubject(DECISION_RISK, ENTITY, rma.rmaId())
+            .or(() -> escalations.open(DECISION_RISK).stream().filter(e -> rma.riskDecisionRecordId().equals(e.recordId())).findFirst());
+        if (anchor.isEmpty()) return;
+        ai.intentoms.decision.model.DecisionEscalation esc = anchor.get();
+        Object value = resolution.get("value");
+        Instant now = time.now();
+        // The answer is whoever completed the review task (a person on the Tasks page, then applied here by the return
+        // workflow as the system), so the escalation is resolved, and its task completed, in that actor's name.
+        Actor resolver = reviewer(rma.reviewTaskId()).orElse(who);
+        escalations.resolve(esc.id(), value, resolver.ref(), now);
+        if (esc.taskId() == null) return;
+        for (var linked : escalations.unresolvedForTask(esc.taskId())) escalations.resolve(linked.id(), value, resolver.ref(), now);
+        Map<String, Object> details = new LinkedHashMap<>(resolution);
+        details.put("recordId", esc.recordId());
+        details.put("escalationId", esc.id());
+        details.remove("outcome");
+        if (rma.reviewTaskId() != null) details.put("reviewTaskId", rma.reviewTaskId());
+        asActor(resolver, () -> completeTask(esc.taskId(), String.valueOf(resolution.getOrDefault("outcome", "override")), reason, details));
+    }
+
+    /** The actor of the review task's completion, from the ledger. */
+    private Optional<Actor> reviewer(String reviewTaskId) {
+        if (reviewTaskId == null) return Optional.empty();
+        try {
+            List<Event> taskEvents = events.load("task", reviewTaskId);
+            for (int i = taskEvents.size() - 1; i >= 0; i--) if ("task.completed".equals(taskEvents.get(i).type())) return Optional.ofNullable(taskEvents.get(i).actor());
+        } catch (RuntimeException e) {
+            log.debug("Could not read task {}: {}", reviewTaskId, e.toString());
+        }
+        return Optional.empty();
+    }
+
+    /** Runs {@code r} as {@code actor} (no extra permissions: completing a task needs none below the API). */
+    private static void asActor(Actor actor, Runnable r) {
+        var ctx = org.springframework.security.core.context.SecurityContextHolder.getContext();
+        var prev = ctx.getAuthentication();
+        if (actor == null || (prev != null && prev.getPrincipal() instanceof ai.intentoms.platform.security.Principal p && p.actorRef().equals(actor.ref()))) { r.run(); return; }
+        ai.intentoms.platform.security.Principal.Type type = switch (actor.type()) {
+            case "user" -> ai.intentoms.platform.security.Principal.Type.USER;
+            case "agent" -> ai.intentoms.platform.security.Principal.Type.AGENT;
+            case "decision" -> ai.intentoms.platform.security.Principal.Type.DECISION;
+            default -> ai.intentoms.platform.security.Principal.Type.SYSTEM;
+        };
+        ctx.setAuthentication(new ai.intentoms.platform.security.PrincipalAuthentication(
+            new ai.intentoms.platform.security.Principal(type, actor.id(), ai.intentoms.platform.tenant.TenantContext.require(), Set.of(), Set.of(), 0)));
+        try { r.run(); } finally { ctx.setAuthentication(prev); }
+    }
+
+    /** The answer a person gave on a denial recommendation, for the label on the risk decision (confirming keeps it). */
+    private static Map<String, Object> denialDetails(ReturnRma rma, String overrideValue) {
+        Map<String, Object> d = new LinkedHashMap<>();
+        d.put("resolvedVia", ReturnTasks.TYPE_RETURN_DENIAL);
+        if (rma.riskDecisionRecordId() != null) d.put("decisionRecordId", rma.riskDecisionRecordId());
+        if (overrideValue != null) d.put("value", overrideValue);
+        return d;
+    }
+
+    private void completeTask(String taskId, String outcome, String reason) { completeTask(taskId, outcome, reason, Map.of()); }
+
+    private void completeTask(String taskId, String outcome, String reason, Map<String, Object> details) {
         if (taskId == null) return;
         try {
             HumanTask t = tasks.get(taskId);
-            if (t.isOpen()) tasks.complete(taskId, outcome, reason, Map.of());
+            if (t.isOpen()) tasks.complete(taskId, outcome, reason, details == null ? Map.of() : details);
         } catch (NotFoundException | ConflictException e) {
             log.debug("Task {} not completed: {}", taskId, e.getMessage());
         }

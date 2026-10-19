@@ -43,7 +43,7 @@ public class HumanResolutionCapture implements EventSubscriber {
 
     @Override
     public void on(Event e) {
-        if (!ESCALATION_TASK_TYPE.equals(e.payload().get("type"))) return;
+        if (!ESCALATION_TASK_TYPE.equals(e.payload().get("type"))) { onDomainTask(e); return; }
         if (e.tenantId() != null) TenantContext.set(e.tenantId());
         try {
             @SuppressWarnings("unchecked") Map<String, Object> details = e.payload().get("details") instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
@@ -63,6 +63,8 @@ public class HumanResolutionCapture implements EventSubscriber {
             label.put("outcome", outcome == null ? "" : outcome);
             label.put("reasonCode", reason == null ? "" : reason);
             label.put("resolvedBy", by);
+            // E3-N1: a person, an agent (an MCP task_complete) or the system; learners imitate only people.
+            label.put("resolvedByType", ai.intentoms.learning.model.HumanResolution.resolverType(by));
             if (recommended != null) label.put("recommendedValue", String.valueOf(recommended));
             // The anchor record plus every re-evaluation linked to the same task: the person answered the question for
             // all of them, and each is a labelled outcome the learners (OC-06, DF-03) should see.
@@ -72,6 +74,56 @@ public class HumanResolutionCapture implements EventSubscriber {
             for (String r : records) decisionRecords.label(r, "human_resolution", label);
         } catch (RuntimeException ex) {
             log.warn("Human-resolution capture failed for task.completed event {}: {}", e.id(), ex.toString());
+        } finally {
+            TenantContext.clear();
+        }
+    }
+
+    /** Task-payload keys that name the decision record a domain task (return review or denial, exception) is about. */
+    private static final List<String> RECORD_KEYS = List.of("decisionRecordId", "classificationRecordId");
+
+    /**
+     * OC-06: a domain task that answers a decision's question is a labelled outcome of that decision too: a return's
+     * denial review answers its return_risk rule, an exception's resolution follows its exception_classify decision.
+     * The record is labelled the way an escalation answer is (value when the person gave one in the decision's terms,
+     * otherwise the outcome and reason only), with {@code via} naming the task type. A record that escalated is left to
+     * its own escalation task (the return review completes it with the same answer), so a decision has one answer.
+     */
+    private void onDomainTask(Event e) {
+        Object taskId = e.payload().get("taskId");
+        if (taskId == null) return;
+        if (e.tenantId() != null) TenantContext.set(e.tenantId());
+        try {
+            @SuppressWarnings("unchecked") Map<String, Object> details = e.payload().get("details") instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
+            HumanTask task = tasks.get(String.valueOf(taskId));
+            Map<String, Object> taskPayload = task.payload() == null ? Map.of() : task.payload();
+            Set<String> refs = new LinkedHashSet<>();
+            for (String k : RECORD_KEYS) {
+                Object v = details.getOrDefault(k, taskPayload.get(k));
+                if (v != null && !String.valueOf(v).isBlank()) refs.add(String.valueOf(v));
+            }
+            if (refs.isEmpty()) return;
+            String outcome = str(e.payload().get("outcome"));
+            String reason = str(e.payload().get("reason"));
+            String by = e.actor() == null ? "system:task" : e.actor().ref();
+            for (String ref : refs) {
+                decisionRecords.find(ref).filter(r -> r.escalationId() == null).ifPresent(r -> {
+                    Object value = chosenValue(details, outcome, r.value());
+                    Map<String, Object> label = new java.util.LinkedHashMap<>();
+                    label.put("value", value == null ? "" : String.valueOf(value));
+                    label.put("action", value == null ? "" : String.valueOf(value));
+                    label.put("outcome", outcome == null ? "" : outcome);
+                    label.put("reasonCode", reason == null ? "" : reason);
+                    label.put("resolvedBy", by);
+                    label.put("resolvedByType", ai.intentoms.learning.model.HumanResolution.resolverType(by));
+                    if (r.value() != null) label.put("recommendedValue", String.valueOf(r.value()));
+                    label.put("via", task.type());
+                    label.put("taskId", task.id());
+                    decisionRecords.label(r.id(), "human_resolution", label);
+                });
+            }
+        } catch (RuntimeException ex) {
+            log.warn("Human-resolution capture failed for {} task event {}: {}", e.payload().get("type"), e.id(), ex.toString());
         } finally {
             TenantContext.clear();
         }
