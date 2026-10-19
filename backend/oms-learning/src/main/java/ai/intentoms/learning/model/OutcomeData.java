@@ -19,9 +19,18 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
 })
 @JsonIgnoreProperties(ignoreUnknown = true)
 public sealed interface OutcomeData {
-    /** Did the shipment arrive on time, and was it damaged (maturity window: 14 days, OC-04 default). */
+    /**
+     * Did the shipment arrive on time, and was it damaged (maturity window: 14 days, OC-04 default). {@code allDelivered}:
+     * with this delivery every unit of the order has arrived (false for a parcel of a split order still waiting for
+     * another, a lost parcel or a parcel returned to sender; null on older rows, which were whole-order deliveries).
+     */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record DeliveryOutcome(boolean onTime, long lateByHours, boolean damaged, boolean lost) implements OutcomeData {}
+    record DeliveryOutcome(boolean onTime, long lateByHours, boolean damaged, boolean lost, Boolean allDelivered) implements OutcomeData {
+        public DeliveryOutcome(boolean onTime, long lateByHours, boolean damaged, boolean lost) { this(onTime, lateByHours, damaged, lost, null); }
+
+        /** The order counts as delivered with this outcome. */
+        public boolean orderDelivered() { return !lost && !Boolean.FALSE.equals(allDelivered); }
+    }
 
     /**
      * One parcel leaving a node, and the figures the §7 fill, cost and split terms need. With {@code shipmentId} set

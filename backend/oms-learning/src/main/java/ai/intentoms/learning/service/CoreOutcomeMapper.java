@@ -27,11 +27,12 @@ public class CoreOutcomeMapper implements OutcomeMapper {
         Map<String, Object> p = e.payload() == null ? Map.of() : e.payload();
         return switch (e.type()) {
             case "order.delivered", "event.delivered" -> new OutcomeData.DeliveryOutcome(
-                bool(p.get("onTime"), true), num(p.get("lateByHours")).longValue(), bool(p.get("damaged"), false), bool(p.get("lost"), false));
+                bool(p.get("onTime"), true), num(p.get("lateByHours")).longValue(), bool(p.get("damaged"), false), bool(p.get("lost"), false),
+                p.get("allDelivered") instanceof Boolean all ? all : null);
             // A parcel the carrier reports lost or damaged is that parcel's delivery outcome: a lost one never gets a
             // delivery scan (audit A6). Any other exception (a delay) is not an outcome; the delivery scan will be.
             case "order.carrier_exception" -> bool(p.get("lost"), false) || bool(p.get("damaged"), false)
-                ? new OutcomeData.DeliveryOutcome(false, 0, bool(p.get("damaged"), false), bool(p.get("lost"), false)) : null;
+                ? new OutcomeData.DeliveryOutcome(false, 0, bool(p.get("damaged"), false), bool(p.get("lost"), false), false) : null;
             case "order.shipped", "event.shipped" -> new OutcomeData.FulfillmentOutcome(
                 Math.max(1, num(p.get("packageCount")).intValue()), bool(p.get("splitAvoided"), false), strings(p.get("nodeIds")),
                 bool(p.get("storeRejected"), false), num(p.get("unitsOrdered")).intValue(), num(p.get("unitsShipped")).intValue(),

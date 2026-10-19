@@ -94,7 +94,7 @@ class CarrierScanIntegrationTest extends OrchestrationTestBase {
         Episode sourcing = episodes.forOrder(o.id()).stream().filter(e -> "sourcing_node_score".equals(e.decisionName())).findFirst().orElseThrow();
         List<OutcomeRecord> recorded = outcomes.forEpisode(sourcing.episodeId());
         assertThat(recorded).extracting(OutcomeRecord::payload).filteredOn(OutcomeData.DeliveryOutcome.class::isInstance).singleElement()
-            .isEqualTo(new OutcomeData.DeliveryOutcome(false, 0, false, true));
+            .isEqualTo(new OutcomeData.DeliveryOutcome(false, 0, false, true, false));
         assertThat(RewardCalculator.scoredTerms(recorded)).contains("otd");
         assertThat(RewardCalculator.components(recorded).get("otd")).isZero();
     }

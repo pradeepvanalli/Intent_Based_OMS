@@ -39,6 +39,15 @@ public final class RewardCalculator {
     public static final List<String> TERMS = List.of("fill", "otd", "cost", "split", "fraud", "cx", "inv");
     /** Unweighted component: fill counting only the units the order's first sourcing shipped. */
     public static final String FILL_FIRST_ATTEMPT = "fill_first_attempt";
+    /**
+     * Unweighted §12 north-star component of an episode about the whole order: 1 for a perfect order, 0 otherwise,
+     * absent while the order is still on its way. Perfect: delivered complete on the first attempt, on time and undamaged, with no customer contact, no
+     * defect, not-as-described, wrong-item or not-received return, no chargeback and no refused delivery. Present once
+     * the order is delivered, or as 0 once its delivery definitively failed (a lost parcel, a refused delivery).
+     * Later outcomes (a contact, a return, a chargeback) correct it to 0 while the episode matures.
+     */
+    public static final String PERFECT = "perfect";
+    static final Set<String> PERFECT_RETURN_FAILURES = Set.of("defective", "not_as_described", "wrong_item", "not_received", "damaged");
 
     /**
      * What the reward needs to know about the episode itself. {@code orderValue}: the order's value to fall back on when
@@ -63,10 +72,17 @@ public final class RewardCalculator {
         Set<String> parcels = new java.util.HashSet<>();
         int legacyPackages = 0, deliveries = 0, onTimeDeliveries = 0, row = 0;
         Double invRelief = null;
+        // §12 perfect order: the order arrived (or definitively did not), and nothing about it went wrong.
+        boolean delivered = false, failed = false, flawed = false;
         for (OutcomeRecord o : outcomes) {
             row++;
             switch (o.payload()) {
-                case OutcomeData.DeliveryOutcome d -> { deliveries++; if (d.onTime() && !d.lost()) onTimeDeliveries++; }
+                case OutcomeData.DeliveryOutcome d -> {
+                    deliveries++;
+                    if (d.onTime() && !d.lost()) onTimeDeliveries++;
+                    if (d.lost()) failed = true; else if (d.orderDelivered()) delivered = true;
+                    if (!d.onTime() || d.lost() || d.damaged()) flawed = true;
+                }
                 case OutcomeData.FulfillmentOutcome f -> {
                     String group = f.fulfilmentGroupId() != null ? f.fulfilmentGroupId() : f.shipmentId() != null ? "order" : "row" + row;
                     unitsByGroup.merge(group, f.unitsOrdered(), Math::max);
@@ -78,9 +94,16 @@ public final class RewardCalculator {
                     orderValue = Math.max(orderValue, f.orderValue());
                 }
                 // One loss per return however many of its events were recorded (older rows were stored per event).
-                case OutcomeData.ReturnOutcome r -> returns.merge(r.rmaId() != null ? r.rmaId() : "row" + row, r, OutcomeData.ReturnOutcome::merge);
-                case OutcomeData.PaymentOutcome p -> { if (p.chargeback() || p.refused()) fraudLoss += p.amount(); }
-                case OutcomeData.ContactOutcome ct -> contacts += ct.complaint() ? 1.0 : 0.5;
+                case OutcomeData.ReturnOutcome r -> {
+                    returns.merge(r.rmaId() != null ? r.rmaId() : "row" + row, r, OutcomeData.ReturnOutcome::merge);
+                    if (r.reasonCode() != null && PERFECT_RETURN_FAILURES.contains(r.reasonCode())) flawed = true;
+                }
+                case OutcomeData.PaymentOutcome p -> {
+                    if (p.chargeback() || p.refused()) fraudLoss += p.amount();
+                    if (p.chargeback()) flawed = true;
+                    if (p.refused()) failed = true;
+                }
+                case OutcomeData.ContactOutcome ct -> { contacts += ct.complaint() ? 1.0 : 0.5; flawed = true; }
                 case OutcomeData.InventoryOutcome inv -> { if (inv.stranded()) invRelief = 0.0; else if (inv.daysToSale() > 0) invRelief = 1.0; } // a backorder resolution is not aged-stock relief
             }
         }
@@ -100,6 +123,8 @@ public final class RewardCalculator {
         c.put("inv", invRelief == null ? 0.0 : invRelief);
         // §7 "first attempt": the units the first sourcing shipped, over the same denominator. Not weighted.
         if (units > 0) c.put(FILL_FIRST_ATTEMPT, clamp(shippedFirstAttempt / units));
+        if (scope.wholeOrder() && failed) c.put(PERFECT, 0.0);
+        else if (scope.wholeOrder() && delivered && units > 0) c.put(PERFECT, !flawed && shippedFirstAttempt >= units ? 1.0 : 0.0);
         return c;
     }
 
