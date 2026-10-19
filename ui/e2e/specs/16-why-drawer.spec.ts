@@ -1,6 +1,6 @@
 import { test, expect } from '../support/fixtures';
 import { apiAs } from '../support/api';
-import { createOrder, ok, waitForDecision } from '../support/data';
+import { createOrder, customerRefFor, ok, waitForDecision } from '../support/data';
 import { setSwitch } from '../support/ui';
 
 type Trace = { learning?: { learnedFacts?: Array<{ subjectId: string; factKey: string; version?: number; source: string; reason?: string }>; learnedFactsServed?: number } };
@@ -8,7 +8,9 @@ type Trace = { learning?: { learnedFacts?: Array<{ subjectId: string; factKey: s
 /** XP-03: the Why drawer for a real order placed after seeding shows which learned values its sourcing decision used. */
 test('the Why drawer shows how learning shaped a sourcing decision, with versions on request and nothing internal for customers', async ({ pageAs }) => {
   const api = await apiAs('admin');
-  const orderId = await createOrder(api);
+  // A customer outside the persistent holdout (one in twenty is held back on the standard values; spec 23 covers them).
+  const { ref } = await customerRefFor(api, false);
+  const orderId = await createOrder(api, { ref });
   const record = await waitForDecision(api, orderId, 'sourcing_node_score');
   const trace = await ok<Trace>(api.get(`/api/v1/decision-records/${record.id}/why`));
   const facts = trace.learning?.learnedFacts ?? [];

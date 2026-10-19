@@ -13,6 +13,16 @@ test.describe('Sign in', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Control Tower' })).toBeVisible();
   });
 
+  test('the demo user list includes the platform engineer, who signs in with one click', async ({ page }) => {
+    await page.goto('/login');
+    const platform = page.getByRole('button', { name: /^platform\s*platform engineer$/ });
+    await expect(platform).toBeVisible();
+    await platform.click();
+    await expect(page).toHaveURL(/control-tower/);
+    const principal = await page.evaluate(() => JSON.parse(localStorage.getItem('oms.principal') ?? '{}') as { id?: string; roles?: string[] });
+    expect(principal).toMatchObject({ id: 'platform', roles: ['platform_engineer'] });
+  });
+
   test('a wrong password explains the failure without technical text', async ({ page }) => {
     await page.goto('/login');
     await page.getByLabel('User').fill('ops');

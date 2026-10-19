@@ -69,9 +69,14 @@ test.describe('Changes', () => {
     await strategy.getByRole('button', { name: 'Propose live use' }).click();
     const form = dialog(strategy, 'Propose using a learned value live');
     await form.getByLabel('Learned value').selectOption({ label: 'Prefer aged stock when costs are close — from Stock age' });
+    // B-1: an on/off family shows its domain and takes no range; one typed in is refused before anything is sent.
+    await expect(form.getByTestId('live-domain')).toContainText('Values: an on/off switch (near-equal plans prefer the node with the oldest stock)');
     await form.getByLabel('Lowest allowed').fill('0');
-    await form.getByLabel('Highest allowed').fill('1');
-    await form.getByLabel('Biggest step from standard').fill('0.5');
+    await expect(form.getByRole('alert')).toContainText('sourcing.aged_stock_tiebreak is an on/off switch');
+    await expect(form.getByRole('alert')).toContainText('leave min, max and max step empty');
+    await expect(form.getByRole('button', { name: 'Draft proposal' })).toBeDisabled();
+    await form.getByLabel('Lowest allowed').fill('');
+    await expect(form.getByRole('alert')).toHaveCount(0);
     await form.getByLabel('Why (optional)').fill(marker);
     await form.getByRole('button', { name: 'Draft proposal' }).click();
     await expect(toast(strategy, 'Proposal drafted')).toBeVisible();
@@ -140,7 +145,14 @@ test.describe('Changes', () => {
   test('approving a postal-code change requires a reason code', async ({ pageAs }) => {
     const strategyApi = await apiAs('strategy');
     const adminApi = await apiAs('admin');
-    const p = await proposeLiveUse(strategyApi, { family: 'sourcing.blocked_zip3', learnerKey: 'band_threshold', reason: `e2e postal ${uid()}` });
+    // No live family is keyed by postal code, so switching one on is refused (B-1: it has no domain to check a range
+    // against); the switch-off form of the proposal needs no domain and is still a change that names postal codes.
+    const refused = await strategyApi.post('/api/v1/learning/live-parameters/proposals', { data: { enabled: true, family: 'sourcing.blocked_zip3', learnerKey: 'band_threshold' } });
+    expect(refused.status()).toBe(422);
+    expect(await refused.text()).toContain('is not a learned value any live path reads');
+    const p = await ok<Proposal>(strategyApi.post('/api/v1/learning/live-parameters/proposals', {
+      data: { enabled: false, family: 'sourcing.blocked_zip3', learnerKey: 'band_threshold', reason: `e2e postal ${uid()}` },
+    }), 200, 201);
     try {
       await ok(adminApi.post(`/api/v1/learning/proposals/${p.proposalId}/evaluate`)); // a draft is tested before approval
       expect((await (await apiAs('ops')).post(`/api/v1/learning/proposals/${p.proposalId}/approve`, { data: {} })).status()).toBe(403);

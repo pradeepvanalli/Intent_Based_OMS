@@ -7,7 +7,7 @@ import { Button } from '../components/Button';
 import { Input, Select } from '../components/Form';
 import { Badge } from '../components/Badge';
 
-const DEMO = [['admin', 'admin'], ['ops', 'ops analyst'], ['cs', 'cs rep'], ['risk', 'risk analyst'], ['finance', 'finance controller'], ['strategy', 'strategy lead']];
+const DEMO = [['admin', 'admin'], ['ops', 'ops analyst'], ['cs', 'cs rep'], ['risk', 'risk analyst'], ['finance', 'finance controller'], ['strategy', 'strategy lead'], ['platform', 'platform engineer']];
 
 export default function LoginPage() {
   const [tenantId, setTenant] = useState('demo'); const [userId, setUser] = useState(''); const [password, setPassword] = useState('');

@@ -29,7 +29,11 @@ hr; echo "UC8 · Self-optimizing orchestration — outcomes to facts to a govern
 
 step "1) What the system is learning right now"
 call GET /api/v1/learning/seed-status "" "$STRATEGY_TOKEN"
-if [ "$CODE" = 200 ]; then say "reference data: complete=$(field 'd.get("complete")'), seeded $(field 'd.get("seededAt")')"; fi
+if [ "$CODE" = 200 ]; then
+  say "reference data: complete=$(field 'd.get("complete")'), seeded $(field 'd.get("seededAt")')"
+  say "learned values the seed switched on: $(field '", ".join(d.get("liveFamilies") or []) or "none"')"
+  say "left out by the seed: $(field '"; ".join("%s (%s)" % (s["item"], s["reason"]) for s in (d.get("skipped") or [])) or "nothing"')"
+fi
 call GET /api/v1/learning/learners "" "$STRATEGY_TOKEN"; must 200
 printf '%s' "$BODY" | python3 -c '
 import sys,json
@@ -96,20 +100,26 @@ say "ST-LA-02 learned: $(field '", ".join("%s=%s (v%d, %d obs)" % (f["factKey"],
 step "6) A learned value goes live only through a governed change"
 # Try learned families in order. One that is already live, or was rolled back recently (a 30-day cooldown, so a
 # reverted change is not re-proposed on the same evidence), is skipped; that keeps this script safe to re-run.
-# The demo seed already has several families live, so the ones it leaves off come first.
+# The demo seed already has several families live, so the ones it leaves off come first, those with learned values
+# behind them before those without. Each range is in the family's own units and inside its domain (B-1, see
+# GET /api/v1/learning/live-parameters/domains): an on/off family such as the aged-stock tie-break takes no range at
+# all, and warn-early is a 0-4 breach-risk score.
 PROP=""
+call GET /api/v1/learning/live-parameters/domains "" "$STRATEGY_TOKEN"; must 200
+say "learned values have domains: $(field '"; ".join("%s = %s" % (x["family"], x["description"]) for x in d if x["family"] in ("sourcing.aged_stock_tiebreak", "monitoring.warn_early_threshold"))')"
 call GET /api/v1/learning/live-parameters "" "$STRATEGY_TOKEN"; must 200
 LIVE_NOW=$(field '" ".join(p["parameter"] for p in d if p["status"] == "LIVE")')
 for CANDIDATE in \
-  'inventory.reservation_ttl|inventory_reservation_ttl|5|1440|60|hold carts for the learned time before releasing stock' \
-  'sourcing.aged_stock_tiebreak|inventory_stock_age|0|1|0.5|prefer aged stock when costs are close' \
+  'sourcing.aged_stock_tiebreak|inventory_stock_age||||prefer aged stock when costs are close' \
   'inventory.inbound_reliability|inventory_inbound_reliability|0.3|1|0.1|trust each supplier inbound by its learned reliability' \
+  'inventory.reservation_ttl|inventory_reservation_ttl|5|1440|60|hold carts for the learned time before releasing stock' \
   'sourcing.reject_penalty|node_reliability|0.1|2.0|0.5|use the learned, decaying reject penalty per node' \
-  'monitoring.warn_early_threshold|warn_early|0.3|0.9|0.1|warn customers about a likely delay at the learned risk level' \
+  'monitoring.warn_early_threshold|warn_early|1.5|3.5|1|warn customers about a likely delay at the learned breach-risk score' \
   'promise.buffer_days|promise_buffer|0|3|1|add the learned promise buffer per customer segment'; do
   IFS='|' read -r FAMILY LEARNER LO HI STEP WHY <<< "$CANDIDATE"
   case " $LIVE_NOW " in *" $FAMILY "*) ok "$FAMILY is already live; trying the next one"; continue ;; esac
-  call POST /api/v1/learning/live-parameters/proposals "{\"family\":\"$FAMILY\",\"learnerKey\":\"$LEARNER\",\"min\":$LO,\"max\":$HI,\"maxStep\":$STEP,\"reason\":\"UC8: $WHY\"}" "$STRATEGY_TOKEN"
+  RANGE=""; [ -n "$LO" ] && RANGE=",\"min\":$LO,\"max\":$HI,\"maxStep\":$STEP"
+  call POST /api/v1/learning/live-parameters/proposals "{\"family\":\"$FAMILY\",\"learnerKey\":\"$LEARNER\"$RANGE,\"reason\":\"UC8: $WHY\"}" "$STRATEGY_TOKEN"
   if [ "$CODE" = 200 ] || [ "$CODE" = 201 ]; then PROP=$(field 'd["proposalId"]'); break; fi
   if [ "$CODE" = 409 ]; then ok "$FAMILY was rolled back recently, so the same change cannot be re-proposed yet (409); trying the next one"; continue; fi
   must 200 201
