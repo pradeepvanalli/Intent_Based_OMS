@@ -70,10 +70,10 @@ function Fairness() {
           {r.groups.every((g) => (g.decisions ?? g.customers) === 0) ? <EmptyState title="Not enough decisions yet" hint="The comparison appears once customers in each group have had decisions made for them." /> : (
             <div className="table-wrap">
               <table className="tbl dense" aria-label="Fairness by customer group">
-                <thead><tr><th scope="col">Customer group</th><th scope="col" className="num">Customers</th><th scope="col" className="num">Decided automatically</th><th scope="col" className="num">Overridden by people</th></tr></thead>
+                <thead><tr><th scope="col">Customer group</th><th scope="col" className="num">Customers</th><th scope="col" className="num">Decided automatically</th><th scope="col" className="num">Overridden by people</th><th scope="col" className="num" title="Share of this group's orders delivered on time">Arrived on time</th></tr></thead>
                 <tbody>
-                  {r.groups.map((g) => <tr key={g.group}><td>{g.label ?? humanize(g.group)}</td><td className="num">{fmtNum(g.customers)}</td><td className="num">{fmtPct(g.actBandRate, 0)}</td><td className="num">{fmtPct(g.overrideRate, 1)}</td></tr>)}
-                  <tr><td className="muted">All customers</td><td /><td className="num muted">{fmtPct(r.tenantActBandRate, 0)}</td><td className="num muted">{fmtPct(r.tenantOverrideRate, 1)}</td></tr>
+                  {r.groups.map((g) => <tr key={g.group}><td>{g.label ?? humanize(g.group)}</td><td className="num">{fmtNum(g.customers)}</td><td className="num">{fmtPct(g.actBandRate, 0)}</td><td className="num">{fmtPct(g.overrideRate, 1)}</td><td className="num">{g.onTimeRate == null ? '—' : fmtPct(g.onTimeRate, 0)}</td></tr>)}
+                  <tr><td className="muted">All customers</td><td /><td className="num muted">{fmtPct(r.tenantActBandRate, 0)}</td><td className="num muted">{fmtPct(r.tenantOverrideRate, 1)}</td><td /></tr>
                 </tbody>
               </table>
             </div>

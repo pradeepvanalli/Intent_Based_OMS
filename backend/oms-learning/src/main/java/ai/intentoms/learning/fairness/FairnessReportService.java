@@ -54,7 +54,12 @@ public class FairnessReportService {
         this.jdbc = jdbc;
     }
 
-    public record GroupParity(String group, String label, int customers, int decisions, double actBandRate, double overrideRate) {}
+    /**
+     * One customer group: decision parity (act-band and override rates) and outcome parity (GV-07: matured episode
+     * reward and on-time rate for this decision's episodes on the group's orders; null when there are none).
+     */
+    public record GroupParity(String group, String label, int customers, int decisions, double actBandRate, double overrideRate,
+                              int episodes, Double meanReward, Double onTimeRate) {}
     public record LearnerFeatureAudit(String learner, List<String> declaredFeatures, List<String> protectedFeatures) {}
     public record ParityReport(String decision, String grouping, List<GroupParity> groups, double tenantActBandRate, double tenantOverrideRate,
                                List<LearnerFeatureAudit> featureAudit, List<String> flags) {}
@@ -67,18 +72,28 @@ public class FairnessReportService {
         Instant since = Instant.now().minus(Duration.ofDays(Math.max(1, days)));
         boolean ordersTable = jdbc.sql("select to_regclass('orders') is not null").query(Boolean.class).single();
         List<GroupParity> result = new ArrayList<>();
-        long totalAct = 0, totalOverridden = 0, totalRecords = 0;
+        long totalAct = 0, totalOverridden = 0, totalRecords = 0, totalEpisodes = 0;
+        double onTimeSum = 0;
         for (var e : groups.entrySet()) {
             long[] c = counts(decisionName, e.getValue(), since, ordersTable);
             totalRecords += c[0]; totalAct += c[1]; totalOverridden += c[2];
-            result.add(new GroupParity(e.getKey(), labels.getOrDefault(e.getKey(), e.getKey()), e.getValue().size(), (int) c[0], rate(c[1], c[0]), rate(c[2], c[0])));
+            Object[] o = ordersTable ? outcomes(decisionName, e.getValue(), since) : new Object[]{0L, null, null};
+            long n = (Long) o[0];
+            if (n > 0 && o[2] != null) { totalEpisodes += n; onTimeSum += n * (Double) o[2]; }
+            result.add(new GroupParity(e.getKey(), labels.getOrDefault(e.getKey(), e.getKey()), e.getValue().size(), (int) c[0], rate(c[1], c[0]), rate(c[2], c[0]),
+                (int) n, (Double) o[1], (Double) o[2]));
         }
         double tenantAct = rate(totalAct, totalRecords), tenantOverride = rate(totalOverridden, totalRecords);
+        Double tenantOnTime = totalEpisodes == 0 ? null : Math.round(onTimeSum / totalEpisodes * 1000) / 1000.0;
         List<String> flags = new ArrayList<>();
         for (GroupParity g : result) {
-            if (g.customers() < 10 || g.decisions() == 0) continue;
-            if (Math.abs(g.actBandRate() - tenantAct) > 0.15) flags.add(g.label() + ": act-band rate " + g.actBandRate() + " vs tenant " + tenantAct + " (more than 15 points apart)");
-            if (Math.abs(g.overrideRate() - tenantOverride) > 0.10) flags.add(g.label() + ": override rate " + g.overrideRate() + " vs tenant " + tenantOverride + " (more than 10 points apart)");
+            if (g.customers() < 10) continue;
+            if (g.decisions() > 0) {
+                if (Math.abs(g.actBandRate() - tenantAct) > 0.15) flags.add(g.label() + ": act-band rate " + g.actBandRate() + " vs tenant " + tenantAct + " (more than 15 points apart)");
+                if (Math.abs(g.overrideRate() - tenantOverride) > 0.10) flags.add(g.label() + ": override rate " + g.overrideRate() + " vs tenant " + tenantOverride + " (more than 10 points apart)");
+            }
+            if (tenantOnTime != null && g.onTimeRate() != null && g.episodes() >= 10 && Math.abs(g.onTimeRate() - tenantOnTime) > 0.10)
+                flags.add(g.label() + ": on-time rate " + g.onTimeRate() + " vs tenant " + tenantOnTime + " (more than 10 points apart)");
         }
         List<LearnerFeatureAudit> audit = featureAudit(decisionName);
         for (LearnerFeatureAudit a : audit) if (!a.protectedFeatures().isEmpty()) flags.add("learner " + a.learner() + " declares protected features " + a.protectedFeatures());
@@ -124,6 +139,21 @@ public class FairnessReportService {
             if (groups.get(g).size() < MAX_MEMBERS_PER_GROUP) groups.get(g).add(f.subjectId());
         }
         return "split_tolerance";
+    }
+
+    /** {episodes, mean reward, on-time rate} for this decision's rewarded episodes on these customers' orders. */
+    private Object[] outcomes(String decision, List<String> customers, Instant since) {
+        if (customers.isEmpty()) return new Object[]{0L, null, null};
+        var row = jdbc.sql("""
+            select count(*) as n, avg(e.reward) as mean_reward, avg((e.reward_components->>'otd')::double precision) as on_time
+            from episode e
+            where e.tenant_id = :t and e.decision_name = :d and e.reward is not null and e.created_at >= :since
+              and e.order_id in (select o.id from orders o where o.tenant_id = e.tenant_id and o.customer_ref in (:ids))
+            """).param("t", TenantContext.require()).param("d", decision).param("since", Timestamp.from(since)).param("ids", customers).query().singleRow();
+        long n = ((Number) row.get("n")).longValue();
+        Double mean = row.get("mean_reward") instanceof Number m ? Math.round(m.doubleValue() * 1000) / 1000.0 : null;
+        Double onTime = row.get("on_time") instanceof Number m ? Math.round(m.doubleValue() * 1000) / 1000.0 : null;
+        return new Object[]{n, mean, onTime};
     }
 
     /** {total, act, overridden} LIVE records of the decision since {@code since} concerning these customers. */

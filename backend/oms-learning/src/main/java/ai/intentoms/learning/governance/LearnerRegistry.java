@@ -40,7 +40,15 @@ public class LearnerRegistry {
 
     public List<LearnerDescriptor> descriptors() {
         List<LearnerDescriptor> d = descriptors;
-        if (d == null) descriptors = d = learners.stream().map(GovernedLearner::descriptor).sorted(Comparator.comparing(LearnerDescriptor::key)).toList();
+        if (d == null) {
+            d = learners.stream().map(GovernedLearner::descriptor).sorted(Comparator.comparing(LearnerDescriptor::key)).toList();
+            // GV-07: a learner may never declare a protected attribute among the features it reads.
+            for (LearnerDescriptor x : d) {
+                List<String> bad = FeatureAllowlist.protectedNames(x.features());
+                if (!bad.isEmpty()) throw new IllegalStateException("Learner " + x.key() + " declares protected features " + bad + " (GV-07)");
+            }
+            descriptors = d;
+        }
         return d;
     }
 

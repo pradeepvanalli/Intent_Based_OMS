@@ -372,7 +372,7 @@ export interface ObjectiveProfile {
   approvedBy?: string | null; approvedAt?: string | null; createdBy: string; createdAt: string;
   sourceText?: string | null; draftMethod?: string | null; rationale?: Record<string, string> | null;
 }
-export interface GroupParity { group: string; label?: string; customers: number; decisions?: number; actBandRate: number; overrideRate: number; }
+export interface GroupParity { group: string; label?: string; customers: number; decisions?: number; actBandRate: number; overrideRate: number; /** Outcome parity (GV-07): rewarded episodes on this group's orders, their mean reward and on-time rate. */ episodes?: number; meanReward?: number | null; onTimeRate?: number | null; }
 export interface LearnerFeatureAudit { learner: string; declaredFeatures: string[]; protectedFeatures: string[]; }
 export interface ParityReport {
   decision: string; grouping?: string; groups: GroupParity[]; tenantActBandRate: number; tenantOverrideRate: number;
