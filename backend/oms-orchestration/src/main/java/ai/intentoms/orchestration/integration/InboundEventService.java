@@ -108,10 +108,16 @@ public class InboundEventService {
             }
             List<ShipmentRecord> targets = resolveShipments(ev);
             List<String> touched = new ArrayList<>();
+            List<Map<String, Object>> touchedDetail = new ArrayList<>();
             Set<String> orderIds = new LinkedHashSet<>();
             for (ShipmentRecord sh : targets) {
                 shipments.applyCarrierEvent(sh.id(), ev.type(), actor());
                 touched.add(sh.id());
+                Map<String, Object> d = new LinkedHashMap<>();
+                d.put("shipmentId", sh.id());
+                d.put("orderId", sh.orderId());
+                if (sh.fulfilmentGroupId() != null) d.put("fulfilmentGroupId", sh.fulfilmentGroupId());
+                touchedDetail.add(d);
                 orderIds.add(sh.orderId());
             }
             if (ev.orderId() != null) orderIds.add(ev.orderId());
@@ -120,12 +126,13 @@ public class InboundEventService {
             List<String> signalled = new ArrayList<>();
             if (signal != null) {
                 for (String orderId : orderIds) {
-                    try {
-                        Order order = orders.get(orderId);
-                        engine.signal(orderWorkflows.workflowType(order), orderId, signal, ev.signalPayload(), ev.eventId() + ":" + orderId);
+                    Order order;
+                    try { order = orders.get(orderId); }
+                    catch (NotFoundException e) { log.warn("Carrier event {} for unknown order {}", ev.type(), orderId); continue; }
+                    if (engine.signalIfPresent(orderWorkflows.workflowType(order), orderId, signal, ev.signalPayload(touchedDetail.stream().filter(d -> orderId.equals(d.get("orderId"))).toList()), ev.eventId() + ":" + orderId)) {
                         signalled.add(orderId);
-                    } catch (NotFoundException e) {
-                        log.warn("Carrier event {} for order {} without a workflow: {}", ev.type(), orderId, e.getMessage());
+                    } else {
+                        log.warn("Carrier event {} for order {} without a workflow", ev.type(), orderId);
                     }
                 }
             }
@@ -156,11 +163,15 @@ public class InboundEventService {
             for (InventoryPosition p : positions) if (p.isSupply() && p.qty() > 0) skus.add(p.sku());
             List<String> woken = new ArrayList<>();
             for (String orderId : backorderedOrders(skus)) {
-                try {
-                    Order order = orders.get(orderId);
-                    engine.signal(orderWorkflows.workflowType(order), orderId, Signals.INVENTORY_AVAILABLE, Map.of("nodeId", nodeId, "skus", new ArrayList<>(skus), "eventId", eventId), eventId + ":" + orderId);
+                Order order;
+                try { order = orders.get(orderId); }
+                catch (NotFoundException e) { log.debug("inventory_available for unknown order {}", orderId); continue; }
+                if (engine.signalIfPresent(orderWorkflows.workflowType(order), orderId, Signals.INVENTORY_AVAILABLE,
+                        Map.of("nodeId", nodeId, "skus", new ArrayList<>(skus), "eventId", eventId), eventId + ":" + orderId)) {
                     woken.add(orderId);
-                } catch (NotFoundException | ConflictException e) { log.debug("inventory_available not delivered to {}: {}", orderId, e.getMessage()); }
+                } else {
+                    log.debug("inventory_available not delivered to {}: no workflow", orderId);
+                }
             }
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("accepted", true);

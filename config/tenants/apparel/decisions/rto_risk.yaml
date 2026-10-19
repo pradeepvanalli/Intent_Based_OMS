@@ -6,8 +6,10 @@
 # The act-band threshold is tuned by the FraudThresholdTuner learner (FD-03) as a reviewable ThresholdChange only.
 # v2: L0 rules clear returning customers at verified clean addresses and trusted repeat COD customers without a model
 # call or a task; a first-time COD buyer (the main source of refusals) goes to the model.
+# v3: an address that has already received a delivery (any customer, no refusals or failed deliveries) clears by
+# rule, so a repeat household is not held and messaged on every cash-on-delivery order.
 decision: rto_risk
-version: 2
+version: 3
 owner: returns-and-risk
 tier: T2
 provider: jev
@@ -15,6 +17,11 @@ fallbackProvider: heuristic
 timeoutMs: 800
 default: false
 rules:
+  - id: prior_delivered_address
+    when: "input.address.prior_delivered_count >= 1 && input.address.prior_refused_count == 0 && input.address.prior_failed_deliveries == 0 && input.customer.history.refused_12m == 0"
+    then: false
+    reason: prior_delivered_address
+    priority: 30
   - id: verified_clean_address
     when: "input.address.verification_status == 'verified' && input.customer.history.orders_12m >= 1 && input.address.prior_refused_count == 0 && input.address.prior_failed_deliveries == 0 && input.customer.history.refused_12m == 0"
     then: false
@@ -32,6 +39,7 @@ state:
     - address.verification_status
     - address.prior_failed_deliveries
     - address.prior_refused_count
+    - address.prior_delivered_count
     - customer.history.refused_12m
     - customer.history.orders_12m
 questions:

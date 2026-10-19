@@ -137,9 +137,11 @@ public class JdbcHumanTaskService implements HumanTaskService {
             Map<String, Object> signal = new LinkedHashMap<>(payload);
             signal.put("taskId", taskId);
             signal.put("completedBy", by);
-            try {
+            // Look first: catching NotFoundException from the transactional signal would leave this transaction
+            // rollback-only and fail the whole completion.
+            if (engine.findById(out.workflowId()).isPresent()) {
                 engine.signalById(out.workflowId(), "task:" + taskId, signal, "task:" + taskId + ":completed");
-            } catch (NotFoundException e) {
+            } else {
                 log.warn("Task {} completed but workflow {} no longer exists; signal dropped", taskId, out.workflowId());
             }
         }

@@ -37,12 +37,12 @@ public class OrderEventSubscriber implements EventSubscriber {
     @Override
     public void on(Event e) {
         if (!"order".equals(e.aggregateType())) return;
-        try {
-            Order order = orders.get(e.aggregateId());
-            engine.signal(workflowType(order), order.id(), Signals.HOLD_RELEASED, Map.of("holdId", String.valueOf(e.payload().get("holdId")), "type", String.valueOf(e.payload().get("type"))), e.id());
-        } catch (NotFoundException missing) {
-            log.debug("hold.released on {} has no order workflow: {}", e.aggregateId(), missing.getMessage());
-        }
+        Order order;
+        try { order = orders.get(e.aggregateId()); }
+        catch (NotFoundException missing) { log.debug("hold.released on unknown order {}", e.aggregateId()); return; }
+        boolean delivered = engine.signalIfPresent(workflowType(order), order.id(), Signals.HOLD_RELEASED,
+            Map.of("holdId", String.valueOf(e.payload().get("holdId")), "type", String.valueOf(e.payload().get("type"))), e.id());
+        if (!delivered) log.debug("hold.released on {} has no order workflow", e.aggregateId());
     }
 
     /** Workflow type of an order: the order type's binding, else {@code order.<type>}. */

@@ -117,10 +117,16 @@ public class AdminController {
     @GetMapping("/outbox")
     @RequiresPermission(Permissions.CONFIG_ADMIN)
     public Map<String, Object> outbox() {
-        long pending = jdbc.sql("select count(*) from outbox where tenant_id = :t and published_at is null").param("t", TenantContext.require()).query(Long.class).single();
-        var failed = jdbc.sql("select event_id, type, attempts, last_error, next_attempt_at from outbox where tenant_id = :t and published_at is null and attempts > 0 order by position limit 50")
-            .param("t", TenantContext.require()).query().listOfRows();
-        return Map.of("pending", pending, "failing", failed);
+        long pending = jdbc.sql("select count(*) from outbox where tenant_id = :t and published_at is null and dead_lettered_at is null").param("t", TenantContext.require()).query(Long.class).single();
+        var failed = jdbc.sql("""
+            select event_id, type, attempts, last_error, next_attempt_at, pending_subscribers::text as pending_subscribers from outbox
+            where tenant_id = :t and published_at is null and dead_lettered_at is null and attempts > 0 order by position limit 50
+            """).param("t", TenantContext.require()).query().listOfRows();
+        var dead = jdbc.sql("""
+            select event_id, type, attempts, last_error, dead_lettered_at, pending_subscribers::text as pending_subscribers from outbox
+            where tenant_id = :t and published_at is null and dead_lettered_at is not null order by position desc limit 50
+            """).param("t", TenantContext.require()).query().listOfRows();
+        return Map.of("pending", pending, "failing", failed, "deadLettered", dead);
     }
 
     @GetMapping("/ledger/{aggregateType}/{aggregateId}")

@@ -88,6 +88,7 @@ public class PaymentRiskFeatures {
         address.put("verification_status", o.shipTo().map(a -> a.verified() ? "verified" : "unverified").orElse("missing"));
         address.put("prior_failed_deliveries", shipToken == null ? 0 : carrierEvents(List.of("order.returned_to_sender", "order.carrier_exception"), "addressToken", shipToken, o.id(), since));
         address.put("prior_refused_count", shipToken == null ? 0 : carrierEvents(List.of("order.returned_to_sender"), "addressToken", shipToken, o.id(), since));
+        address.put("prior_delivered_count", shipToken == null ? 0 : deliveredTo(shipToken, o.id(), since));
 
         Map<String, Object> history = new LinkedHashMap<>();
         history.put("refused_12m", customer == null ? 0 : carrierEvents(List.of("order.returned_to_sender"), "customerRef", customer, o.id(), since));
@@ -150,6 +151,17 @@ public class PaymentRiskFeatures {
             where tenant_id = :t and type in (:types) and occurred_at >= :since and aggregate_id <> :oid and payload->>'%s' = :v
             """.formatted(field))
             .param("t", TenantContext.require()).param("types", types).param("since", Timestamp.from(since)).param("oid", orderId).param("v", value)
+            .query(Integer.class).single();
+    }
+
+    /** Orders already delivered to this address (any customer): a successful delivery is the strongest sign the
+     * address is real and reachable, so a cash-on-delivery order going there does not need an address confirmation. */
+    private int deliveredTo(String token, String orderId, Instant since) {
+        return jdbc.sql("""
+            select count(distinct o.id) from orders o join order_address a on a.tenant_id = o.tenant_id and a.order_id = o.id and a.type = 'ship_to'
+            where o.tenant_id = :t and o.id <> :oid and o.placed_at >= :since and o.status in ('delivered', 'completed') and %s = :tok
+            """.formatted(AddressTokens.SQL))
+            .param("t", TenantContext.require()).param("oid", orderId).param("since", Timestamp.from(since)).param("tok", token)
             .query(Integer.class).single();
     }
 

@@ -29,6 +29,12 @@ public final class OutcomeAttribution {
     public static Map<String, Double> attribute(List<OutcomeRecord> outcomes) {
         double stock = 0, node = 0, carrier = 0, customer = 0;
         boolean rejected = outcomes.stream().anyMatch(o -> o.payload() instanceof OutcomeData.FulfillmentOutcome f && f.storeRejected());
+        // Split and store reject are facts about the order, not about each parcel: counted once however many parcels shipped.
+        long parcels = outcomes.stream().filter(o -> o.payload() instanceof OutcomeData.FulfillmentOutcome f && f.shipmentId() != null)
+            .map(o -> ((OutcomeData.FulfillmentOutcome) o.payload()).shipmentId()).distinct().count();
+        boolean split = parcels > 1 || outcomes.stream().anyMatch(o -> o.payload() instanceof OutcomeData.FulfillmentOutcome f && f.packageCount() > 1);
+        if (rejected) node += 1;
+        if (split) stock += 1;
         for (OutcomeRecord o : outcomes) {
             switch (o.payload()) {
                 case OutcomeData.DeliveryOutcome d -> {
@@ -36,10 +42,7 @@ public final class OutcomeAttribution {
                     else if (d.damaged()) { carrier += 0.7; node += 0.3; }
                     else if (!d.onTime()) { if (rejected) { node += 0.6; carrier += 0.4; } else { carrier += 0.6; node += 0.4; } }
                 }
-                case OutcomeData.FulfillmentOutcome f -> {
-                    if (f.storeRejected()) node += 1;
-                    if (f.packageCount() > 1) stock += 1;
-                }
+                case OutcomeData.FulfillmentOutcome f -> { }
                 case OutcomeData.InventoryOutcome inv -> { if (inv.stranded() || inv.backorderCancelled()) stock += 1; }
                 case OutcomeData.PaymentOutcome p -> { if (p.chargeback() || p.refused()) customer += 1; }
                 case OutcomeData.ReturnOutcome r -> { if (r.fraudConfirmed()) customer += 1; }
