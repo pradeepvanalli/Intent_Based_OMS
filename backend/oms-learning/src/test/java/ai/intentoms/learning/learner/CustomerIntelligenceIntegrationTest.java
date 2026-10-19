@@ -176,6 +176,78 @@ class CustomerIntelligenceIntegrationTest extends PostgresTestBase {
         assertThat(value("seg-" + run + "-1", FactKey.SEGMENT_MEMBERSHIP)).isEqualTo(a);
     }
 
+    /**
+     * CI-01 evidence beyond the order itself: a complaint ({@code cs.complaint}) on a split order, a later ship-method
+     * upgrade or downgrade, and a return of a split order because part of it arrived late. Each cohort gets its own fact.
+     */
+    @Test
+    void complaintsUpgradesAndReturnsAreEvidenceAndEachSegmentGetsItsOwnFacts() {
+        String c = "cust-" + Ids.shortId();
+        String state = "Z" + Ids.shortId().substring(0, 3).toUpperCase();
+        String o1 = "o1-" + c, o2 = "o2-" + c, o3 = "o3-" + c;
+        learner.on(captured(o1, c, "standard", "standard_ship", state, 2));
+        learner.on(captured(o2, c, "standard", "standard_ship", state, 2));
+        learner.on(captured(o3, c, "standard", "standard_ship", state, 2));
+
+        // A complaint on a split order counts against split tolerance (defect 24: it used to be ignored).
+        learner.on(event("order.shipped", o1, Map.of("orderId", o1, "packageCount", 2)));
+        learner.on(event("cs.complaint", o1, Map.of("orderId", o1, "customerRef", c, "channel", "chat", "reason", "complaint")));
+        assertThat(evidence.weights(CustomerEvidenceRepository.CUSTOMER, c, FactKey.SPLIT_TOLERANCE.name(), 90, Instant.now()).get("neg")).isCloseTo(1.0, within(1e-3));
+        assertThat(value(c, FactKey.PREFERRED_CONTACT_CHANNEL)).isEqualTo("chat");
+
+        // Upgrading two orders to next-day after checkout outweighs the three standard choices' cost evidence... partly.
+        Event upgrade = event("order.modified", o2, Map.of("orderId", o2, "fromShipMethod", "standard", "shipMethod", "next_day"));
+        learner.on(upgrade);
+        learner.on(upgrade); // redelivered: counted once
+        learner.on(event("order.modified", o3, Map.of("orderId", o3, "fromShipMethod", "ground", "shipMethod", "express")));
+        Map<String, Double> speed = evidence.weights(CustomerEvidenceRepository.CUSTOMER, c, FactKey.SPEED_VS_COST.name(), 90, Instant.now());
+        assertThat(speed.get("pos")).isCloseTo(2.0, within(1e-3));
+        assertThat(speed.get("neg")).isCloseTo(3.0, within(1e-3));
+        // A downgrade is evidence for cost.
+        learner.on(event("order.modified", o3, Map.of("orderId", o3, "fromShipMethod", "express", "shipMethod", "standard")));
+        assertThat(evidence.weights(CustomerEvidenceRepository.CUSTOMER, c, FactKey.SPEED_VS_COST.name(), 90, Instant.now()).get("neg")).isCloseTo(4.0, within(1e-3));
+
+        // A split order returned because part of it arrived late: speed mattered, and the split did not work for them.
+        learner.on(event("order.shipped", o2, Map.of("orderId", o2, "packageCount", 2)));
+        learner.on(event("order.delivered", o2, Map.of("orderId", o2, "allDelivered", true)));
+        assertThat(evidence.weights(CustomerEvidenceRepository.CUSTOMER, c, FactKey.SPLIT_TOLERANCE.name(), 90, Instant.now()).get("pos")).isCloseTo(1.0, within(1e-3));
+        learner.on(new Event(Ids.id(), TenantContext.require(), "return", "rma-" + o2, 1, "return.requested",
+            Map.of("orderId", o2, "customerRef", c, "reasonCode", "arrived_late", "lines", List.of(Map.of("lineId", "L1", "reasonCode", "arrived_late"))),
+            Actor.system("t"), null, o2, Map.of(), Instant.now()));
+        Map<String, Double> split = evidence.weights(CustomerEvidenceRepository.CUSTOMER, c, FactKey.SPLIT_TOLERANCE.name(), 90, Instant.now());
+        assertThat(split.get("pos")).isCloseTo(0.0, within(1e-3));
+        assertThat(split.get("neg")).isCloseTo(2.0, within(1e-3));
+        assertThat(evidence.weights(CustomerEvidenceRepository.CUSTOMER, c, FactKey.SPEED_VS_COST.name(), 90, Instant.now()).get("pos")).isCloseTo(3.0, within(1e-3));
+
+        // Per segment: the cohort (web | small basket | state) has its own typed facts.
+        String segment = CiPreferenceLearner.segmentSubject("web|small|" + state);
+        LearnedFact segSplit = facts.active(SubjectType.SEGMENT, segment, FactKey.SPLIT_TOLERANCE).orElseThrow();
+        assertThat(((TypedValue.NumberValue) segSplit.value()).value()).isCloseTo((0 + 1.0) / (0 + 2 + 2), within(1e-3));
+        assertThat(segSplit.learner()).isEqualTo(CiPreferenceLearner.KEY);
+        assertThat(((TypedValue.NumberValue) facts.active(SubjectType.SEGMENT, segment, FactKey.SPEED_VS_COST).orElseThrow().value()).value())
+            .isCloseTo(2 * ((3 + 1.0) / (3 + 4 + 2)) - 1, within(1e-3));
+        assertThat(facts.active(SubjectType.SEGMENT, segment, FactKey.PREFERRED_CONTACT_CHANNEL).map(f -> ((TypedValue.TextValue) f.value()).value())).contains("chat");
+        assertThat(facts.active(SubjectType.SEGMENT, segment, FactKey.PICKUP_PREFERENCE).map(f -> ((TypedValue.BoolValue) f.value()).value())).contains(false);
+    }
+
+    /** CI-02: without an analyst the template names segments and the provenance says so; every segment has typed traits. */
+    @Test
+    void segmentProvenanceIsTruthfulAndLabelsAreTyped() {
+        String run = Ids.shortId();
+        Instant now = Instant.now();
+        for (int i = 0; i < 80; i++) {
+            String c = "segp-" + run + "-" + i;
+            boolean fast = i < 40;
+            put(c, FactKey.SPLIT_TOLERANCE, new TypedValue.NumberValue(fast ? 0.9 : 0.1), now);
+            put(c, FactKey.SPEED_VS_COST, new TypedValue.NumberValue(fast ? 0.8 : -0.8), now);
+        }
+        List<Segment> segments = discovery.discoverForTenant();
+        assertThat(segments).isNotEmpty().allSatisfy(s -> {
+            assertThat(s.definition()).containsEntry("namedBy", "template").containsEntry("templateReason", "no analyst configured");
+            assertThat((List<?>) s.definition().get("traits")).isNotEmpty().allSatisfy(t -> assertThat(SegmentNamer.TRAITS).contains(String.valueOf(t)));
+        });
+    }
+
     private void put(String customer, FactKey key, TypedValue v, Instant at) {
         facts.supersede(SubjectType.CUSTOMER, customer, key, at);
         facts.insert(new LearnedFact(Ids.prefixed("fact"), SubjectType.CUSTOMER, customer, key, v, 0.8, 5, CiPreferenceLearner.KEY, 1, at, null, at));
