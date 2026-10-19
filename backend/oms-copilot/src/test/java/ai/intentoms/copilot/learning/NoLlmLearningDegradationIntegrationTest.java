@@ -38,7 +38,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * NF-05: with every LLM provider down the order path runs on L0 rules and the heuristic provider, parameter learners
- * keep learning and episodes keep opening; only drafting (analyst, author) stops, and the objective editor falls back to
+ * keep learning and episodes keep opening; only model drafting (analyst, LLM author) stops, and the objective editor falls back to
  * its keyword template (XP-07). Also proves the XP-06 learning query templates run against the real schema.
  */
 class NoLlmLearningDegradationIntegrationTest extends NoLlmTestBase {
@@ -102,7 +102,8 @@ class NoLlmLearningDegradationIntegrationTest extends NoLlmTestBase {
         TenantContext.set(tenant);
         assertThat(facts.active(SubjectType.NODE, node, FactKey.NODE_ON_TIME_RATE)).isPresent();
 
-        // Only drafting stops.
+        // Only model drafting stops: the analyst finds nothing, and a loose hypothesis ("raise act threshold") is left for a
+        // person; the template author only writes what a hypothesis states precisely (TemplateAuthorCriticIntegrationTest).
         assertThat(analyst.runOnce()).isEmpty();
         Hypothesis h = new Hypothesis(Ids.prefixed("hyp"), Map.of("decision", "fulfilment_intent"), "override_rate", Direction.DECREASE,
             Map.of("target", "decision:fulfilment_intent", "description", "raise act threshold"), 0.6, List.of(), "test", Hypothesis.Status.OPEN, Instant.now());
