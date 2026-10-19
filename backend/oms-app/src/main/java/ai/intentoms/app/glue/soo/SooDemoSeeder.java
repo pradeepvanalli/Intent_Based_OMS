@@ -509,7 +509,11 @@ public class SooDemoSeeder {
     /** DRAFT: if the fraud threshold tuner (run with the other learners) drafted nothing, its usual proposal on COD refusals. */
     private void draftFallback(Map<String, String> ids) {
         List<Proposal> drafts = proposals.byStatus("DRAFT", 50);
-        if (!drafts.isEmpty()) { ids.put("draft", drafts.get(0).proposalId()); return; }
+        if (!drafts.isEmpty()) {
+            // Prefer the band tuner's decision draft (a stable target the UI and Playwright can shadow-test), else the newest.
+            ids.put("draft", drafts.stream().filter(d -> "fulfilment_intent".equals(d.changeset().target().name())).findFirst().orElse(drafts.get(0)).proposalId());
+            return;
+        }
         int version = liveVersion("rto_risk");
         draft(PROP_RTO_THRESHOLD, new ArtifactRef("decision", "rto_risk"), version, List.of(new PolicyChange.ThresholdChange("rto_risk", "act", 0.90, 0.93)),
             "Hold more first-time COD orders for address confirmation", PolicyChangeset.RiskTier.T2, byLearner("fraud_threshold_tuner"), null);
