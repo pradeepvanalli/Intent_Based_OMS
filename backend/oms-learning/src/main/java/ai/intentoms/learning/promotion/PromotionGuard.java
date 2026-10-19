@@ -90,6 +90,8 @@ public final class PromotionGuard {
         if (liftOk == null) return Result.needsApproval("no replay evaluation with a confidence interval yet (EX-01 runs before promotion)");
         if (Boolean.TRUE.equals(significantlyWorse(p.evaluationReport()))) return Result.blocked("replay shows the change makes outcomes worse");
         if (!liftOk) return Result.needsApproval("replay shows no clear improvement (the confidence interval includes zero)");
+        String ipsWorse = ipsWorse(p.evaluationReport());
+        if (ipsWorse != null) return Result.needsApproval(ipsWorse);
         Boolean shadowOk = shadowPassed(p.evaluationReport());
         if (shadowOk == null) return Result.needsApproval(tier + " promotes automatically only after replay and a shadow run (EX-07); no shadow run has completed yet");
         if (!shadowOk) return Result.needsApproval("the shadow run did not pass");
@@ -140,6 +142,8 @@ public final class PromotionGuard {
         } else if (!Boolean.TRUE.equals(positiveLift(report))) {
             out.add("replay shows no clear improvement (the confidence interval includes zero)");
         }
+        String ips = ipsWorse(report);
+        if (ips != null) out.add(ips);
         if (Boolean.FALSE.equals(shadowOk)) out.add("the shadow run did not pass");
         if (p.criticReview() != null && p.criticReview().verdict() == Review.Verdict.RISKY) out.add("the critic review flagged it as risky");
         String step = stepViolation(p.changeset(), ctx.learner());
@@ -266,6 +270,20 @@ public final class PromotionGuard {
         if (report == null) return null;
         if (report.get("confidenceInterval") instanceof Map<?, ?> m && m.get("lower") instanceof Number lower) return lower.doubleValue() > 0;
         return null;
+    }
+
+    /**
+     * E-2: the plain IPS estimate reported next to the doubly robust one (defect 3) is significantly negative, i.e. its
+     * whole interval lies below zero; null otherwise. The headline estimate may still look positive, so this is a concern
+     * a person must see and waive, never silently dropped.
+     */
+    public static String ipsWorse(Map<String, Object> report) {
+        if (report == null || !(report.get("ips") instanceof Map<?, ?> ips) || !(ips.get("confidenceInterval") instanceof Map<?, ?> ci)
+            || !(ci.get("upper") instanceof Number upper) || upper.doubleValue() >= 0) return null;
+        Object lift = ips.get("liftEstimate");
+        return String.format(java.util.Locale.ROOT, "the plain IPS estimate says it makes outcomes worse (reward %s, 95%% interval %s to %s)",
+            lift instanceof Number n ? String.format(java.util.Locale.ROOT, "%+.3f", n.doubleValue()) : "below zero",
+            ci.get("lower") instanceof Number l ? String.format(java.util.Locale.ROOT, "%+.3f", l.doubleValue()) : "?", String.format(java.util.Locale.ROOT, "%+.3f", upper.doubleValue()));
     }
 
     /** True when the evaluation's confidence interval lies entirely below zero. */

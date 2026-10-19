@@ -305,6 +305,12 @@ public class ProposalRepository {
     }
 
     /** Proposals in any of these statuses created by an author, newest first (author quality metric). */
+    /** Every proposal drafted since an instant, newest first (NF-09 metrics), at most {@code limit}. */
+    public List<Proposal> createdSince(Instant since, int limit) {
+        return jdbc.sql("select " + COLS + " from proposal where tenant_id = :t and created_at >= :since order by created_at desc limit :lim")
+            .param("t", TenantContext.require()).param("since", Timestamp.from(since)).param("lim", limit).query().listOfRows().stream().map(ProposalRepository::hydrate).toList();
+    }
+
     public List<Proposal> byCreator(String createdBy, int limit) {
         String t = TenantContext.require();
         return jdbc.sql("select " + COLS + " from proposal where tenant_id = :t and created_by = :by order by created_at desc limit :lim")
