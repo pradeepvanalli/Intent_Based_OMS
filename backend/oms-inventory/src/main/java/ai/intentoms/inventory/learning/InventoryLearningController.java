@@ -89,8 +89,28 @@ public class InventoryLearningController {
     @RequiresPermission(Permissions.INVENTORY_READ)
     public List<Map<String, Object>> transfers() {
         List<Map<String, Object>> out = new ArrayList<>();
+        // IU-04: typed recommendations first; a SKU with only a fact (written before typed rows existed) is parsed below.
+        Map<String, List<TransferRecommender.TransferRecommendation>> typed = new LinkedHashMap<>();
+        for (TransferRecommender.TransferRecommendation r : repo.openTransfers()) typed.computeIfAbsent(r.sku(), k -> new ArrayList<>()).add(r);
+        for (var e : typed.entrySet()) {
+            List<Map<String, Object>> moves = new ArrayList<>();
+            for (TransferRecommender.TransferRecommendation r : e.getValue()) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("fromNode", r.fromNode());
+                m.put("toNode", r.toNode());
+                m.put("units", r.qty());
+                m.put("qty", r.qty());
+                m.put("splitsAvoided", r.splitsAvoided());
+                m.put("cost", r.cost());
+                m.put("splitSavings", r.splitSavings());
+                m.put("currency", r.currency());
+                m.put("worthIt", r.worthIt());
+                moves.add(m);
+            }
+            out.add(Map.of("sku", e.getKey(), "transfers", moves, "recommendOnly", true, "asOf", e.getValue().get(0).generatedAt()));
+        }
         for (LearnedFact f : facts.activeByKey(SubjectType.SKU, FactKey.TRANSFER_RECOMMENDATION, 100_000)) {
-            if (!(f.value() instanceof TypedValue.ListValue l)) continue;
+            if (typed.containsKey(f.subjectId()) || !(f.value() instanceof TypedValue.ListValue l)) continue;
             List<Map<String, Object>> moves = new ArrayList<>();
             for (String label : l.values()) {
                 int gt = label.indexOf('>'), colon = label.lastIndexOf(':');
