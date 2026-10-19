@@ -4,7 +4,7 @@ All notable changes to Intent OMS are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses semantic versioning.
 
 ## [Unreleased]
-- **Self-Optimizing Order Orchestration — fixed and finished.** The first SOO entry below overstated what was built:
+- **Self-Optimizing Order Orchestration — fixes and completion work.** The first SOO entry below overstated what was built:
   a strict audit found 6 of 63 functional requirements done, runtime bugs that broke the learning screens, and a
   task queue that filled with duplicate escalations. This pass fixes those and builds the rest; the status of every
   requirement, with code and tests, is in `docs/SOO_TRACEABILITY.md`.
