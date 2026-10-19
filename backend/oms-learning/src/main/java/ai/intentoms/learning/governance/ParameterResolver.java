@@ -42,8 +42,12 @@ public class ParameterResolver {
     static final String HOLDOUT_REASON = "holdout customer: kept on the baseline (EX-04)";
 
     /** What was served and why, for the Why drawer and the decision record. {@code value} is null only when both
-     * the static and the learned value are absent. */
-    public record Resolution(String parameter, Double value, String source, String reason, Double learned, Double staticValue) {
+     * the static and the learned value are absent. {@code clamped} (B-1) is true when the served value is not the
+     * learned one but the promoted range or max step bounding it; {@code reason} then says which bound and by how much. */
+    public record Resolution(String parameter, Double value, String source, String reason, Double learned, Double staticValue, boolean clamped) {
+        public Resolution(String parameter, Double value, String source, String reason, Double learned, Double staticValue) {
+            this(parameter, value, source, reason, learned, staticValue, false);
+        }
         public boolean learnedServed() { return "LEARNED".equals(source); }
         public Map<String, Object> describe() {
             Map<String, Object> m = new LinkedHashMap<>();
@@ -53,6 +57,7 @@ public class ParameterResolver {
             m.put("reason", reason);
             if (learned != null) m.put("learned", learned);
             if (staticValue != null) m.put("static", staticValue);
+            if (clamped) m.put("clamped", true);
             return m;
         }
     }
@@ -74,17 +79,25 @@ public class ParameterResolver {
         LearnerGovernance.Gate gate = governance.gate(row.get().learnerKey());
         if (!gate.mayFeedLive()) return fallback(parameter, staticValue, learned, gate.mayRun() ? "learner is observe-only (L0)" : gate.reason());
         if (inHoldout(routingKey)) return fallback(parameter, staticValue, learned, HOLDOUT_REASON);
+        // B-1: a learned number outside the family's domain is in the wrong units or broken; it is never served.
+        if (!LiveFamilies.inDomain(parameter, learned)) {
+            return fallback(parameter, staticValue, learned, "learned value " + LiveFamilies.fmt(learned) + " is outside the values " + parameter + " can take ("
+                + LiveFamilies.of(parameter).map(LiveFamilies.Domain::describe).orElse("") + ")");
+        }
         double v = learned;
         String reason = "promoted for live use";
         LiveParameterRepository.LiveParameter p = row.get();
-        if (p.min() != null && v < p.min()) { v = p.min(); reason = "clamped to promoted minimum"; }
-        if (p.max() != null && v > p.max()) { v = p.max(); reason = "clamped to promoted maximum"; }
+        if (p.min() != null && v < p.min()) { v = p.min(); reason = "learned " + LiveFamilies.fmt(learned) + " is below the promoted minimum; clamped to " + LiveFamilies.fmt(v); }
+        if (p.max() != null && v > p.max()) { v = p.max(); reason = "learned " + LiveFamilies.fmt(learned) + " is above the promoted maximum; clamped to " + LiveFamilies.fmt(v); }
         if (p.maxStep() != null && staticValue != null && Math.abs(v - staticValue) > p.maxStep()) {
             v = staticValue + Math.signum(v - staticValue) * p.maxStep();
-            reason = "limited to max step from static value";
+            reason = "learned " + LiveFamilies.fmt(learned) + " is more than the max step " + LiveFamilies.fmt(p.maxStep()) + " from the static " + LiveFamilies.fmt(staticValue)
+                + "; limited to " + LiveFamilies.fmt(v);
         }
+        boolean clamped = Math.abs(v - learned) > 1e-12;
         metrics.count("oms.learning.parameter.served", "parameter", parameter, "source", "learned");
-        return new Resolution(parameter, v, "LEARNED", reason, learned, staticValue);
+        if (clamped) metrics.count("oms.learning.parameter.clamped", "parameter", parameter);
+        return new Resolution(parameter, v, "LEARNED", reason, learned, staticValue, clamped);
     }
 
     public boolean isLive(String parameter) { return isLiveFor(LearningSubject.current().orElse(null), parameter); }
