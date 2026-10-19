@@ -277,6 +277,8 @@ public class DecisionRuntime implements DecisionService {
         final long startNanos = System.nanoTime();
         /** Time spent in the learning hooks before this evaluation started; counted in the recorded latency. */
         long hookNanos;
+        /** Set when this evaluation reproduces a recorded decision (NF-04): its calibration and provider route are re-applied. */
+        DecisionRecord recorded;
         final long deadlineNanos;
         final Instant startedAt;
         Map<String, Object> state = Map.of();
@@ -326,6 +328,10 @@ public class DecisionRuntime implements DecisionService {
                     chain.add(pref);
                     details.put("providerRouted", pref);
                 });
+            } else if (recorded != null && recorded.details() != null && recorded.details().get("providerRouted") != null) {
+                String pref = String.valueOf(recorded.details().get("providerRouted"));
+                chain.add(pref);
+                details.put("providerRouted", pref);
             }
             if (def.provider() != null && !chain.contains(def.provider())) chain.add(def.provider());
             if (def.fallbackProvider() != null && !chain.contains(def.fallbackProvider())) chain.add(def.fallbackProvider());
@@ -373,6 +379,45 @@ public class DecisionRuntime implements DecisionService {
             details.put("defaultReason", reason);
             if (!failures.isEmpty()) details.put("failures", List.copyOf(failures));
         }
+    }
+
+    /**
+     * NF-04: re-runs a recorded decision exactly as it was made: on {@code def} (normally the recorded version), from its
+     * recorded input (which already carries the learned facts it used), re-applying the calibration, provider route and
+     * experiment arm it recorded, so the result matches even after live versions, facts and promotions have moved on.
+     * Never acts, escalates or caches; persists a record in {@code mode} that points at the original.
+     */
+    public DecisionResult reproduce(DecisionDefinition def, DecisionRecord recorded, Mode mode, Actor actor) {
+        if (mode == Mode.LIVE || mode == Mode.SHADOW) throw new IllegalArgumentException("reproduce runs in REPLAY or SIMULATION mode only");
+        DecisionOptions opts = new DecisionOptions(recorded.subjectType(), recorded.subjectId(),
+            recorded.correlationId() == null ? recorded.subjectId() : recorded.correlationId(), mode, def.version(), actor, Map.of());
+        Eval ev = new Eval(def, recorded.input(), opts);
+        ev.recorded = recorded;
+        ev.details.put("replayOf", recorded.id());
+        if (recorded.details() != null && recorded.details().get("experiment") != null) ev.details.put("experiment", recorded.details().get("experiment"));
+        if (recorded.details() != null && recorded.details().get("learnedFacts") != null) ev.details.put("learnedFacts", recorded.details().get("learnedFacts"));
+        try {
+            pipeline(ev);
+        } catch (RuntimeException e) {
+            log.error("Reproducing decision {} failed, returning default", recorded.id(), e);
+            ev.failures.add("runtime: " + e.getMessage());
+            ev.toDefault("runtime_error");
+        }
+        return persist(ev);
+    }
+
+    /** The calibrated confidence the original evaluation used, re-applied when the raw confidence matches. */
+    private static void reapplyRecordedCalibration(Eval ev) {
+        Map<String, Object> d = ev.recorded.details();
+        if (d == null || !(d.get("rawConfidence") instanceof Number recordedRaw) || d.get("calibration") == null) return;
+        if (Math.abs(recordedRaw.doubleValue() - ev.confidence) > 1e-9) return;
+        double raw = ev.confidence;
+        ev.confidence = ev.recorded.confidence();
+        ev.details.put("rawConfidence", raw);
+        Map<String, Object> source = new LinkedHashMap<>();
+        if (d.get("calibration") instanceof Map<?, ?> m) m.forEach((k, v) -> source.put(String.valueOf(k), v));
+        source.put("reappliedFrom", ev.recorded.id());
+        ev.details.put("calibration", source);
     }
 
     /** Evaluates one specific definition version (also used by shadow, simulation, impact diffs and golden evaluation). */
@@ -507,6 +552,8 @@ public class DecisionRuntime implements DecisionService {
                 ev.details.put("rawConfidence", raw);
                 ev.details.put("calibration", cal.source());
             }
+        } else if (ev.recorded != null) {
+            reapplyRecordedCalibration(ev);
         }
 
         // Reason codes by decomposition (section 9 rule 6).
