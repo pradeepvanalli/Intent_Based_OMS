@@ -30,8 +30,10 @@ provider). PostgreSQL 16 in Docker (compose). k6 v2.3.0. Demo tenant.
 
 | Run | Arrival rate | Duration | Orders | LIVE decisions | Episodes | Unassembled at end | Catch-up after load | Order create p95 | Errors |
 |---|---|---|---|---|---|---|---|---|---|
-| 10x a 360/h peak | 1 order/s (3,600/h) | 3 min | 181 | 708 | 707 | 0 | 0 s | 43.6 ms | 0% |
-| 10x a 1,800/h peak | 5 orders/s (18,000/h) | 2 min | 601 | 2,169 | 2,169 | 0 | 1 s | 24.6 ms | 0% |
+| 10x a 360/h peak (raw output: `NF-08-run-2026-10-19.txt`) | 1 order/s (3,600/h) | 3 min | 181 | 724 | 724 | 0 | 0 s | 50.0 ms | 0% |
+
+Earlier runs on a previous build (708/707 decisions/episodes at 1 order/s; 2,169/2,169 at 5 orders/s) were reported
+without their raw output, so they are not quoted as evidence here.
 
 In the first run, 707 episodes for 708 decisions means one decision point was evaluated twice and folded into one
 episode (OC-02), as designed. Every decision was the anchor or the latest evaluation of an episode.
