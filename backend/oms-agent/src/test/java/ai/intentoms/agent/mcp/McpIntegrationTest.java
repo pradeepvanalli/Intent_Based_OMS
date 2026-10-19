@@ -215,6 +215,55 @@ class McpIntegrationTest extends AgentTestBase {
         assertThat(ok.path("result").isObject()).isTrue();
     }
 
+    @Autowired ai.intentoms.learning.store.HypothesisRepository hypothesisRepository;
+    @Autowired ai.intentoms.learning.store.ProposalRepository proposalRepository;
+    @Autowired ai.intentoms.learning.event.LearningEvents learningEvents;
+    @Autowired ai.intentoms.learning.governance.LearnerGovernance learnerGovernance;
+
+    /** §9.4: explain_policy_change names from/to values, the hypothesis and the status history; learning_status shows pauses and rollbacks. */
+    @Test
+    void learningToolsExplainChangesWithHistoryAndShowPausesAndRollbacks() {
+        TestAgent ops = registerAgent(3, List.of("learning_status", "explain_policy_change"), new BigDecimal("0"), 600, List.of(), null);
+        var h = new ai.intentoms.learning.model.Hypothesis(Ids.prefixed("hyp"), Map.of("decision", "return_risk"), "override_rate", ai.intentoms.learning.model.Direction.DECREASE,
+            Map.of("action", "move_threshold"), 0.7, List.of("dr_1", "dr_2"), "People keep overriding low-confidence return verdicts", ai.intentoms.learning.model.Hypothesis.Status.DRAFTED,
+            java.time.Instant.now());
+        hypothesisRepository.insert(h, "system:band_threshold");
+        var cs = new ai.intentoms.learning.model.PolicyChangeset(new ai.intentoms.learning.model.ArtifactRef("decision", "return_risk"), 1,
+            List.of(new ai.intentoms.learning.model.PolicyChange.ThresholdChange("return_risk", "act", 0.90, 0.93)), "fewer wrong auto-approvals", ai.intentoms.learning.model.PolicyChangeset.RiskTier.T2);
+        var now = java.time.Instant.now();
+        var p = new ai.intentoms.learning.model.Proposal(Ids.prefixed("prop"), cs, h.hypothesisId(), ai.intentoms.learning.model.PolicyChangeset.RiskTier.T2,
+            ai.intentoms.learning.model.ProposalStatus.DRAFT, null, null, "system:band_threshold", now, now, null, null, null, null, null, null, null, null);
+        proposalRepository.insert(p);
+        proposalRepository.approve(p.proposalId(), "user:admin", now);
+        learningEvents.proposalApproved(p.proposalId(), ai.intentoms.platform.ledger.Actor.parse("user:admin"), Map.of("target", "decision:return_risk"));
+        proposalRepository.promote(p.proposalId(), now);
+        learningEvents.proposalPromoted(p.proposalId(), ai.intentoms.platform.ledger.Actor.system("promotion-service"), Map.of("tier", "T2"));
+        proposalRepository.rollback(p.proposalId(), "guardrail breach: override rate 13%", now);
+        learningEvents.proposalRolledBack(p.proposalId(), ai.intentoms.platform.ledger.Actor.system("guardrail-breach-monitor"), Map.of("reason", "guardrail breach: override rate 13%"));
+
+        JsonNode explained = structured(mcp(ops, toolCall(1, "explain_policy_change", Map.of("proposalId", p.proposalId()))));
+        JsonNode change = explained.path("changes").get(0);
+        assertThat(change.path("type").asText()).isEqualTo("ThresholdChange");
+        assertThat(change.path("from").asDouble()).isEqualTo(0.90);
+        assertThat(change.path("to").asDouble()).isEqualTo(0.93);
+        assertThat(change.path("summary").asText()).contains("0.90").contains("0.93");
+        assertThat(explained.path("hypothesis").path("rationale").asText()).contains("overriding");
+        assertThat(explained.path("hypothesis").path("raisedBy").asText()).isEqualTo("system:band_threshold");
+        assertThat(explained.path("rolledBack").path("reason").asText()).contains("guardrail");
+        List<String> steps = new java.util.ArrayList<>();
+        explained.path("statusHistory").forEach(s -> steps.add(s.path("event").asText()));
+        assertThat(steps).containsSubsequence("proposal.drafted", "proposal.approved", "proposal.promoted", "proposal.rolled_back");
+
+        learnerGovernance.pause("fraud_threshold_tuner", "outcome coverage for address_risk is 45%", "system:test");
+        try {
+            JsonNode status = structured(mcp(ops, toolCall(2, "learning_status", Map.of())));
+            assertThat(status.path("pausedLearners").toString()).contains("fraud_threshold_tuner").contains("45%");
+            assertThat(status.path("recentRollbacks").toString()).contains(p.proposalId()).contains("guardrail");
+        } finally {
+            learnerGovernance.resume("fraud_threshold_tuner", "system:test");
+        }
+    }
+
     @Autowired ai.intentoms.decision.runtime.DecisionService decisionService;
 
     /** XP-05: decision_why gives an agent the customer-safe view: no location ids, learned rates, scores, costs or backlog. */
