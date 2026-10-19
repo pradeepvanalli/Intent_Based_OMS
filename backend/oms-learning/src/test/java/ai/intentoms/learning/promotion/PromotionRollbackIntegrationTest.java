@@ -144,7 +144,9 @@ class PromotionRollbackIntegrationTest extends DecisionFabricTestBase {
 
     @Test
     void liveUseOfALearnedParameterIsGrantedAndRollbackRevokesIt() {
-        String family = "test.family_" + Instant.now().toEpochMilli();
+        // A family a live path reads (an unknown one is refused at promotion, as at drafting); the shared tenant may have it live.
+        String family = ai.intentoms.learning.hooks.NodeReliabilityFeatures.REJECT_RATE;
+        parameters.revoke(family, "test-setup");
         Proposal p = proposal("system:node_reliability", new ArtifactRef("parameter", "live:" + family), 0, PolicyChangeset.RiskTier.T0, ProposalStatus.APPROVED,
             new PolicyChange.ParameterChange(family, Map.of("enabled", false), Map.of("enabled", true, "min", 0.0, "max", 0.5, "maxStep", 0.1)));
 
