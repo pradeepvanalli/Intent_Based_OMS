@@ -23,23 +23,47 @@ public class ChangeCardService {
     private final HypothesisRepository hypotheses;
     private final CumulativeDiffService diffs;
 
-    public ChangeCardService(ProposalRepository proposals, HypothesisRepository hypotheses, CumulativeDiffService diffs) {
+    private final org.springframework.beans.factory.ObjectProvider<ai.intentoms.learning.promotion.PromotionService> promotion;
+
+    public ChangeCardService(ProposalRepository proposals, HypothesisRepository hypotheses, CumulativeDiffService diffs,
+                             org.springframework.beans.factory.ObjectProvider<ai.intentoms.learning.promotion.PromotionService> promotion) {
         this.proposals = proposals;
         this.hypotheses = hypotheses;
         this.diffs = diffs;
+        this.promotion = promotion;
     }
 
-    public record Actions(boolean canApprove, boolean canReject, String reason) {}
+    /**
+     * What the lifecycle allows next for this proposal and this person. {@code promotionConcerns} lists what promoting it
+     * now would waive (a written reason is then required); {@code promotionBlocker} says why it cannot go live at all.
+     */
+    public record Actions(boolean canApprove, boolean canReject, String reason, boolean canEvaluate, boolean canPromote, boolean canRollback,
+                          boolean canExperiment, List<String> promotionConcerns, String promotionBlocker) {
+        public Actions(boolean canApprove, boolean canReject, String reason) {
+            this(canApprove, canReject, reason, false, false, false, false, List.of(), null);
+        }
+    }
 
     public record ChangeCard(Proposal proposal, Hypothesis hypothesis, List<String> evidence, Map<String, Object> replay, Review criticReview,
-                             List<CumulativeDiffService.KeyDiff> diff, CumulativeDiffService.CumulativeDiff cumulative, Actions actions) {}
+                             List<CumulativeDiffService.KeyDiff> diff, CumulativeDiffService.CumulativeDiff cumulative, Actions actions,
+                             Map<String, Object> promotionNote) {}
 
     public ChangeCard card(String proposalId, String viewer) {
         Proposal p = proposals.get(proposalId);
         Hypothesis h = p.hypothesisId() == null ? null : hypotheses.find(p.hypothesisId()).orElse(null);
         List<String> evidence = h == null ? List.of() : h.evidence();
+        Actions base = actions(p, viewer);
+        List<String> concerns = List.of();
+        String blocker = null;
+        var promo = promotion.getIfAvailable();
+        if (promo != null && p.status() == ProposalStatus.APPROVED) {
+            concerns = promo.promotionConcerns(p);
+            blocker = promo.promotionBlocker(p);
+        }
+        Actions actions = new Actions(base.canApprove(), base.canReject(), base.reason(), base.canEvaluate(), base.canPromote() && blocker == null,
+            base.canRollback(), base.canExperiment(), concerns, blocker);
         return new ChangeCard(p, h, evidence, replay(p.evaluationReport()), p.criticReview(), CumulativeDiffService.diffOf(p),
-            diffs.forTarget(p.changeset().target().toString(), p), actions(p, viewer));
+            diffs.forTarget(p.changeset().target().toString(), p), actions, proposals.promotionNote(p.proposalId()).orElse(null));
     }
 
     /** The replay figures of the evaluation report, or {@code {"evaluated": false}} before EX-01 has run. */
@@ -47,15 +71,24 @@ public class ChangeCardService {
         Map<String, Object> m = new LinkedHashMap<>();
         if (report == null || report.isEmpty()) { m.put("evaluated", false); return m; }
         m.put("evaluated", true);
-        for (String k : List.of("method", "liftEstimate", "confidenceInterval", "sampleSize", "episodes", "guardrails", "shadow", "estimator", "clipping"))
+        for (String k : List.of("method", "liftEstimate", "confidenceInterval", "sampleSize", "episodes", "guardrails", "shadow", "canary", "estimator", "clipping",
+                "ips", "rewards", "reason", "next", "caveat"))
             if (report.containsKey(k)) m.put(k, report.get(k));
         return m;
     }
 
+    /** Defect 2: exactly the moves {@link ai.intentoms.learning.model.ProposalLifecycle} allows from the current status. */
     static Actions actions(Proposal p, String viewer) {
-        boolean open = p.status() == ProposalStatus.DRAFT || p.status() == ProposalStatus.EVALUATED;
-        if (!open) return new Actions(false, false, "proposal is " + p.status());
-        if (viewer != null && viewer.equals(p.createdBy())) return new Actions(false, true, "the author of a proposal cannot approve it");
-        return new Actions(true, true, null);
+        ProposalStatus s = p.status();
+        boolean canApproveStatus = ai.intentoms.learning.model.ProposalLifecycle.allowed(s, ProposalStatus.APPROVED);
+        boolean canReject = ai.intentoms.learning.model.ProposalLifecycle.allowed(s, ProposalStatus.REJECTED);
+        boolean canEvaluate = ai.intentoms.learning.model.ProposalLifecycle.allowed(s, ProposalStatus.EVALUATED);
+        boolean canPromote = s == ProposalStatus.APPROVED;
+        boolean canRollback = s == ProposalStatus.PROMOTED || s == ProposalStatus.CANARY;
+        boolean canExperiment = s == ProposalStatus.DRAFT || s == ProposalStatus.EVALUATED || s == ProposalStatus.APPROVED;
+        boolean author = viewer != null && viewer.equals(p.createdBy());
+        String reason = !canApproveStatus ? (s == ProposalStatus.DRAFT ? "test it on past decisions before approving" : "proposal is " + s)
+            : author ? "the author of a proposal cannot approve it" : null;
+        return new Actions(canApproveStatus && !author, canReject, reason, canEvaluate, canPromote, canRollback, canExperiment, List.of(), null);
     }
 }

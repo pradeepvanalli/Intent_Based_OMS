@@ -5,6 +5,8 @@ import ai.intentoms.learning.hooks.NodeReliabilityFeatures;
 import ai.intentoms.learning.model.ProposalStatus;
 import ai.intentoms.learning.promotion.PromotionService;
 import ai.intentoms.learning.store.ProposalRepository;
+import ai.intentoms.platform.error.ConflictException;
+import ai.intentoms.platform.error.OmsException;
 import ai.intentoms.platform.error.ValidationException;
 import ai.intentoms.platform.ledger.Actor;
 import ai.intentoms.platform.security.Principal;
@@ -52,9 +54,16 @@ class LiveUseFlowIntegrationTest extends PostgresTestBase {
         assertThat(p.changeset().target().toString()).isEqualTo("parameter:live:" + family);
 
         as("bob");
+        // Defect 2: a draft is tested before it is approved.
+        assertThatThrownBy(() -> learning.approve(p.proposalId(), null)).isInstanceOf(ConflictException.class);
+        proposals.markEvaluated(p.proposalId(), java.util.Map.of("method", "no_counterfactual", "sampleSize", 0), java.time.Instant.now());
         proposals.approve(p.proposalId(), "user:bob", java.time.Instant.now());
-        promotion.promote(p.proposalId(), Actor.parse("user:bob"));
+        // EX-07: with no shadow run and no comparison a person must say why they promote anyway.
+        assertThatThrownBy(() -> promotion.promote(p.proposalId(), Actor.parse("user:bob")))
+            .isInstanceOf(OmsException.class).satisfies(e -> assertThat(((OmsException) e).code()).isEqualTo("promotion_needs_override"));
+        promotion.promote(p.proposalId(), Actor.parse("user:bob"), "pilot on one region agreed with operations");
         assertThat(proposals.get(p.proposalId()).status()).isEqualTo(ProposalStatus.PROMOTED);
+        assertThat(proposals.promotionNote(p.proposalId()).orElseThrow()).containsEntry("reason", "pilot on one region agreed with operations");
         assertThat(resolver.isLive(family)).isTrue();
         // learned 0.30 is served, limited to max step 0.1 from the static 0.10
         assertThat(resolver.explain(family, 0.10, 0.30).value()).isEqualTo(0.2, org.assertj.core.data.Offset.offset(1e-9));
@@ -62,6 +71,17 @@ class LiveUseFlowIntegrationTest extends PostgresTestBase {
         liveUse.revoke(family);
         assertThat(resolver.isLive(family)).isFalse();
         assertThat(resolver.explain(family, 0.10, 0.30).value()).isEqualTo(0.10);
+        // Defect 27: switching live use off closes the proposal that switched it on.
+        var closed = proposals.get(p.proposalId());
+        assertThat(closed.status()).isEqualTo(ProposalStatus.ROLLED_BACK);
+        assertThat(closed.rolledBackReason()).contains("switched off by user:bob");
+        assertThatThrownBy(() -> promotion.rollback(p.proposalId(), Actor.parse("user:bob"), null)).isInstanceOf(ConflictException.class);
+        // Defect 26: the same change cannot come straight back, although its "from" now records the revoked row's range.
+        as("alice");
+        assertThatThrownBy(() -> liveUse.propose(new LiveUseController.LiveUseRequest(family, "node_reliability", 0.0, 0.5, 0.1, true, null)))
+            .isInstanceOf(OmsException.class).satisfies(e -> assertThat(((OmsException) e).code()).isEqualTo("proposal_cooling_down"));
+        // A different range is a different change.
+        assertThat(liveUse.propose(new LiveUseController.LiveUseRequest(family, "node_reliability", 0.0, 0.4, 0.1, true, null)).status()).isEqualTo(ProposalStatus.DRAFT);
     }
 
     @Test
@@ -81,6 +101,7 @@ class LiveUseFlowIntegrationTest extends PostgresTestBase {
         var p = new ai.intentoms.learning.model.Proposal(ai.intentoms.platform.ids.Ids.prefixed("prop"), cs, null, ai.intentoms.learning.model.PolicyChangeset.RiskTier.T1,
             ProposalStatus.DRAFT, null, null, "user:alice", now, now, null, null, null, null, null, null, null, null);
         proposals.insert(p);
+        proposals.markEvaluated(p.proposalId(), java.util.Map.of("method", "no_counterfactual"), now);
         as("bob");
         assertThatThrownBy(() -> learning.approve(p.proposalId(), null)).isInstanceOf(ValidationException.class).hasMessageContaining("reason code");
         assertThatThrownBy(() -> learning.approve(p.proposalId(), java.util.Map.of("reasonCode", "because"))).isInstanceOf(ValidationException.class);

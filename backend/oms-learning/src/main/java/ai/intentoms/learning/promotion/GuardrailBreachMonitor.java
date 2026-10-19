@@ -47,18 +47,20 @@ public class GuardrailBreachMonitor {
     private final PromotionService promotion;
     private final LearnerRegistry registry;
     private final Metrics counters;
+    private final ai.intentoms.learning.experiment.ExperimentManager experiments;
 
     @Value("${oms.learning.guardrail-watch-days:7}") private int watchDays;
     @Value("${oms.learning.guardrail-min-sample:30}") private int minSample;
 
     public GuardrailBreachMonitor(ProposalRepository proposals, DecisionRecordRepository decisionRecords, ExperimentMetricsRepository metrics,
-                                  PromotionService promotion, LearnerRegistry registry, Metrics counters) {
+                                  PromotionService promotion, LearnerRegistry registry, Metrics counters, ai.intentoms.learning.experiment.ExperimentManager experiments) {
         this.proposals = proposals;
         this.decisionRecords = decisionRecords;
         this.metrics = metrics;
         this.promotion = promotion;
         this.registry = registry;
         this.counters = counters;
+        this.experiments = experiments;
     }
 
     @Scheduled(fixedDelayString = "${oms.learning.guardrail-sweep-ms:1800000}", initialDelayString = "${oms.learning.guardrail-sweep-ms:1800000}")
@@ -86,6 +88,24 @@ public class GuardrailBreachMonitor {
                 rolledBack++;
             } catch (RuntimeException e) {
                 log.warn("Guardrail check or rollback of {} failed: {}", p.proposalId(), e.toString());
+            }
+        }
+        // EX-05 "during rollout": a canary whose candidate version breaks a guardrail against the live version, over the
+        // same period, is stopped and its change rolled back before it ever goes live.
+        for (var e : experiments.running()) {
+            if (e.mode() != ai.intentoms.learning.model.ExperimentMode.CANARY || e.decisionName() == null || e.candidateVersion() == null) continue;
+            try {
+                ExperimentMetricsRepository.Guardrails candidate = metrics.guardrails(e.decisionName(), e.candidateVersion(), e.startAt(), now);
+                ExperimentMetricsRepository.Guardrails live = metrics.guardrails(e.decisionName(), e.baselineVersion(), e.startAt(), now);
+                String breach = compare(e.decisionName(), live, candidate, minSample);
+                if (breach == null) continue;
+                Proposal p = proposals.get(e.proposalId());
+                promotion.rollbackCanary(p, Actor.system("guardrail-breach-monitor"), "guardrail breach during the trial: " + breach);
+                counters.count("oms.learning.guardrail.rollback", "target", "canary");
+                log.warn("Stopped canary {} for proposal {}: {}", e.experimentId(), e.proposalId(), breach);
+                rolledBack++;
+            } catch (RuntimeException ex) {
+                log.warn("Guardrail check of canary {} failed: {}", e.experimentId(), ex.toString());
             }
         }
         return rolledBack;

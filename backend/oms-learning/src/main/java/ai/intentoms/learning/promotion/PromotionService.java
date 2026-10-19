@@ -78,11 +78,24 @@ public class PromotionService {
     private final LearnerRegistry registry;
     private final TenantConfigStore config;
     private final LearningBaselineRepository baselines;
+    private final ai.intentoms.learning.governance.LearnerGovernance governance;
+    private final ai.intentoms.learning.store.HypothesisRepository hypotheses;
+    private final ai.intentoms.learning.experiment.ExperimentManager experiments;
+    private final List<ConfigDefaults> configDefaults;
+
+    /** Promotions of one target per week when the proposal has no governing learner (a person drafted it), GV-02. */
+    public static final String TARGET_BUDGET_KEY = "learning.max_promotions_per_target_per_week";
 
     public PromotionService(ProposalRepository proposals, LearnerRepository learners, ObjectiveProfileRepository objectives, LearnedFactRepository facts,
                              DecisionStudioService decisionStudio, DecisionDefinitionRepository definitions, LearningEvents events,
                              ai.intentoms.decision.record.DecisionRecordRepository decisionRecords, ParameterResolver parameters, LiveParameterRepository liveParameters,
-                             LearnerRegistry registry, TenantConfigStore config, LearningBaselineRepository baselines) {
+                             LearnerRegistry registry, TenantConfigStore config, LearningBaselineRepository baselines,
+                             ai.intentoms.learning.governance.LearnerGovernance governance, ai.intentoms.learning.store.HypothesisRepository hypotheses,
+                             ai.intentoms.learning.experiment.ExperimentManager experiments, List<ConfigDefaults> configDefaults) {
+        this.governance = governance;
+        this.hypotheses = hypotheses;
+        this.experiments = experiments;
+        this.configDefaults = configDefaults;
         this.proposals = proposals;
         this.learners = learners;
         this.objectives = objectives;
@@ -112,37 +125,73 @@ public class PromotionService {
     }
 
     private int sweepTenant() {
+        // GV-03: while the global or tenant kill switch is on, nothing is promoted automatically.
+        if (!governance.learningOn()) return 0;
         int n = 0;
-        List<FreezeWindows.Window> freeze = FreezeWindows.load(objectives.live().orElse(null));
         for (Proposal p : proposals.byStatus("EVALUATED", 200)) {
-            try { if (tryAutoPromote(p, freeze)) n++; }
+            try { if (tryAutoPromote(p)) n++; }
             catch (RuntimeException e) { log.warn("Auto-promotion of {} failed, leaving it for a person: {}", p.proposalId(), e.toString()); }
         }
         return n;
     }
 
-    private boolean tryAutoPromote(Proposal p, List<FreezeWindows.Window> freeze) {
-        String learnerKey = learnerKeyOf(p);
-        LearnerState learner = learnerFor(p);
-        int promotedThisWeek = countPromotedInTrailingWeek(learnerKey);
-        PromotionGuard.Result r = PromotionGuard.evaluate(p, learner, FreezeWindows.toGuardWindows(freeze), Instant.now(), promotedThisWeek);
+    private boolean tryAutoPromote(Proposal p) {
+        PromotionGuard.Context ctx = context(p);
+        PromotionGuard.Result r = PromotionGuard.evaluate(p, ctx);
         if (r.verdict() != PromotionGuard.Verdict.AUTO_PROMOTE) return false;
-        apply(p, learner, r.reason(), Actor.system("promotion-service"));
+        apply(p, ctx.learner(), r.reason(), Actor.system("promotion-service"), null);
         return true;
     }
 
-    /** Manual promotion of an already-APPROVED proposal (called from a human-facing controller). */
-    public Proposal promote(String proposalId, Actor by) {
+    /** Manual promotion of an already-APPROVED proposal with no override (see {@link #promote(String, Actor, String)}). */
+    public Proposal promote(String proposalId, Actor by) { return promote(proposalId, by, null); }
+
+    /**
+     * A person promotes an APPROVED proposal (EX-07). When its evidence or budget falls short the call is refused with
+     * code {@code promotion_needs_override} and the list of what would be waived; repeating it with a written
+     * {@code overrideReason} promotes it and records the waiver on the ledger and the proposal.
+     */
+    public Proposal promote(String proposalId, Actor by, String overrideReason) {
         Proposal p = proposals.get(proposalId);
-        LearnerState learner = learnerFor(p);
-        List<FreezeWindows.Window> freeze = FreezeWindows.load(objectives.live().orElse(null));
-        PromotionGuard.Result r = PromotionGuard.evaluateManualPromote(p, learner, FreezeWindows.toGuardWindows(freeze), Instant.now());
+        ai.intentoms.learning.model.ProposalLifecycle.require(p, ProposalStatus.PROMOTED, "promote");
+        PromotionGuard.Context ctx = context(p);
+        PromotionGuard.Result r = PromotionGuard.evaluateManualPromote(p, ctx, overrideReason);
+        if (r.verdict() == PromotionGuard.Verdict.NEEDS_OVERRIDE) {
+            throw new ai.intentoms.platform.error.OmsException(org.springframework.http.HttpStatus.CONFLICT, "promotion_needs_override", r.reason(),
+                Map.of("proposalId", proposalId, "waivable", r.waivable()), null);
+        }
         if (r.verdict() != PromotionGuard.Verdict.AUTO_PROMOTE) throw new ConflictException("Cannot promote: " + r.reason());
-        apply(p, learner, r.reason(), by);
+        Map<String, Object> override = null;
+        if (!r.waivable().isEmpty()) {
+            override = new LinkedHashMap<>();
+            override.put("by", by.ref());
+            override.put("reason", overrideReason.trim());
+            override.put("waived", r.waivable());
+            override.put("at", Instant.now().toString());
+        }
+        apply(p, ctx.learner(), r.reason(), by, override);
         return proposals.get(proposalId);
     }
 
-    private void apply(Proposal p, LearnerState learner, String reason, Actor by) {
+    /** What a person would have to waive to promote this proposal now; empty when nothing (change card, UI). */
+    public List<String> promotionConcerns(Proposal p) { return PromotionGuard.concerns(p, context(p)); }
+
+    /** Why this proposal cannot be promoted at all right now (freeze window, kill switch, paused learner…), or null. */
+    public String promotionBlocker(Proposal p) {
+        PromotionGuard.Result r = PromotionGuard.evaluateManualPromote(p, context(p), "dry run: check hard stops only");
+        return r.verdict() == PromotionGuard.Verdict.BLOCKED ? r.reason() : null;
+    }
+
+    private PromotionGuard.Context context(Proposal p) {
+        LearnerState learner = learnerFor(p);
+        List<FreezeWindows.Window> freeze = FreezeWindows.load(objectives.live().orElse(null));
+        String target = p.changeset().target().toString();
+        int promotedThisWeek = proposals.promotionsOfTargetSince(target, Instant.now().minus(Duration.ofDays(7)));
+        int budget = registry.descriptor(learner.learnerKey()).isPresent() ? learner.maxPromotionsPerWeek() : Math.max(0, config.getInt(TARGET_BUDGET_KEY, 1));
+        return new PromotionGuard.Context(learner, FreezeWindows.toGuardWindows(freeze), Instant.now(), governance.offReason(), promotedThisWeek, budget);
+    }
+
+    private void apply(Proposal p, LearnerState learner, String reason, Actor by, Map<String, Object> override) {
         ArtifactRef target = p.changeset().target();
         Map<String, Object> snapshot = switch (target.type()) {
             case "decision" -> applyToDecision(p, target.name());
@@ -153,6 +202,7 @@ public class PromotionService {
         Instant now = Instant.now();
         proposals.setRollbackSnapshot(p.proposalId(), snapshot);
         proposals.promote(p.proposalId(), now);
+        if (override != null) proposals.setPromotionNote(p.proposalId(), override);
         if (registry.descriptor(learner.learnerKey()).isPresent()) learners.recordRun(learner.learnerKey(), now);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("target", target.toString());
@@ -161,6 +211,7 @@ public class PromotionService {
         payload.put("learner", learner.learnerKey());
         payload.put("changeTypes", p.changeset().changes().stream().map(c -> c.getClass().getSimpleName()).toList());
         payload.put("applied", snapshot);
+        if (override != null) payload.put("override", override);
         events.proposalPromoted(p.proposalId(), by, payload);
     }
 
@@ -199,8 +250,8 @@ public class PromotionService {
 
     private Map<String, Object> applyToConfig(Proposal p, String key) {
         Object before = config.get(key).orElse(null);
-        Object value = before;
-        for (PolicyChange c : p.changeset().changes()) value = ChangesetApplier.applyToConfig(key, value, c);
+        Object defaults = configDefaults.stream().map(d -> d.defaultFor(key)).flatMap(java.util.Optional::stream).findFirst().orElse(null);
+        Object value = ChangesetApplier.applyAllToConfig(key, before, p.changeset().changes(), defaults);
         config.set(key, configValue(value));
         Map<String, Object> s = new LinkedHashMap<>();
         s.put("kind", "config");
@@ -275,7 +326,8 @@ public class PromotionService {
     @SuppressWarnings("unchecked")
     public Proposal rollback(String proposalId, Actor by, String reason) {
         Proposal p = proposals.get(proposalId);
-        if (p.status() != ProposalStatus.PROMOTED) throw new ConflictException("Proposal " + proposalId + " is " + p.status() + ", only a promoted change can be rolled back");
+        if (p.status() == ProposalStatus.CANARY) return rollbackCanary(p, by, reason);
+        if (p.status() != ProposalStatus.PROMOTED) throw ai.intentoms.learning.model.ProposalLifecycle.refused(proposalId, p.status(), "roll back");
         Map<String, Object> s = proposals.rollbackSnapshot(proposalId)
             .orElseThrow(() -> new ConflictException("Proposal " + proposalId + " was promoted before rollback snapshots were recorded; roll it back in the Decision Studio"));
         String kind = String.valueOf(s.get("kind"));
@@ -341,7 +393,47 @@ public class PromotionService {
         String why = reason == null || reason.isBlank() ? "rolled back by " + by.ref() : reason;
         proposals.rollback(proposalId, why, Instant.now());
         events.proposalRolledBack(proposalId, by, Map.of("target", p.changeset().target().toString(), "reason", why, "restored", restored));
+        counterEvidence(p, "Rolled back " + Instant.now().toString().substring(0, 10) + ": " + why, by);
         return proposals.get(proposalId);
+    }
+
+    /**
+     * EX-05 "during rollout": a change being tried on a slice of customers is rolled back by stopping its canary (the
+     * slice goes back to the live version at once; the candidate was never published) and closing the proposal.
+     */
+    public Proposal rollbackCanary(Proposal p, Actor by, String reason) {
+        String why = reason == null || reason.isBlank() ? "trial stopped by " + by.ref() : reason;
+        for (var e : experiments.running()) {
+            if (p.proposalId().equals(e.proposalId()) && e.mode() == ai.intentoms.learning.model.ExperimentMode.CANARY) {
+                experiments.stopForRollback(e.experimentId(), why, by);
+            }
+        }
+        proposals.rollback(p.proposalId(), why, Instant.now());
+        events.proposalRolledBack(p.proposalId(), by, Map.of("target", p.changeset().target().toString(), "reason", why, "restored", Map.of("kind", "canary", "live", "unchanged")));
+        counterEvidence(p, "Trial rolled back " + Instant.now().toString().substring(0, 10) + ": " + why, by);
+        return proposals.get(p.proposalId());
+    }
+
+    /**
+     * Defect 27: switching a learned family off through {@code /live-parameters/{family}/revoke} also closes the proposal
+     * that switched it on, so its card and history stop saying it is live.
+     */
+    public void liveUseRevoked(String family, Actor by) {
+        liveParameters.find(family).map(LiveParameterRepository.LiveParameter::proposalId).flatMap(proposals::find).ifPresent(p -> {
+            if (p.status() != ProposalStatus.PROMOTED) return;
+            String why = "live use of " + family + " switched off by " + by.ref();
+            proposals.rollback(p.proposalId(), why, Instant.now());
+            events.proposalRolledBack(p.proposalId(), by, Map.of("target", p.changeset().target().toString(), "reason", why, "restored", Map.of("kind", "live", "family", family, "live", false)));
+        });
+    }
+
+    /** §5: a rolled-back or rejected change goes back to its hypothesis as evidence against it. */
+    public void counterEvidence(Proposal p, String note, Actor by) {
+        if (p.hypothesisId() == null) return;
+        try {
+            hypotheses.addCounterEvidence(p.hypothesisId(), note);
+            events.hypothesisCounterEvidence(p.hypothesisId(), by, Map.of("proposalId", p.proposalId(), "note", note));
+        } catch (RuntimeException e) { log.warn("Could not record counter-evidence on hypothesis {}: {}", p.hypothesisId(), e.toString()); }
     }
 
     // ------------------------------------------------------------------ helpers
@@ -363,11 +455,6 @@ public class PromotionService {
     private static Object configValue(Object v) { return v instanceof String str ? Json.write(str) : v; }
 
     private static Double num(Object o) { return o instanceof Number n ? n.doubleValue() : o == null ? null : Double.valueOf(String.valueOf(o)); }
-
-    private int countPromotedInTrailingWeek(String learnerKey) {
-        return (int) proposals.promotedSince(Instant.now().minus(Duration.ofDays(7)), 500).stream()
-            .filter(p -> learnerKey.equals(learnerKeyOf(p))).count();
-    }
 
     /** GV-05: tenant-defined freeze windows live in {@code objective_profile.constraints.freezeWindows}, each
      * {@code {"from": "yyyy-MM-dd", "to": "yyyy-MM-dd"}}. */

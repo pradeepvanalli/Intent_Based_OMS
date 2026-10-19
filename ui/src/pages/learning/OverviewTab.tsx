@@ -138,7 +138,7 @@ function LiftRow({ m }: { m: LiftMetric }) {
       <td>{metricName(m.metric)}<Technical><div className="xs muted mono">{m.metric} · n {m.nTreated} vs {m.nHoldout}{m.ciLower !== undefined ? ` · CI [${fmtNum(m.ciLower, 3)}, ${fmtNum(m.ciUpper, 3)}]` : ''}</div></Technical></td>
       <td className="num">{m.treatedMean === undefined ? '—' : fmtNum(m.treatedMean, 3)}</td>
       <td className="num">{m.holdoutMean === undefined ? '—' : fmtNum(m.holdoutMean, 3)}</td>
-      <td><Badge tone={v.tone}>{v.text}</Badge></td>
+      <td><Badge tone={v.tone} title={m.reason ?? undefined}>{v.text}</Badge></td>
     </tr>
   );
 }

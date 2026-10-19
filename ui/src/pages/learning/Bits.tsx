@@ -35,13 +35,15 @@ export function TechnicalToggle() {
 }
 
 /** Asks for a reason inside the page (the app never uses window.prompt). */
-export function ReasonDialog({ open, title, description, label = 'Reason', confirmLabel, danger, required = true, loading, onClose, onConfirm, codes }: {
+export function ReasonDialog({ open, title, description, label = 'Reason', confirmLabel, danger, required = true, minLength = 1, loading, onClose, onConfirm, codes }: {
   open: boolean; title: string; description?: ReactNode; label?: string; confirmLabel: string; danger?: boolean; required?: boolean; loading?: boolean;
+  /** Characters a required reason needs (the server refuses shorter override reasons). */
+  minLength?: number;
   onClose: () => void; onConfirm: (reason: string, code?: string) => void; codes?: { code: string; label: string }[];
 }) {
   const [reason, setReason] = useState('');
   const [code, setCode] = useState('');
-  const missing = (required && !reason.trim()) || (!!codes && !code);
+  const missing = (required && reason.trim().length < Math.max(1, minLength)) || (!!codes && !code);
   const close = () => { setReason(''); setCode(''); onClose(); };
   return (
     <Dialog open={open} onClose={close} title={title} description={description}
@@ -52,7 +54,8 @@ export function ReasonDialog({ open, title, description, label = 'Reason', confi
           {codes.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
         </Select>
       )}
-      {(required || !codes) && <Textarea label={label} value={reason} onChange={(e) => setReason(e.target.value)} rows={3} placeholder="One or two sentences; this goes into the audit trail" />}
+      {(required || !codes) && <Textarea label={label} value={reason} onChange={(e) => setReason(e.target.value)} rows={3} placeholder="One or two sentences; this goes into the audit trail"
+        hint={minLength > 1 && reason.trim().length < minLength ? `At least ${minLength} characters` : undefined} />}
     </Dialog>
   );
 }

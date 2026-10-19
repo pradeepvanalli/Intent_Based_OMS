@@ -99,8 +99,11 @@ const proposals: Proposal[] = [
     evaluationReport: { ...good, liftEstimate: -0.01, confidenceInterval: { lower: -0.03, upper: 0.01 } }, createdBy: 'system:author', rejectedReason: 'Would flag our best loyalty-tier customers; needs a value threshold too.', rejectedAt: daysAgo(4) }),
   mk({ proposalId: 'prop_demo9', tier: 'T1', status: 'ROLLED_BACK', target: ['decision', 'sla_breach_risk'], changes: [{ type: 'ThresholdChange', decision: 'sla_breach_risk', band: 'act', from: 0.7, to: 0.62 }],
     evaluationReport: { ...good, liftEstimate: 0.02, confidenceInterval: { lower: 0.001, upper: 0.04 } }, createdBy: 'system:band_threshold', approvedBy: 'user:admin', approvedAt: daysAgo(20), promotedAt: daysAgo(19), rolledBackAt: daysAgo(17), rolledBackReason: 'Escalations to people went up 30% after going live.' }),
-  mk({ proposalId: 'prop_demo10', tier: 'T1', status: 'DRAFT', target: ['parameter', 'sourcing.blocked_zip3'], changes: [{ type: 'ParameterChange', parameter: 'sourcing.blocked_zip3', from: [], to: ['941'] }],
+  mk({ proposalId: 'prop_demo10', tier: 'T1', status: 'EVALUATED', evaluatedAt: hoursAgo(3), evaluationReport: { method: 'no_counterfactual', sampleSize: 0, reason: 'sourcing.blocked_zip3 has only ever run at its current value' }, target: ['parameter', 'sourcing.blocked_zip3'], changes: [{ type: 'ParameterChange', parameter: 'sourcing.blocked_zip3', from: [], to: ['941'] }],
     createdBy: 'system:author', createdAt: hoursAgo(6), updatedAt: hoursAgo(6) }),
+  mk({ proposalId: 'prop_demo13', tier: 'T1', status: 'APPROVED', target: ['parameter', 'live:promise.lane_calibration'], changes: [{ type: 'ParameterChange', parameter: 'live:promise.lane_calibration', from: { enabled: false }, to: { enabled: true, min: 0.5, max: 1, maxStep: 0.1, learner: 'lane_transit' } }],
+    evaluationReport: { method: 'no_counterfactual', sampleSize: 0, reason: 'only 4 decisions that used a learned value and 210 decisions on static values with a reward (need 30 each)', next: 'run a shadow experiment, then promote within the learner max step; the promotion gate will ask for a person' },
+    createdBy: 'system:lane_transit', approvedBy: 'user:strategy', approvedAt: hoursAgo(4), evaluatedAt: hoursAgo(9), createdAt: hoursAgo(10), updatedAt: hoursAgo(4) }),
 ];
 
 const liveParameters: LiveParameter[] = [
@@ -123,12 +126,12 @@ const measurement: Record<string, Record<string, unknown>> = {
 
 const metric = (m: string, better: 'higher' | 'lower', t: number, h: number, ci: number, n = 2400): LiftReport['metrics'][number] => {
   const lift = +(t - h).toFixed(4); const sig = Math.abs(lift) > ci;
-  return { metric: m, betterWhen: better, nTreated: n, nHoldout: Math.round(n * 0.05), treatedMean: t, holdoutMean: h, lift, ciLower: +(lift - ci).toFixed(4), ciUpper: +(lift + ci).toFixed(4), significant: sig, improvement: sig && (better === 'higher' ? lift > 0 : lift < 0) };
+  return { metric: m, betterWhen: better, nTreated: n, nHoldout: Math.round(n * 0.05), treatedMean: t, holdoutMean: h, lift, ciLower: +(lift - ci).toFixed(4), ciUpper: +(lift + ci).toFixed(4), significant: sig, improvement: sig && (better === 'higher' ? lift > 0 : lift < 0), enoughData: true };
 };
 const lift: LiftReport = {
   windowDays: 90, since: daysAgo(90), holdout: { experimentId: 'exp_holdout', trafficShare: 0.05, startAt: daysAgo(60) }, baselines: {},
   metrics: [metric('reward', 'higher', 0.642, 0.611, 0.014), metric('otd', 'higher', 0.931, 0.902, 0.018), metric('split', 'lower', 0.118, 0.142, 0.02), metric('cost', 'lower', 0.093, 0.095, 0.006), metric('cx', 'lower', 0.041, 0.044, 0.01), metric('fraud', 'lower', 0.004, 0.004, 0.003)],
-  byDecision: {},
+  byDecision: {}, minPerArm: 30,
 };
 
 const coverage: Record<string, number> = { sourcing_node_score: 0.91, sourcing_policy_bandit: 0.88, payment_risk: 0.84, sla_breach_risk: 0.71 };
@@ -169,10 +172,41 @@ const digest: Digest = {
   },
 };
 
+/** Mirrors ProposalLifecycle (defect 2): the moves allowed from each status. */
+const LIFECYCLE: Record<ProposalStatus, ProposalStatus[]> = {
+  DRAFT: ['EVALUATED', 'REJECTED'], EVALUATED: ['EVALUATED', 'APPROVED', 'REJECTED', 'CANARY', 'PROMOTED'], APPROVED: ['PROMOTED', 'CANARY', 'REJECTED'],
+  CANARY: ['APPROVED', 'EVALUATED', 'REJECTED', 'PROMOTED', 'ROLLED_BACK'], PROMOTED: ['ROLLED_BACK'], REJECTED: [], ROLLED_BACK: [],
+};
+const STATUS_PHRASE: Record<ProposalStatus, string> = {
+  DRAFT: 'a draft that has not been tested yet', EVALUATED: 'tested and waiting for approval', APPROVED: 'approved and waiting to go live', CANARY: 'being tried on some customers',
+  PROMOTED: 'live', REJECTED: 'rejected', ROLLED_BACK: 'rolled back',
+};
+const NEXT_STEP: Record<ProposalStatus, string> = {
+  DRAFT: 'Test it on past decisions first.', EVALUATED: 'Approve, reject or try it first.', APPROVED: 'It can go live, be tried on some customers, or be rejected.',
+  CANARY: 'Wait for the trial to finish, or roll it back.', PROMOTED: 'The only thing left is to roll it back.', REJECTED: 'It is closed; draft a new change to try again.', ROLLED_BACK: 'It is closed; draft a new change to try again.',
+};
+const allowed = (p: Proposal, to: ProposalStatus) => LIFECYCLE[p.status].includes(to);
+const promotionNotes: Record<string, { by: string; reason: string; waived: string[]; at: string }> = {};
+let globalOff: { by: string; at: string } | null = null;
+
+/** EX-07: what a person would waive by promoting now (mirrors PromotionGuard.concerns for the demo data). */
+function concernsOf(p: Proposal): string[] {
+  const r = p.evaluationReport;
+  const out: string[] = [];
+  const ci = r?.confidenceInterval;
+  if (!ci) out.push(p.changeset.target.type === 'decision' ? 'it has no replay evaluation on past decisions' : 'this kind of change cannot be replayed and no shadow run has passed');
+  else if (ci.upper < 0) out.push('replay shows it makes outcomes worse');
+  else if (ci.lower <= 0) out.push('replay shows no clear improvement (the confidence interval includes zero)');
+  if (r?.shadow && r.shadow.passed === false) out.push('the shadow run did not pass');
+  if (p.criticReview?.verdict === 'RISKY') out.push('the critic review flagged it as risky');
+  return out;
+}
+const blockerOf = (): string | null => (globalOff ? 'learning is switched off (global kill switch); nothing is promoted until it is back on'
+  : tenantPaused ? 'learning is switched off (tenant kill switch); nothing is promoted until it is back on' : null);
+
 function card(p: Proposal): ChangeCard {
   const h = hypotheses.find((x) => x.hypothesisId === p.hypothesisId) ?? null;
   const viewer = me();
-  const open = p.status === 'DRAFT' || p.status === 'EVALUATED';
   const diff = p.changeset.changes.flatMap((c) => c.type === 'ThresholdChange' ? [{ key: `bands.${c.band}`, type: 'threshold', from: c.from, to: c.to, steps: 1 }]
     : c.type === 'WeightChange' ? [{ key: `${c.target.replace(/^config:/, '')}.${c.weightKey}`, type: 'weight', from: c.from, to: c.to, steps: 1 }]
     : c.type === 'ParameterChange' ? [{ key: c.parameter, type: 'parameter', from: c.from, to: c.to, steps: 1 }] : []);
@@ -185,14 +219,26 @@ function card(p: Proposal): ChangeCard {
       automaticPromotionsSinceBaseline: p.changeset.target.name === 'sourcing_node_score' ? 2 : 0,
       sinceBaseline: p.changeset.target.name === 'sourcing_node_score' ? [{ key: 'bands.act', type: 'threshold', from: 0.86, to: 0.82, steps: 2 }] : [],
       withPending: p.changeset.target.name === 'sourcing_node_score' ? [{ key: 'bands.act', type: 'threshold', from: 0.86, to: 0.78, steps: 3 }] : diff, promotedProposalIds: [] },
-    actions: !open ? { canApprove: false, canReject: false, reason: `proposal is ${p.status}` } : viewer === p.createdBy ? { canApprove: false, canReject: true, reason: 'the author of a proposal cannot approve it' } : { canApprove: true, canReject: true, reason: null },
+    actions: {
+      canApprove: allowed(p, 'APPROVED') && viewer !== p.createdBy, canReject: allowed(p, 'REJECTED'),
+      reason: !allowed(p, 'APPROVED') ? (p.status === 'DRAFT' ? 'test it on past decisions before approving' : `proposal is ${p.status}`) : viewer === p.createdBy ? 'the author of a proposal cannot approve it' : null,
+      canEvaluate: allowed(p, 'EVALUATED'), canPromote: p.status === 'APPROVED' && !blockerOf(), canRollback: p.status === 'PROMOTED' || p.status === 'CANARY',
+      canExperiment: p.status === 'DRAFT' || p.status === 'EVALUATED' || p.status === 'APPROVED',
+      promotionConcerns: p.status === 'APPROVED' ? concernsOf(p) : [], promotionBlocker: p.status === 'APPROVED' ? blockerOf() : null,
+    },
+    promotionNote: promotionNotes[p.proposalId] ?? null,
   };
 }
 
 export function registerLearningRoutes({ on, problem }: { on: On; problem: Problem }) {
   const findLearner = (key: string) => learners.find((x) => x.learnerKey === key) ?? problem(404, 'not_found', `No learner '${key}'`);
   const findProposal = (id: string) => proposals.find((x) => x.proposalId === id) ?? problem(404, 'not_found', `Proposal ${id} not found`);
-  const ks = (): KillSwitchState => ({ globalKillSwitch: false, tenantPaused, pausedLearners: learners.filter((l) => !l.enabled || l.paused).map((l) => l.learnerKey) });
+  const ks = (): KillSwitchState => ({
+    globalKillSwitch: !!globalOff, globalSource: globalOff ? 'runtime' : null, globalSetBy: globalOff?.by ?? null, globalSetAt: globalOff?.at ?? null,
+    tenantPaused, pausedLearners: learners.filter((l) => !l.enabled || l.paused).map((l) => l.learnerKey),
+    canSetGlobal: (getSession().principal?.permissions ?? []).includes('*'),
+  });
+  const refuse = (p: Proposal, action: string): never => problem(409, 'conflict', `Cannot ${action} this change: it is ${STATUS_PHRASE[p.status]}. ${NEXT_STEP[p.status]}`, { proposalId: p.proposalId, status: p.status, action });
 
   on('GET', '/api/v1/learning/learners', () => learners);
   on('GET', '/api/v1/learning/learners/:id', ({ params }) => findLearner(params.id));
@@ -207,8 +253,20 @@ export function registerLearningRoutes({ on, problem }: { on: On; problem: Probl
   on('GET', '/api/v1/learning/kill-switch', () => ks());
   on('POST', '/api/v1/learning/kill-switch', ({ body }) => {
     const key = body.learnerKey as string | undefined;
-    if (!key || key === '*') tenantPaused = !body.enabled; else findLearner(key).enabled = Boolean(body.enabled);
+    if (body.scope === 'global') {
+      if (!ks().canSetGlobal) return problem(403, 'forbidden', 'Only a platform administrator can switch learning off or on for every tenant');
+      globalOff = body.enabled ? null : { by: me(), at: now() };
+    } else if (!key || key === '*') tenantPaused = !body.enabled; else findLearner(key).enabled = Boolean(body.enabled);
     regate(); return ks();
+  });
+  on('PUT', '/api/v1/learning/learners/:id/budget', ({ params, body }) => {
+    const l = findLearner(params.id);
+    const maxStep = body.maxStep as number | null | undefined; const perWeek = body.maxPromotionsPerWeek as number | null | undefined;
+    if (maxStep != null && !(maxStep > 0)) return problem(422, 'validation_failed', 'maxStep must be a positive number');
+    if (perWeek != null && perWeek < 0) return problem(422, 'validation_failed', 'maxPromotionsPerWeek must be zero or more');
+    if (body.clearMaxStep) l.maxStep = null; else if (maxStep != null) l.maxStep = maxStep;
+    if (perWeek != null) l.maxPromotionsPerWeek = perWeek;
+    l.updatedAt = now(); l.updatedBy = me(); return l;
   });
   on('GET', '/api/v1/learning/metrics', () => metricsOf());
   on('GET', '/api/v1/learning/coverage', () => coverage);
@@ -225,6 +283,9 @@ export function registerLearningRoutes({ on, problem }: { on: On; problem: Probl
   on('POST', '/api/v1/learning/live-parameters/:family/revoke', ({ params }) => {
     const lp = liveParameters.find((x) => x.parameter === params.family && x.status === 'LIVE');
     if (lp) { lp.status = 'REVOKED'; lp.revokedBy = me(); lp.revokedAt = now(); }
+    // Defect 27: switching live use off closes the proposal that switched it on.
+    const p = lp?.proposalId ? proposals.find((x) => x.proposalId === lp.proposalId && x.status === 'PROMOTED') : undefined;
+    if (p) { p.status = 'ROLLED_BACK'; p.rolledBackAt = now(); p.rolledBackReason = `live use of ${params.family} switched off by ${me()}`; p.updatedAt = now(); }
     return { family: params.family, revoked: !!lp };
   });
 
@@ -236,26 +297,44 @@ export function registerLearningRoutes({ on, problem }: { on: On; problem: Probl
   on('GET', '/api/v1/learning/diff', ({ query }) => ({ target: query.get('target') ?? '', baseline: null, automaticPromotionsSinceBaseline: 0, sinceBaseline: [], withPending: [], promotedProposalIds: [] }));
   on('POST', '/api/v1/learning/proposals/:id/approve', ({ params, body }) => {
     const p = findProposal(params.id);
+    if (!allowed(p, 'APPROVED')) return refuse(p, 'approve');
     if (p.createdBy === me()) return problem(422, 'validation_failed', 'The author of a proposal cannot approve it themselves');
     const postal = /zip|postal/i.test(JSON.stringify(p.changeset));
     if (postal && !body?.reasonCode) return problem(400, 'validation_failed', 'This change is scoped to postal codes, so approving it needs a reason code: one of [carrier_service_gap, confirmed_fraud_ring, regulatory_restriction, natural_disaster]');
     p.status = 'APPROVED'; p.approvedBy = me(); p.approvedAt = now(); p.updatedAt = p.approvedAt;
     return p;
   });
-  on('POST', '/api/v1/learning/proposals/:id/reject', ({ params, body }) => { const p = findProposal(params.id); p.status = 'REJECTED'; p.rejectedReason = (body.reason as string) ?? null; p.rejectedAt = now(); p.updatedAt = now(); return p; });
+  on('POST', '/api/v1/learning/proposals/:id/reject', ({ params, body }) => { const p = findProposal(params.id); if (!allowed(p, 'REJECTED')) return refuse(p, 'reject'); p.status = 'REJECTED'; p.rejectedReason = (body.reason as string) ?? null; p.rejectedAt = now(); p.updatedAt = now(); return p; });
   on('POST', '/api/v1/learning/proposals/:id/evaluate', ({ params }) => {
     const p = findProposal(params.id);
-    p.evaluationReport = p.changeset.target.type === 'decision' ? { ...good, sampleSize: 318, liftEstimate: 0.024, confidenceInterval: { lower: 0.003, upper: 0.045 } } : { method: 'no_counterfactual', liftEstimate: null, confidenceInterval: null };
+    if (!allowed(p, 'EVALUATED')) return refuse(p, 're-test');
+    // Re-testing replaces the replay but keeps a shadow or canary verdict already on the report (defect 3).
+    const prev = p.evaluationReport;
+    const kept = { ...(prev?.shadow ? { shadow: prev.shadow } : {}), ...(prev?.canary ? { canary: prev.canary } : {}) };
+    p.evaluationReport = { ...(p.changeset.target.type === 'decision'
+      ? { ...good, sampleSize: 318, liftEstimate: 0.024, confidenceInterval: { lower: 0.003, upper: 0.045 }, ips: { proposedRewardEstimate: 0.66, liftEstimate: 0.021, confidenceInterval: { lower: -0.004, upper: 0.046 } }, rewards: { mature: 240, provisional: 78, matureShare: 0.755 } }
+      : { method: 'no_counterfactual', liftEstimate: null, confidenceInterval: null }), ...kept };
     p.status = 'EVALUATED'; p.evaluatedAt = now(); p.updatedAt = now(); return p;
   });
-  on('POST', '/api/v1/learning/proposals/:id/promote', ({ params }) => {
+  on('POST', '/api/v1/learning/proposals/:id/promote', ({ params, body }) => {
     const p = findProposal(params.id);
-    if (p.status !== 'APPROVED') return problem(409, 'conflict', 'Cannot promote: proposal must be APPROVED before a human can promote it');
+    if (!allowed(p, 'PROMOTED')) return refuse(p, 'promote');
+    const blocker = blockerOf();
+    if (blocker) return problem(409, 'conflict', `Cannot promote: ${blocker}`);
+    if (p.status !== 'APPROVED') return problem(409, 'conflict', `Cannot promote: proposal must be APPROVED before a person can promote it (it is ${p.status})`);
+    const concerns = concernsOf(p);
+    const reason = String(body?.overrideReason ?? '').trim();
+    if (concerns.length > 0 && reason.length < 10) {
+      return problem(409, 'promotion_needs_override', `Promoting this change needs a written reason, because ${concerns.join('; ')}`, { proposalId: p.proposalId, waivable: concerns });
+    }
+    if (concerns.length > 0) promotionNotes[p.proposalId] = { by: me(), reason, waived: concerns, at: now() };
     p.status = 'PROMOTED'; p.promotedAt = now(); p.updatedAt = now(); return p;
   });
   on('POST', '/api/v1/learning/promotions/:id/rollback', ({ params, body }) => {
     const p = findProposal(params.id);
-    if (p.status !== 'PROMOTED' && p.status !== 'CANARY') return problem(409, 'conflict', `Only a live change can be rolled back; this one is ${p.status}`);
+    if (p.status !== 'PROMOTED' && p.status !== 'CANARY') return refuse(p, 'roll back');
+    // Rolling back a trial stops it (EX-05 during rollout); the candidate never went live.
+    if (p.status === 'CANARY') experiments.filter((e) => e.proposalId === p.proposalId && e.mode === 'CANARY' && e.status === 'RUNNING').forEach((e) => { e.status = 'STOPPED'; e.endAt = now(); e.result = { rolledBack: true, reason: (body.reason as string) ?? null }; });
     p.status = 'ROLLED_BACK'; p.rolledBackAt = now(); p.rolledBackReason = (body.reason as string) ?? null; p.updatedAt = now(); return p;
   });
 
@@ -293,7 +372,13 @@ export function registerLearningRoutes({ on, problem }: { on: On; problem: Probl
     const e: Experiment = { experimentId: nextId('exp'), proposalId: p.proposalId, mode, trafficShare: mode === 'SHADOW' ? 1 : Number(body.trafficShare), status: 'RUNNING', startAt: now(), endAt: null, stopRule: (body.stopRule as Record<string, unknown>) ?? {}, result: null, createdAt: now(), targetRef: `${p.changeset.target.type}:${p.changeset.target.name}`, decisionName: p.changeset.target.type === 'decision' ? p.changeset.target.name : null, candidateVersion: 9, baselineVersion: 8, createdBy: me() };
     experiments.unshift(e); if (mode === 'CANARY') p.status = 'CANARY'; return e;
   });
-  on('POST', '/api/v1/learning/experiments/:id/complete', ({ params }) => { const e = experiments.find((x) => x.experimentId === params.id) ?? problem(404, 'not_found', 'not found'); e.status = 'COMPLETED'; e.endAt = now(); e.result = measurement[e.experimentId] ?? { passed: true }; return e; });
+  on('POST', '/api/v1/learning/experiments/:id/complete', ({ params }) => {
+    const e = experiments.find((x) => x.experimentId === params.id) ?? problem(404, 'not_found', 'not found');
+    const minDays = typeof e.stopRule?.minDurationDays === 'number' ? e.stopRule.minDurationDays : 7;
+    if (e.mode === 'CANARY' && Date.now() < new Date(e.startAt).getTime() + minDays * 86_400_000) {
+      return problem(409, 'conflict', `This trial has run ${((Date.now() - new Date(e.startAt).getTime()) / 86_400_000).toFixed(1)} of its minimum ${minDays} days (EX-03); stop it instead if it has to end now`);
+    }
+    e.status = 'COMPLETED'; e.endAt = now(); e.result = measurement[e.experimentId] ?? { passed: true }; return e; });
   on('POST', '/api/v1/learning/experiments/:id/stop', ({ params }) => { const e = experiments.find((x) => x.experimentId === params.id) ?? problem(404, 'not_found', 'not found'); e.status = 'STOPPED'; e.endAt = now(); return undefined; });
   on('POST', '/api/v1/learning/experiments/holdout', ({ query }) => {
     const existing = experiments.find((e) => e.mode === 'HOLDOUT' && e.status === 'RUNNING');

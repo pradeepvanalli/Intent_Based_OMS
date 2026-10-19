@@ -32,16 +32,15 @@ public class LearnerGovernance {
     private final LearnerRegistry registry;
     private final TenantConfigStore config;
     private final Metrics metrics;
-    private final boolean globalKillSwitch;
+    private final GlobalLearningSwitch global;
     private final Cache<String, Gate> gates = Caffeine.newBuilder().expireAfterWrite(Duration.ofSeconds(5)).maximumSize(10_000).build();
 
-    public LearnerGovernance(LearnerRepository learners, LearnerRegistry registry, TenantConfigStore config, Metrics metrics,
-                             @Value("${oms.learning.kill-switch:false}") boolean globalKillSwitch) {
+    public LearnerGovernance(LearnerRepository learners, LearnerRegistry registry, TenantConfigStore config, Metrics metrics, GlobalLearningSwitch global) {
         this.learners = learners;
         this.registry = registry;
         this.config = config;
         this.metrics = metrics;
-        this.globalKillSwitch = globalKillSwitch;
+        this.global = global;
     }
 
     /** {@code mayRun}: may do any work at all. {@code level}: how far its output may go. */
@@ -82,13 +81,31 @@ public class LearnerGovernance {
     }
 
     public boolean learningOn() {
-        return !globalKillSwitch && config.getBoolean(TENANT_ENABLED, true) && !config.getBoolean(TENANT_KILL_SWITCH, false);
+        return !global.on() && config.getBoolean(TENANT_ENABLED, true) && !config.getBoolean(TENANT_KILL_SWITCH, false);
+    }
+
+    /** Why learning is off for this tenant ("global_kill_switch", "tenant_kill_switch", "tenant_learning_disabled"), or null. */
+    public String offReason() {
+        if (global.on()) return "global_kill_switch";
+        if (!config.getBoolean(TENANT_ENABLED, true)) return "tenant_learning_disabled";
+        if (config.getBoolean(TENANT_KILL_SWITCH, false)) return "tenant_kill_switch";
+        return null;
+    }
+
+    public GlobalLearningSwitch.State globalState() { return global.state(); }
+
+    /** GV-03 global level, platform administrators only (checked by the caller): stops learning for every tenant. */
+    public GlobalLearningSwitch.State setGlobalKillSwitch(boolean on, String by) {
+        GlobalLearningSwitch.State s = global.set(on, by);
+        gates.invalidateAll();
+        if (events != null) events.globalKillSwitch(actor(by), Map.of("on", on));
+        return s;
     }
 
     private Gate compute(String learnerKey) {
         registry.ensureRegistered();
         LearnerState s = learners.getOrCreate(learnerKey);
-        if (globalKillSwitch) return new Gate(learnerKey, false, s.autonomyLevel(), "global_kill_switch");
+        if (global.on()) return new Gate(learnerKey, false, s.autonomyLevel(), "global_kill_switch");
         if (!config.getBoolean(TENANT_ENABLED, true)) return new Gate(learnerKey, false, s.autonomyLevel(), "tenant_learning_disabled");
         if (config.getBoolean(TENANT_KILL_SWITCH, false)) return new Gate(learnerKey, false, s.autonomyLevel(), "tenant_kill_switch");
         if (!s.enabled()) return new Gate(learnerKey, false, s.autonomyLevel(), "learner_kill_switch");
@@ -108,6 +125,29 @@ public class LearnerGovernance {
         learners.setAutonomy(learnerKey, level, by, Instant.now());
         invalidate();
         if (events != null) events.learnerAutonomyChanged(learnerKey, actor(by), Map.of("learner", learnerKey, "from", before.name(), "to", level.name()));
+        return learners.getOrCreate(learnerKey);
+    }
+
+    /**
+     * GV-02: how far one promotion of this learner's proposals may move a number ({@code maxStep}; null clears it, so the
+     * default for bounded values applies) and how many promotions per target per week it gets.
+     */
+    public LearnerState setBudget(String learnerKey, Double maxStep, Integer maxPromotionsPerWeek, String by) {
+        LearnerState before = learners.getOrCreate(learnerKey);
+        if (maxStep != null && (maxStep <= 0 || maxStep.isNaN())) throw new ai.intentoms.platform.error.ValidationException("maxStep must be a positive number");
+        if (maxPromotionsPerWeek != null && maxPromotionsPerWeek < 0) throw new ai.intentoms.platform.error.ValidationException("maxPromotionsPerWeek must be zero or more");
+        int perWeek = maxPromotionsPerWeek == null ? before.maxPromotionsPerWeek() : maxPromotionsPerWeek;
+        learners.upsert(new LearnerState(learnerKey, before.autonomyLevel(), before.enabled(), perWeek, maxStep, before.lastRunAt(), by, Instant.now(), before.pausedReason()));
+        invalidate();
+        if (events != null) {
+            Map<String, Object> p = new java.util.LinkedHashMap<>();
+            p.put("learner", learnerKey);
+            p.put("maxStep", maxStep);
+            p.put("maxPromotionsPerWeek", perWeek);
+            p.put("previousMaxStep", before.maxStep());
+            p.put("previousMaxPromotionsPerWeek", before.maxPromotionsPerWeek());
+            events.learnerBudgetChanged(learnerKey, actor(by), p);
+        }
         return learners.getOrCreate(learnerKey);
     }
 

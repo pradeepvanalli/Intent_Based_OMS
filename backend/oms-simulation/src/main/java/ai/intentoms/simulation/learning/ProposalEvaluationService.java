@@ -87,6 +87,8 @@ public class ProposalEvaluationService {
 
     public Proposal evaluate(String proposalId, String actorRef) {
         Proposal proposal = proposals.get(proposalId);
+        // Only a draft or an evaluated change is (re-)tested; an approved, live, rejected or rolled-back one is not reopened.
+        ai.intentoms.learning.model.ProposalLifecycle.require(proposal, ai.intentoms.learning.model.ProposalStatus.EVALUATED, "re-test");
         ArtifactRef target = proposal.changeset().target();
         Map<String, Object> report = switch (target.type()) {
             case "decision" -> evaluateDecision(proposal, target.name());
@@ -123,6 +125,7 @@ public class ProposalEvaluationService {
             Map<String, Object> r = new LinkedHashMap<>(OffPolicyEvaluator.evaluate(paired.stream().map(Paired::logged).toList(), proposedArm::get).asMap());
             r.put("simulation", "proposed act threshold applied to the logged confidence");
             r.put("decisionsChanged", flips);
+            r.put("rewards", rewardMix(paired));
             return r;
         }
         DecisionDefinition base = definitions.find(decision, baseVersion).or(() -> definitions.byStatus(decision, "live").stream().findFirst())
@@ -146,10 +149,22 @@ public class ProposalEvaluationService {
         r.put("replayed", replayed.size());
         r.put("decisionsChanged", flips);
         r.put("baseVersion", base.version());
+        r.put("rewards", rewardMix(replayed));
         return r;
     }
 
-    record Paired(DecisionRecord record, LoggedRecord logged) {}
+    /** {@code mature} episodes have a final reward; {@code provisional} ones may still change as late outcomes land (OC-04). */
+    record Paired(DecisionRecord record, LoggedRecord logged, boolean mature) {}
+
+    /** How much of the evidence rests on final rewards versus provisional ones (EX-01 reporting, OC-04). */
+    static Map<String, Object> rewardMix(List<Paired> paired) {
+        long mature = paired.stream().filter(Paired::mature).count();
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("mature", mature);
+        m.put("provisional", paired.size() - mature);
+        m.put("matureShare", paired.isEmpty() ? 0.0 : round((double) mature / paired.size()));
+        return m;
+    }
 
     /** Logged LIVE records of a version whose episode has a reward, newest first (OC-04: only episodes past OPEN). */
     private List<Paired> pairedRecords(String decision, int version) {
@@ -159,7 +174,8 @@ public class ProposalEvaluationService {
             if (ep.isEmpty() || ep.get().reward() == null) continue;
             boolean acted = r.band() == Band.ACT || "T0".equals(String.valueOf(r.details() == null ? null : r.details().get("tier")));
             String arm = !acted ? NOT_ACTED : r.chosenArm() != null ? r.chosenArm() : String.valueOf(r.value());
-            out.add(new Paired(r, new LoggedRecord(arm, r.propensity(), r.confidence(), r.band().name(), ep.get().reward())));
+            out.add(new Paired(r, new LoggedRecord(arm, r.propensity(), r.confidence(), r.band().name(), ep.get().reward()),
+                ep.get().status() == ai.intentoms.learning.model.EpisodeStatus.MATURE));
         }
         return out;
     }
@@ -189,7 +205,8 @@ public class ProposalEvaluationService {
 
     private Map<String, Object> cohorts(String decision, Predicate<DecisionRecord> treated, String treatedLabel, String controlLabel) {
         List<Double> t = new ArrayList<>(), c = new ArrayList<>();
-        for (Paired p : pairedRecords(decision, latestVersion(decision))) (treated.test(p.record()) ? t : c).add(p.logged().reward());
+        List<Paired> all = pairedRecords(decision, latestVersion(decision));
+        for (Paired p : all) (treated.test(p.record()) ? t : c).add(p.logged().reward());
         if (t.size() < minCohort || c.size() < minCohort) {
             return noCounterfactual(t.size() + c.size(), "only " + t.size() + " " + treatedLabel + " and " + c.size() + " " + controlLabel + " with a reward (need " + minCohort + " each)");
         }
@@ -207,6 +224,7 @@ public class ProposalEvaluationService {
         r.put("liftEstimate", round(lift));
         r.put("confidenceInterval", Map.of("lower", round(lift - 1.96 * se), "upper", round(lift + 1.96 * se)));
         r.put("caveat", "cohorts were not randomised; confirm with a shadow run before promoting");
+        r.put("rewards", rewardMix(all));
         return r;
     }
 

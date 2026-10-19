@@ -21,8 +21,17 @@ public final class OffPolicyEvaluator {
 
     private OffPolicyEvaluator() {}
 
+    /**
+     * The doubly-robust estimate is the headline (it stays honest when the arm model is wrong and when propensities are
+     * extreme); the plain inverse-propensity estimate is reported next to it (EX-01 names both) with its own interval.
+     */
     public record Result(String method, int sampleSize, double baselineReward, double proposedRewardEstimate,
-                          double liftEstimate, double ciLower, double ciUpper, int clippedRecords) {
+                          double liftEstimate, double ciLower, double ciUpper, int clippedRecords,
+                          double ipsRewardEstimate, double ipsLift, double ipsCiLower, double ipsCiUpper) {
+        public Result(String method, int sampleSize, double baselineReward, double proposedRewardEstimate, double liftEstimate, double ciLower, double ciUpper, int clippedRecords) {
+            this(method, sampleSize, baselineReward, proposedRewardEstimate, liftEstimate, ciLower, ciUpper, clippedRecords, 0, 0, 0, 0);
+        }
+
         public Map<String, Object> asMap() {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("method", method);
@@ -32,6 +41,12 @@ public final class OffPolicyEvaluator {
             m.put("liftEstimate", liftEstimate);
             m.put("confidenceInterval", Map.of("lower", ciLower, "upper", ciUpper));
             m.put("clippedRecords", clippedRecords);
+            Map<String, Object> ips = new LinkedHashMap<>();
+            ips.put("proposedRewardEstimate", ipsRewardEstimate);
+            ips.put("liftEstimate", ipsLift);
+            ips.put("confidenceInterval", Map.of("lower", ipsCiLower, "upper", ipsCiUpper));
+            m.put("ips", ips);
+            m.put("estimators", java.util.List.of("doubly_robust", "inverse_propensity"));
             return m;
         }
     }
@@ -50,6 +65,7 @@ public final class OffPolicyEvaluator {
 
         int clipped = 0;
         double[] drTerms = new double[n];
+        double[] ipsTerms = new double[n];
         for (int i = 0; i < n; i++) {
             LoggedRecord r = records.get(i);
             String proposed = proposedArmOf.apply(r);
@@ -60,7 +76,7 @@ public final class OffPolicyEvaluator {
             double proposedBaseline = proposed == null ? 0.0 : armMeanReward.getOrDefault(proposed, baselineReward);
             double loggedBaseline = armMeanReward.getOrDefault(r.chosenArm(), baselineReward);
             boolean matches = proposed != null && proposed.equals(r.chosenArm());
-            double ips = matches ? (r.reward() / propensity) : 0.0;
+            ipsTerms[i] = matches ? (r.reward() / propensity) : 0.0;
             // Doubly robust: direct-method baseline for the arm the proposed policy would pick, corrected by the
             // IPS-weighted residual only on the records where the logged and proposed arms actually agree.
             drTerms[i] = proposedBaseline + (matches ? (r.reward() - loggedBaseline) / propensity : 0.0);
@@ -72,8 +88,13 @@ public final class OffPolicyEvaluator {
         double lift = proposedEstimate - baselineReward;
         double ciHalfWidth = 1.96 * se;
 
+        double ipsEstimate = mean(ipsTerms);
+        double ipsSe = Math.sqrt(sampleVariance(ipsTerms, ipsEstimate) / n);
+        double ipsLift = ipsEstimate - baselineReward;
+
         return new Result("ips_doubly_robust", n, round(baselineReward), round(proposedEstimate), round(lift),
-            round(lift - ciHalfWidth), round(lift + ciHalfWidth), clipped);
+            round(lift - ciHalfWidth), round(lift + ciHalfWidth), clipped,
+            round(ipsEstimate), round(ipsLift), round(ipsLift - 1.96 * ipsSe), round(ipsLift + 1.96 * ipsSe));
     }
 
     private static Map<String, Double> perArmMeanReward(List<LoggedRecord> records) {

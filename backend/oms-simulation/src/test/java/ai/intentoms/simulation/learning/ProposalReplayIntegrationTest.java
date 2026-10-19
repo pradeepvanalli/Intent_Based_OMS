@@ -138,6 +138,24 @@ class ProposalReplayIntegrationTest extends PostgresTestBase {
         Map<String, Object> report = evaluations.evaluate(p.proposalId(), "user:tester").evaluationReport();
         assertThat(report.get("method")).isEqualTo("ips_doubly_robust");
         assertThat(((Number) report.get("sampleSize")).intValue()).isEqualTo(10);
+        // Defect 3: the plain IPS estimate is reported next to the doubly robust one, with how much of the reward is final.
+        assertThat(report).containsKeys("ips", "estimators", "rewards");
+        @SuppressWarnings("unchecked") Map<String, Object> ips = (Map<String, Object>) report.get("ips");
+        assertThat(ips).containsKeys("proposedRewardEstimate", "liftEstimate", "confidenceInterval");
+        @SuppressWarnings("unchecked") Map<String, Object> rewards = (Map<String, Object>) report.get("rewards");
+        assertThat(((Number) rewards.get("mature")).intValue() + ((Number) rewards.get("provisional")).intValue()).isEqualTo(10);
+        assertThat(rewards).containsKey("matureShare");
+
+        // Re-testing replaces the replay but keeps a shadow verdict already on the report.
+        proposals.mergeReport(p.proposalId(), "shadow", Map.of("passed", true, "paired", 12));
+        Map<String, Object> again = evaluations.evaluate(p.proposalId(), "user:tester").evaluationReport();
+        assertThat(again).containsKey("shadow").containsEntry("method", "ips_doubly_robust");
+
+        // Defect 2: a live change is not re-tested.
+        proposals.approve(p.proposalId(), "user:reviewer", Instant.now());
+        proposals.promote(p.proposalId(), Instant.now());
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> evaluations.evaluate(p.proposalId(), "user:tester"))
+            .isInstanceOf(ai.intentoms.platform.error.ConflictException.class).hasMessageContaining("it is live");
     }
 
     @Test

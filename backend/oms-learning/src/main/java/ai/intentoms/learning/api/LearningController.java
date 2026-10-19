@@ -76,9 +76,18 @@ public class LearningController {
 
     public record AutonomyUpdate(AutonomyLevel autonomyLevel) {}
     public record ObjectiveUpdate(ObjectiveWeights weights, Map<String, Object> constraints) {}
-    /** {@code learnerKey} empty or "*" means every learner for this tenant (GV-03 "pause all learning"). */
-    public record KillSwitch(String learnerKey, boolean enabled) {}
-    public record KillSwitchState(boolean globalKillSwitch, boolean tenantPaused, List<String> pausedLearners) {}
+    /**
+     * {@code learnerKey} empty or "*" means every learner for this tenant (GV-03 "pause all learning");
+     * {@code scope: "global"} means every tenant (platform administrators only).
+     */
+    public record KillSwitch(String learnerKey, boolean enabled, String scope) {
+        public KillSwitch(String learnerKey, boolean enabled) { this(learnerKey, enabled, null); }
+    }
+    /** {@code globalSource}: "property" (forced at startup), "runtime" (set through the API) or null when off. */
+    public record KillSwitchState(boolean globalKillSwitch, String globalSource, String globalSetBy, Instant globalSetAt, boolean tenantPaused,
+                                  List<String> pausedLearners, boolean canSetGlobal) {}
+    /** GV-02: either field may be omitted to keep its current value; {@code clearMaxStep: true} removes the learner's own limit. */
+    public record BudgetUpdate(Double maxStep, Integer maxPromotionsPerWeek, Boolean clearMaxStep) {}
 
     /** A learner as people see it: what it is (descriptor) plus how it is governed right now (state and gate). */
     public record LearnerView(String learnerKey, String displayName, String summary, String loop, String requirement, List<String> outcomeDecisions,
@@ -108,6 +117,20 @@ public class LearningController {
         if (body == null || body.autonomyLevel() == null) throw new ValidationException("autonomyLevel is required");
         var d = descriptor(learnerKey);
         return view(d, governance.setAutonomy(learnerKey, body.autonomyLevel(), actorRef()));
+    }
+
+    /**
+     * GV-02: a learner's change budget — the largest move one promotion of its proposals may make, and how many times
+     * one target may be promoted per week. A configuration change, so it needs config.admin as well.
+     */
+    @PutMapping("/learners/{id}/budget")
+    @RequiresPermission(value = {Permissions.LEARNING_ADMIN, Permissions.CONFIG_ADMIN}, any = false)
+    public LearnerView setBudget(@PathVariable("id") String learnerKey, @RequestBody BudgetUpdate body) {
+        if (body == null) throw new ValidationException("body is required");
+        var d = descriptor(learnerKey);
+        LearnerState current = learners.getOrCreate(learnerKey);
+        Double maxStep = Boolean.TRUE.equals(body.clearMaxStep()) ? null : body.maxStep() != null ? body.maxStep() : current.maxStep();
+        return view(d, governance.setBudget(learnerKey, maxStep, body.maxPromotionsPerWeek(), actorRef()));
     }
 
     @PostMapping("/learners/{id}/resume")
@@ -147,16 +170,33 @@ public class LearningController {
     @RequiresPermission(Permissions.LEARNING_READ)
     public KillSwitchState killSwitchState() {
         List<String> paused = governance.states().stream().filter(s -> !s.enabled() || s.paused()).map(LearnerState::learnerKey).toList();
-        return new KillSwitchState(!governance.learningOn() && !tenantPaused(), tenantPaused(), paused);
+        var global = governance.globalState();
+        return new KillSwitchState(global.on(), global.source(), global.updatedBy(), global.updatedAt(), tenantPaused(), paused, platformAdmin());
     }
 
+    /**
+     * GV-03 at three levels: one learner ({@code learnerKey}), every learner of this tenant ({@code learnerKey: "*"}),
+     * or every tenant ({@code scope: "global"}, platform administrators only). {@code enabled: false} switches off.
+     */
     @PostMapping("/kill-switch")
     @RequiresPermission(Permissions.LEARNING_ADMIN)
     public KillSwitchState killSwitch(@RequestBody KillSwitch body) {
         if (body == null) throw new ValidationException("body is required");
-        if (body.learnerKey() == null || body.learnerKey().isBlank() || "*".equals(body.learnerKey())) governance.setTenantKillSwitch(!body.enabled(), actorRef());
-        else { descriptor(body.learnerKey()); governance.setEnabled(body.learnerKey(), body.enabled(), actorRef()); }
+        if ("global".equalsIgnoreCase(body.scope())) {
+            if (!platformAdmin()) throw new ai.intentoms.platform.error.ForbiddenException("Only a platform administrator can switch learning off or on for every tenant");
+            governance.setGlobalKillSwitch(!body.enabled(), actorRef());
+        } else if (body.learnerKey() == null || body.learnerKey().isBlank() || "*".equals(body.learnerKey())) {
+            governance.setTenantKillSwitch(!body.enabled(), actorRef());
+        } else {
+            descriptor(body.learnerKey());
+            governance.setEnabled(body.learnerKey(), body.enabled(), actorRef());
+        }
         return killSwitchState();
+    }
+
+    /** A platform administrator holds every permission ("*"), the same rule tenant creation uses. */
+    private boolean platformAdmin() {
+        return authz.currentPrincipal().map(p -> p.permissions().contains("*")).orElse(false);
     }
 
     @GetMapping("/live-parameters")
@@ -185,10 +225,23 @@ public class LearningController {
             st.lastRunAt(), st.updatedBy(), st.updatedAt(), runnable(d.key()));
     }
 
+    /** §9.3: {@code ?subject=node:DC-TX} (as documented) or {@code ?subjectType=NODE&subjectId=DC-TX}. */
     @GetMapping("/facts")
     @RequiresPermission(Permissions.LEARNING_READ)
-    public List<LearnedFact> facts(@RequestParam("subjectType") SubjectType subjectType, @RequestParam("subjectId") String subjectId) {
-        return facts.activeForSubject(subjectType, subjectId);
+    public List<LearnedFact> facts(@RequestParam(value = "subjectType", required = false) String subjectType, @RequestParam(value = "subjectId", required = false) String subjectId,
+                                   @RequestParam(value = "subject", required = false) String subject) {
+        String type = subjectType, id = subjectId;
+        if (subject != null && !subject.isBlank()) {
+            int colon = subject.indexOf(':');
+            if (colon <= 0 || colon == subject.length() - 1) throw new ValidationException("subject must look like <type>:<id>, e.g. node:DC-TX");
+            type = subject.substring(0, colon);
+            id = subject.substring(colon + 1);
+        }
+        if (type == null || type.isBlank() || id == null || id.isBlank()) throw new ValidationException("Give subject=<type>:<id>, or subjectType and subjectId");
+        SubjectType st;
+        try { st = SubjectType.valueOf(type.trim().toUpperCase(java.util.Locale.ROOT)); }
+        catch (IllegalArgumentException e) { throw new ValidationException("Unknown subject type '" + type + "'; one of " + java.util.Arrays.toString(SubjectType.values())); }
+        return facts.activeForSubject(st, id);
     }
 
     @GetMapping("/facts/{subjectType}/{subjectId}/{key}")
@@ -212,7 +265,9 @@ public class LearningController {
     public Proposal approve(@PathVariable String id, @RequestBody(required = false) Map<String, String> body) {
         Proposal p = proposals.get(id);
         String by = actorRef();
+        // The author never approves, whatever the status, so that refusal comes first (422); then the lifecycle (409).
         if (by.equals(p.createdBy())) throw new ValidationException("The author of a proposal cannot approve it themselves");
+        ai.intentoms.learning.model.ProposalLifecycle.require(p, ai.intentoms.learning.model.ProposalStatus.APPROVED, "approve");
         String reasonCode = body == null ? null : body.get("reasonCode");
         if (ai.intentoms.learning.promotion.PromotionGuard.isPostalCodeScoped(p.changeset())) {
             // GV-07: a restriction scoped to postal codes can disadvantage a neighbourhood; it needs a stated reason.
@@ -235,12 +290,16 @@ public class LearningController {
     @RequiresPermission(Permissions.LEARNING_ADMIN)
     public Proposal reject(@PathVariable String id, @RequestBody(required = false) Map<String, String> body) {
         Proposal p = proposals.get(id);
+        ai.intentoms.learning.model.ProposalLifecycle.require(p, ai.intentoms.learning.model.ProposalStatus.REJECTED, "reject");
         String reason = body == null ? null : body.get("reason");
         proposals.reject(id, reason, Instant.now());
         Map<String, Object> payload = new java.util.LinkedHashMap<>();
         payload.put("target", p.changeset().target().toString());
         payload.put("reason", reason);
-        events.proposalRejected(id, ai.intentoms.platform.ledger.Actor.parse(actorRef()), payload);
+        var actor = ai.intentoms.platform.ledger.Actor.parse(actorRef());
+        events.proposalRejected(id, actor, payload);
+        // §5: a rejected change returns to its hypothesis as evidence against it.
+        promotion.counterEvidence(p, "Rejected " + Instant.now().toString().substring(0, 10) + (reason == null || reason.isBlank() ? "" : ": " + reason), actor);
         return proposals.get(id);
     }
 

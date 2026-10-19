@@ -29,9 +29,16 @@ public class GovernanceController {
         this.authz = authz;
     }
 
+    /**
+     * EX-07: a person takes an APPROVED change live. When its evidence or budget falls short the answer is 409 with code
+     * {@code promotion_needs_override} and the list of checks in {@code waivable}; send {@code {"overrideReason": "..."}}
+     * (at least ten characters) to promote anyway, which is recorded on the ledger and the change card.
+     */
     @PostMapping("/proposals/{id}/promote")
     @RequiresPermission(Permissions.LEARNING_ADMIN)
-    public Proposal promote(@PathVariable String id) { return promotion.promote(id, Actor.parse(authz.requirePrincipal().actorRef())); }
+    public Proposal promote(@PathVariable String id, @RequestBody(required = false) Map<String, String> body) {
+        return promotion.promote(id, Actor.parse(authz.requirePrincipal().actorRef()), body == null ? null : body.get("overrideReason"));
+    }
 
     /** AC4 / EX-05: revert a promoted change to exactly what it replaced. Body: {@code {"reason": "..."}} (optional). */
     @PostMapping("/promotions/{id}/rollback")

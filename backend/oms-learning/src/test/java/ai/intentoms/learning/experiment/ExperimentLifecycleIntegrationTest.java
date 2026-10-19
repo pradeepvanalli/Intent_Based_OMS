@@ -46,6 +46,7 @@ class ExperimentLifecycleIntegrationTest extends DecisionFabricTestBase {
     @Autowired ExperimentTrafficRouter router;
     @Autowired LiftService lift;
     @Autowired PromotionService promotion;
+    @Autowired ai.intentoms.learning.promotion.GuardrailBreachMonitor guardrails;
     @Autowired LearnedFactRepository facts;
     @Autowired ParameterResolver parameters;
     @Autowired TenantConfigStore config;
@@ -85,7 +86,8 @@ class ExperimentLifecycleIntegrationTest extends DecisionFabricTestBase {
         int v1 = liveVersion(name);
         Proposal p = proposal("system:band_threshold", new ArtifactRef("decision", name), v1, PolicyChangeset.RiskTier.T1, ProposalStatus.EVALUATED,
             new PolicyChange.ThresholdChange(name, "act", 0.8, 0.5));
-        Experiment e = experiments.start(p.proposalId(), ExperimentMode.CANARY, 0.5, Map.of("minPerArm", 5), TESTER);
+        // minDurationDays 0: this test completes the canary at once; the 7-day default is covered below.
+        Experiment e = experiments.start(p.proposalId(), ExperimentMode.CANARY, 0.5, Map.of("minPerArm", 5, "minDurationDays", 0), TESTER);
         assertThat(proposals.get(p.proposalId()).status()).isEqualTo(ProposalStatus.CANARY);
         assertThat(definitions.find(name, e.candidateVersion()).orElseThrow().definition().status()).isEqualTo("draft"); // never published
 
@@ -97,10 +99,11 @@ class ExperimentLifecycleIntegrationTest extends DecisionFabricTestBase {
         List<String> canaryKeys = new ArrayList<>(), controlKeys = new ArrayList<>();
         for (int i = 0; i < 80; i++) {
             String key = "cust_" + i;
-            var route = router.route(name, key, v1);
+            // Live decisions route on customer:<customerRef> (DecisionRuntime.routingKey), so the test does too.
+            var route = router.route(name, "customer:" + key, v1);
             if (route.isPresent() && "canary".equals(route.get().arm())) canaryKeys.add(key);
             else if (route.isEmpty()) controlKeys.add(key);
-            assertThat(router.route(name, key, v1)).isEqualTo(route); // sticky
+            assertThat(router.route(name, "customer:" + key, v1)).isEqualTo(route); // sticky
         }
         assertThat(canaryKeys.size()).isBetween(20, 60);
 
@@ -121,7 +124,7 @@ class ExperimentLifecycleIntegrationTest extends DecisionFabricTestBase {
         Proposal after = proposals.get(p.proposalId());
         assertThat(after.status()).isEqualTo(ProposalStatus.EVALUATED);
         assertThat(after.evaluationReport()).containsKey("canary");
-        assertThat(router.route(name, canaryKeys.get(0), v1)).isEmpty();
+        assertThat(router.route(name, "customer:" + canaryKeys.get(0), v1)).isEmpty();
     }
 
     @Test
@@ -130,7 +133,7 @@ class ExperimentLifecycleIntegrationTest extends DecisionFabricTestBase {
         int v1 = liveVersion(name);
         Proposal p = proposal("system:band_threshold", new ArtifactRef("decision", name), v1, PolicyChangeset.RiskTier.T1, ProposalStatus.APPROVED,
             new PolicyChange.ThresholdChange(name, "act", 0.8, 0.7));
-        promotion.promote(p.proposalId(), Actor.parse("user:approver"));
+        promotion.promote(p.proposalId(), Actor.parse("user:approver"), "test: a 0.1 step, larger than GV-02's default max step");
         int v2 = liveVersion(name);
         assertThat(v2).isGreaterThan(v1);
 
@@ -139,10 +142,10 @@ class ExperimentLifecycleIntegrationTest extends DecisionFabricTestBase {
             assertThat(experiments.ensureHoldout(0.1, TESTER).experimentId()).isEqualTo(holdout.experimentId());
             String heldKey = null, treatedKey = null;
             for (int i = 0; i < 200 && (heldKey == null || treatedKey == null); i++) {
-                var route = router.route(name, "k" + i, v2);
+                var route = router.route(name, "customer:k" + i, v2);
                 if (route.isPresent() && "holdout".equals(route.get().arm())) heldKey = "k" + i; else if (route.isEmpty()) treatedKey = "k" + i;
             }
-            assertThat(router.route(name, heldKey, v2).orElseThrow().version()).isEqualTo(v1);
+            assertThat(router.route(name, "customer:" + heldKey, v2).orElseThrow().version()).isEqualTo(v1);
             DecisionResult held = decideLive(name, "ord_h" + Ids.shortId(), 100, heldKey);
             assertThat(held.version()).isEqualTo(v1);
             assertThat(decideLive(name, "ord_n" + Ids.shortId(), 100, treatedKey).version()).isEqualTo(v2);
@@ -162,6 +165,90 @@ class ExperimentLifecycleIntegrationTest extends DecisionFabricTestBase {
             assertThat(cx.get("betterWhen")).isEqualTo("lower");
         } finally {
             experiments.stop(holdout.experimentId(), ExperimentStatus.STOPPED, Map.of(), Actor.parse(TESTER));
+        }
+    }
+
+    @Test
+    void aCanaryRunsAtLeastItsMinimumDurationAndRollingItBackStopsTheTrialAndClosesTheChange() {
+        String name = installProbe("e2_canmin");
+        int v1 = liveVersion(name);
+        Proposal p = proposal("system:band_threshold", new ArtifactRef("decision", name), v1, PolicyChangeset.RiskTier.T1, ProposalStatus.EVALUATED,
+            new PolicyChange.ThresholdChange(name, "act", 0.8, 0.7));
+        Experiment e = experiments.start(p.proposalId(), ExperimentMode.CANARY, 0.5, Map.of("minPerArm", 5), TESTER);
+        assertThat(ExperimentManager.minDurationDays(e)).isEqualTo(7);
+        assertThatThrownBy(() -> experiments.complete(e.experimentId(), Actor.parse(TESTER)))
+            .isInstanceOf(ConflictException.class).hasMessageContaining("minimum 7 days");
+
+        promotion.rollback(p.proposalId(), Actor.parse(TESTER), "the trial looks wrong");
+
+        assertThat(proposals.get(p.proposalId()).status()).isEqualTo(ProposalStatus.ROLLED_BACK);
+        Experiment stopped = experiments.get(e.experimentId());
+        assertThat(stopped.status()).isEqualTo(ExperimentStatus.STOPPED);
+        assertThat(stopped.result()).containsEntry("rolledBack", true);
+        assertThat(liveVersion(name)).isEqualTo(v1);
+        for (int i = 0; i < 20; i++) assertThat(router.route(name, "customer:c" + i, v1)).isEmpty();
+    }
+
+    @Test
+    void aCanaryRefusesANegativeMinimumDuration() {
+        String name = installProbe("e2_canneg");
+        Proposal p = proposal("system:band_threshold", new ArtifactRef("decision", name), liveVersion(name), PolicyChangeset.RiskTier.T1, ProposalStatus.EVALUATED,
+            new PolicyChange.ThresholdChange(name, "act", 0.8, 0.75));
+        assertThatThrownBy(() -> experiments.start(p.proposalId(), ExperimentMode.CANARY, 0.2, Map.of("minDurationDays", -1), TESTER))
+            .isInstanceOf(ai.intentoms.platform.error.ValidationException.class);
+    }
+
+    @Test
+    void aGuardrailBreachDuringACanaryStopsItAndRollsTheChangeBack() {
+        String name = installProbe("e2_canguard");
+        int v1 = liveVersion(name);
+        Proposal p = proposal("system:band_threshold", new ArtifactRef("decision", name), v1, PolicyChangeset.RiskTier.T1, ProposalStatus.EVALUATED,
+            new PolicyChange.ThresholdChange(name, "act", 0.8, 0.7));
+        Experiment e = experiments.start(p.proposalId(), ExperimentMode.CANARY, 0.5, Map.of(), TESTER);
+        Instant at = e.startAt().plusMillis(5);
+        for (int i = 0; i < 10; i++) {
+            insertRecord(name, v1, at, "approve", 0.9, 40, null, null, "system:test");
+            var r = insertRecord(name, e.candidateVersion(), at, "approve", 0.9, 40, null, null, "system:test");
+            if (i < 4) records.override(r.id(), "review", "wrong", "user:ops", at);
+        }
+
+        assertThat(guardrails.sweepOnce()).isGreaterThanOrEqualTo(1);
+
+        Proposal after = proposals.get(p.proposalId());
+        assertThat(after.status()).isEqualTo(ProposalStatus.ROLLED_BACK);
+        assertThat(after.rolledBackReason()).contains("during the trial").contains("override rate");
+        assertThat(experiments.get(e.experimentId()).status()).isEqualTo(ExperimentStatus.STOPPED);
+        assertThat(liveVersion(name)).isEqualTo(v1);
+    }
+
+    @Test
+    void aHoldoutCustomerGetsTheStaticValueOfEveryLearnedParameter() {
+        String family = "e2_family_" + Ids.shortId().toLowerCase();
+        parameters.promote(family, "band_threshold", 0.0, 10.0, null, null, TESTER);
+        Experiment holdout = experiments.ensureHoldout(0.5, TESTER);
+        try {
+            String held = null, treated = null;
+            for (int i = 0; i < 200 && (held == null || treated == null); i++) {
+                String key = "customer:p" + i;
+                if (router.inHoldout(key)) held = key; else treated = key;
+            }
+            assertThat(parameters.explainFor(treated, family, 2.0, 3.0).source()).isEqualTo("LEARNED");
+            ParameterResolver.Resolution r = parameters.explainFor(held, family, 2.0, 3.0);
+            assertThat(r.source()).isEqualTo("STATIC");
+            assertThat(r.value()).isEqualTo(2.0);
+            assertThat(r.reason()).contains("holdout");
+            assertThat(parameters.isLiveFor(held, family)).isFalse();
+            assertThat(parameters.isLiveFor(treated, family)).isTrue();
+            // The subject the decision hooks set is what the plain reads use.
+            String heldKey = held;
+            assertThat(ai.intentoms.learning.governance.LearningSubject.with(heldKey, () -> parameters.explain(family, 2.0, 3.0)).source()).isEqualTo("STATIC");
+            assertThat(parameters.explain(family, 2.0, 3.0).source()).isEqualTo("LEARNED"); // no subject known: not held out
+            // With no resolver for orders on the classpath, a subject routes on itself.
+            assertThat(router.customerKey("order:ord_1")).isEqualTo("order:ord_1");
+            assertThat(router.customerKey("customer:c1")).isEqualTo("customer:c1");
+        } finally {
+            experiments.stop(holdout.experimentId(), ExperimentStatus.STOPPED, Map.of(), Actor.parse(TESTER));
+            parameters.revoke(family, TESTER);
         }
     }
 

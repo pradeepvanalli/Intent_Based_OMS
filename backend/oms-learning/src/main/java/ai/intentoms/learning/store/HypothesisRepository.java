@@ -98,6 +98,19 @@ public class HypothesisRepository {
             .query().listOfRows().stream().findFirst().map(HypothesisRepository::hydrate);
     }
 
+    /**
+     * §5: a change that was rejected or rolled back comes back to its hypothesis as evidence against it. The note is added
+     * to the evidence, the prior confidence is halved, and below 0.2 the hypothesis is closed as REJECTED.
+     */
+    public void addCounterEvidence(String id, String note) {
+        jdbc.sql("""
+            update hypothesis set evidence_refs = coalesce(evidence_refs, '[]'::jsonb) || jsonb_build_array(cast(:note as text)),
+              prior_confidence = prior_confidence / 2,
+              status = case when prior_confidence / 2 < 0.2 then 'REJECTED' else status end
+            where tenant_id = :t and hypothesis_id = :id
+            """).param("note", note).param("t", TenantContext.require()).param("id", id).update();
+    }
+
     public void updateStatus(String id, Hypothesis.Status status) {
         jdbc.sql("update hypothesis set status = :s where tenant_id = :t and hypothesis_id = :id")
             .param("s", status.name()).param("t", TenantContext.require()).param("id", id).update();

@@ -80,6 +80,9 @@ class GovernanceEventsIntegrationTest extends PostgresTestBase {
         Proposal p = LearningFixtures.threshold("return_risk", 0.80, 0.82, "system:band_threshold", h.hypothesisId());
         proposals.insert(p);
         events.proposalDrafted(p.proposalId(), Actor.system("author"), Map.of("hypothesisId", h.hypothesisId()));
+        // Defect 2: a draft must be tested before it can be approved.
+        assertThatThrownBy(() -> controller.approve(p.proposalId(), null)).isInstanceOf(ai.intentoms.platform.error.ConflictException.class);
+        proposals.markEvaluated(p.proposalId(), Map.of("liftEstimate", 0.02), Instant.now());
         controller.approve(p.proposalId(), null);
         assertThat(types(p.proposalId())).containsExactly("proposal.drafted", "proposal.approved");
         Map<String, Object> approved = events(p.proposalId()).get(1);

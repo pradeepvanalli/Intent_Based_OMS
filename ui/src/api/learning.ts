@@ -1,7 +1,7 @@
 /* Self-Optimizing Order Orchestration: learners, facts, proposals, experiments, objective, governance, explainability. */
 import { api } from './client';
 import type {
-  AutonomyLevel, ChangeCard, Digest, Experiment, ExperimentDetail, ExperimentMode, GoldenCandidate, Hypothesis, KillSwitchState, LearnedFact,
+  AutonomyLevel, BudgetUpdate, ChangeCard, Digest, Experiment, ExperimentDetail, ExperimentMode, GoldenCandidate, Hypothesis, KillSwitchState, LearnedFact,
   LearnerMetrics, LearnerView, LiftReport, LiveParameter, LiveUseRequest, ObjectiveProfile, ObjectiveWeights, ParityReport, Proposal,
   RetentionResult, Review, SubjectType, CumulativeDiff,
 } from './types';
@@ -21,6 +21,10 @@ export const learningApi = {
   /** Pause (enabled=false) or resume all learning for this tenant. */
   setAllLearning: (enabled: boolean) => api.post<KillSwitchState>(`${L}/kill-switch`, { learnerKey: '*', enabled }),
   killSwitch: () => api.get<KillSwitchState>(`${L}/kill-switch`, { silent: true }),
+  /** Stop (enabled=false) or restart learning for every tenant; platform administrators only. */
+  setGlobalLearning: (enabled: boolean) => api.post<KillSwitchState>(`${L}/kill-switch`, { scope: 'global', enabled }),
+  /** GV-02: how far one promotion may move a number and how often one target may be promoted per week. */
+  setBudget: (learnerKey: string, body: BudgetUpdate) => api.put<LearnerView>(`${L}/learners/${enc(learnerKey)}/budget`, body),
   resume: (learnerKey: string) => api.post<LearnerView>(`${L}/learners/${enc(learnerKey)}/resume`),
   runLearner: (learnerKey: string) => api.post<LearnerView>(`${L}/learners/${enc(learnerKey)}/run`),
   runJob: (job: LearningJob) => api.post<{ job: string; result: unknown }>(`${L}/jobs/${enc(job)}/run`),
@@ -42,7 +46,13 @@ export const learningApi = {
   approve: (id: string, reasonCode?: string) => api.post<Proposal>(`${L}/proposals/${enc(id)}/approve`, reasonCode ? { reasonCode } : undefined),
   reject: (id: string, reason?: string) => api.post<Proposal>(`${L}/proposals/${enc(id)}/reject`, { reason }),
   evaluate: (id: string) => api.post<Proposal>(`${L}/proposals/${enc(id)}/evaluate`),
-  promote: (id: string) => api.post<Proposal>(`${L}/proposals/${enc(id)}/promote`),
+  /**
+   * Weak evidence or a used-up weekly budget makes the server answer 409 with code "promotion_needs_override" and the
+   * list of what would be waived ("waivable"); repeating the call with a written overrideReason promotes it and records
+   * the waiver. Silent, so the caller can turn that 409 into a dialog instead of an error toast.
+   */
+  promote: (id: string, overrideReason?: string) =>
+    api.post<Proposal>(`${L}/proposals/${enc(id)}/promote`, overrideReason ? { overrideReason } : undefined, { silent: true }),
   rollback: (id: string, reason: string) => api.post<Proposal>(`${L}/promotions/${enc(id)}/rollback`, { reason }),
 
   /* ---- objective (XP-07) ---- */
