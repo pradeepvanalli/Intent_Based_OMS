@@ -5,7 +5,8 @@ import { tasksApi } from '../../api/workflows';
 import type { HumanTask } from '../../api/types';
 import { Badge, StatusBadge } from '../../components/Badge';
 import { Button } from '../../components/Button';
-import { Select, Textarea } from '../../components/Form';
+import { Input, Select, Textarea } from '../../components/Form';
+import { escalationChoices } from './escalation';
 import { Countdown, JsonTree, KeyValue } from '../../components/Misc';
 import { Table, Pagination } from '../../components/Table';
 import { EmptyState, ErrorState, Loading } from '../../components/States';
@@ -70,9 +71,19 @@ function TaskDetail({ task, loading, onClose, onChanged, onWhy }: { task?: Human
   const { principal } = useSession(); const canWork = hasPermission(principal, 'task.work') || hasPermission(principal, 'margin.approve');
   const [outcome, setOutcome] = useState(''); const [reason, setReason] = useState('');
   const claim = useMutation({ mutationFn: () => tasksApi.claim(task!.id, principal!.id), onSuccess: () => { toast.ok('Task claimed'); onChanged(); } });
-  const complete = useMutation({ mutationFn: () => tasksApi.complete(task!.id, outcome, reason), onSuccess: () => { toast.ok('Task completed', `Outcome: ${outcome}`); setOutcome(''); setReason(''); onChanged(); } });
+  const [value, setValue] = useState('');
   const payload = (task?.payload ?? {}) as Record<string, unknown>;
-  const options: string[] = task?.type === 'margin_floor_approval' ? ['approved', 'approved_alternative', 'rejected'] : task?.type === 'fraud_review' ? ['release_hold', 'cancel_order', 'keep_hold'] : task?.type === 'decision_escalation' ? ((payload.options as string[] | undefined) ?? ['accept_proposed', 'other']) : ['done', 'escalated', 'not_applicable'];
+  const escalation = task?.type === 'decision_escalation';
+  // The escalation payload carries the record and recommendation under these names (latest* after re-evaluations).
+  const recordId = (payload.latestRecordId ?? payload.recordId ?? payload.decisionRecordId) as string | undefined;
+  const recommended = payload.latestRecommendedValue ?? payload.recommendedValue ?? payload.proposed;
+  const confidence = payload.latestConfidence ?? payload.confidence;
+  const overriding = escalation && outcome === 'override';
+  const details: Record<string, unknown> | undefined = !escalation ? undefined : overriding ? { value } : outcome === 'accept' ? { value: recommended } : undefined;
+  const complete = useMutation({ mutationFn: () => tasksApi.complete(task!.id, outcome, reason, details), onSuccess: () => { toast.ok('Task completed', `Outcome: ${humanize(outcome)}`); setOutcome(''); setReason(''); setValue(''); onChanged(); } });
+  const escalationOptions = escalationChoices(payload.options);
+  const options: string[] = task?.type === 'margin_floor_approval' ? ['approved', 'approved_alternative', 'rejected'] : task?.type === 'fraud_review' ? ['release_hold', 'cancel_order', 'keep_hold'] : escalation ? escalationOptions.map(([k]) => k) : ['done', 'escalated', 'not_applicable'];
+  const optionLabel = (o: string) => escalationOptions.find(([k]) => k === o)?.[1] ?? humanize(o);
   return (
     <div className="drawer-root" role="presentation">
       <div className="drawer-overlay" onClick={onClose} aria-hidden />
@@ -82,16 +93,17 @@ function TaskDetail({ task, loading, onClose, onChanged, onWhy }: { task?: Human
           {task && <>
             <KeyValue tight items={[['Task', <span className="mono">{task.id}</span>], ['Subject', <Link to={subjectLink(task)} className="mono">{task.subjectType} / {task.subjectId}</Link>], ['Workflow', <span className="mono small">{task.workflowId ?? '—'}</span>], ['Created', fmtDateTime(task.createdAt)], ['Assignee', task.assignee ?? 'unassigned'], ['Skills', task.requiredSkills?.join(', ') || '—']]} />
             {task.type === 'margin_floor_approval' && <MarginApproval payload={payload} />}
-            {task.type === 'decision_escalation' && typeof payload.decisionRecordId === 'string' && <div className="callout"><span>Proposed: <span className="mono">{String(payload.proposed)}</span> at confidence {String(payload.confidence)}. Review the trace before deciding.</span><Button size="sm" onClick={() => onWhy(payload.decisionRecordId as string)}>Why</Button></div>}
+            {escalation && typeof recordId === 'string' && <div className="callout"><span>Recommended: <span className="mono">{String(recommended ?? '—')}</span>{confidence != null && <> at confidence {String(confidence)}</>}. Review the trace before deciding.</span><Button size="sm" onClick={() => onWhy(recordId)}>Why</Button></div>}
             <details><summary className="small strong" style={{ cursor: 'pointer' }}>Payload</summary><div className="code mt2" style={{ whiteSpace: 'normal' }}><JsonTree data={payload} defaultOpen={1} /></div></details>
             {task.status === 'COMPLETED' && <div className="callout ok"><span>Completed by <b>{task.completedBy}</b> {fmtDateTime(task.completedAt)} — outcome <b>{task.outcome}</b>: {task.outcomeReason}</span></div>}
             {task.status !== 'COMPLETED' && task.status !== 'CANCELLED' && (
               <div className="card card-pad col">
                 <div className="section-title">Decide</div>
                 {task.status === 'OPEN' && <div className="row gap3"><span className="small muted">Claim the task before completing it.</span><Button size="sm" onClick={() => claim.mutate()} loading={claim.isPending} disabled={!canWork} title={canWork ? undefined : 'Requires task.work or margin.approve'}>Claim</Button></div>}
-                <Select label="Outcome" value={outcome} onChange={(e) => setOutcome(e.target.value)} disabled={task.status !== 'CLAIMED' || !canWork}><option value="">Select…</option>{options.map((o) => <option key={o} value={o}>{humanize(o)}</option>)}</Select>
+                <Select label="Outcome" value={outcome} onChange={(e) => setOutcome(e.target.value)} disabled={task.status !== 'CLAIMED' || !canWork}><option value="">Select…</option>{options.map((o) => <option key={o} value={o}>{optionLabel(o)}</option>)}</Select>
+                {overriding && <Input label="Value to use instead" hint={`The recommendation was ${String(recommended ?? '—')}. Enter the value you chose; it is recorded as the answer.`} value={value} onChange={(e) => setValue(e.target.value)} disabled={task.status !== 'CLAIMED' || !canWork} />}
                 <Textarea label="Reason (required, audited)" hint="Recorded against this task and visible in its history — explain the why, not just the what." value={reason} onChange={(e) => setReason(e.target.value)} rows={3} disabled={task.status !== 'CLAIMED' || !canWork} />
-                <div className="flex-end"><Button variant="primary" disabled={task.status !== 'CLAIMED' || !outcome || !reason.trim() || !canWork} loading={complete.isPending} onClick={() => complete.mutate()} title={canWork ? undefined : 'Requires task.work or margin.approve'}>Complete task</Button></div>
+                <div className="flex-end"><Button variant="primary" disabled={task.status !== 'CLAIMED' || !outcome || !reason.trim() || !canWork || (overriding && !value.trim())} loading={complete.isPending} onClick={() => complete.mutate()} title={canWork ? undefined : 'Requires task.work or margin.approve'}>Complete task</Button></div>
                 {!canWork && <div className="xs muted">Your role cannot work tasks — this needs task.work or margin.approve.</div>}
               </div>
             )}
