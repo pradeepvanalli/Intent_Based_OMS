@@ -30,6 +30,7 @@ public enum FactKey {
     FALSE_POSITIVE_RATE(TypedValue.NumberValue.class),       // FD-03: subject=DECISION, blocked orders later shown good / all blocked
     FEATURE_DRIFT_PSI(TypedValue.NumberValue.class),         // FD-07: subject=DECISION, population stability index of the input features this week vs baseline
     ADDRESS_REUSE_COUNT(TypedValue.NumberValue.class),       // FD-04: subject=ADDRESS (token), distinct customers using the address in 30 days
+    PROVIDER_LATENCY_MS(TypedValue.NumberValue.class),       // DF-05: subject=DECISION "<decision>:<provider>", p95 latency of its answers in the window
     FRAUD_SIGNAL_RATE(TypedValue.NumberValue.class),         // FD-01: subject=DECISION "payment_risk|<signal>|<bucket>" or AGENT, labelled fraud rate at that signal level / of the agent's mandated orders
     // ---- fulfilment and promise (FS-*, CX-*)
     NODE_BACKLOG_BREACH_CURVE(TypedValue.ListValue.class),   // FS-05: subject=NODE, "<backlogUnits>:<breachProbability>" points
