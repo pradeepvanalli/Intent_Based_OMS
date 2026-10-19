@@ -64,7 +64,8 @@ public class InjectionScreen {
 
     /** Screens text attached to a subject (order, return) so the decision record joins that subject's trail. */
     public ScreenResult screen(String source, String text, String subjectType, String subjectId) {
-        String content = AgentTextSanitizer.sanitize(text);
+        // NF-07: contact details never reach the decision record or a model prompt; redaction keeps the instruction text.
+        String content = ai.intentoms.platform.pii.FreeTextRedactor.redact(AgentTextSanitizer.sanitize(text));
         if (content == null || content.isBlank()) return ScreenResult.clean(source);
         Actor actor = authz.currentPrincipal().map(p -> Actor.parse(p.actorRef())).orElse(Actor.system("injection-screen"));
         DecisionResult r = decisions.decide(DECISION, Map.of("text", Map.of("source", source, "content", content)), DecisionOptions.live(subjectType, subjectId, actor));

@@ -2,6 +2,7 @@ package ai.intentoms.sourcing.plan;
 
 import ai.intentoms.order.model.FulfilmentGroup;
 import ai.intentoms.order.model.MarginSnapshot;
+import ai.intentoms.order.model.Note;
 import ai.intentoms.order.model.Order;
 import ai.intentoms.platform.ledger.Actor;
 import ai.intentoms.sourcing.CandidateGenerator;
@@ -232,5 +233,26 @@ class SourcingServiceIntegrationTest extends SourcingTestBase {
         assertThat(r.status()).isEqualTo(SourcingResult.Status.SOURCED);
         assertThat(r.plan().packages().get(0).nodeId()).isEqualTo("DC-TX");
         assertThat(r.plan().explain()).containsKey("simulation");
+    }
+
+    @Test
+    void splitAcceptabilityInputCarriesOrderNotesWithoutContactDetails() {
+        // NF-07: the T2 split check reads the customer's notes, redacted, never their phone number or email.
+        stock("TEE-BLK-M", "ST-CHI-01", 10);
+        stock("TEE-BLK-M", "DC-NJ", 50); stock("HOOD-GRY-M", "DC-NJ", 50);
+        Order o = order("web", intent(Policies.EARLIEST_PARTIAL, true), CHICAGO,
+            line("L1", "HOOD-GRY-M", 1, 50, 30), line("L2", "TEE-BLK-M", 1, 50, 30, Map.of("urgent", true)));
+        orders.update(o.withNotes(List.of(new Note("customer", "cust-1", "Fine to split, call me at 312-555-0142 or jane.doe@example.com", NOW, true, null))));
+        sourcing.source(o.id(), actor);
+        Order saved = orders.get(o.id());
+        MarginSnapshot m = saved.margin();
+        orders.update(saved.withMargin(new MarginSnapshot(m.revenue(), m.contributionMargin(), m.marginRatio(), m.floor(), m.belowFloor(), true, "task_1", m.computedAt())));
+
+        SourcingResult r = sourcing.source(o.id(), actor);
+
+        assertThat(r.plan().explain()).containsKey("splitAcceptability");
+        String recordId = String.valueOf(((Map<?, ?>) r.plan().explain().get("splitAcceptability")).get("recordId"));
+        String input = jdbc.sql("select input::text from decision_record where tenant_id = :t and id = :id").param("t", tenant).param("id", recordId).query(String.class).single();
+        assertThat(input).contains("Fine to split").contains("[phone]").contains("[email]").doesNotContain("312-555-0142").doesNotContain("jane.doe@example.com");
     }
 }

@@ -180,9 +180,13 @@ class SelfOptimizingSourcingIntegrationTest extends SourcingTestBase {
         assertThat(learned.date()).isEqualTo(LocalDate.of(2026, 10, 9));                // learned P50 of three days
         assertThat(learned.onTimeProbability()).isLessThan(staticPromise.onTimeProbability() - 0.15);
 
+        // The live buffer explores a day either way on a small share of promises; pinned off so the date is exact.
+        config.set(PromiseBufferLearner.EXPLORATION_KEY, 0.0);
         parameters.promote(PromiseBufferLearner.PARAMETER, PromiseBufferLearner.KEY, 0.0, 5.0, null, null, "test");
         promiseImpl.invalidateAll();
-        assertThat(promise.promise(req).date()).isEqualTo(LocalDate.of(2026, 10, 11));  // plus the web segment's two-day buffer
+        Promise buffered = promise.promise(req);
+        assertThat(buffered.date()).isEqualTo(LocalDate.of(2026, 10, 11));  // plus the web segment's two-day buffer
+        assertThat(buffered.bufferExplored()).isFalse();
     }
 
     /** EX-04: a customer in the persistent holdout keeps the static reject penalty; a treated customer gets the learned one. */

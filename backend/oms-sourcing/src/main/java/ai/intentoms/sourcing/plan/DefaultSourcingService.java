@@ -649,7 +649,7 @@ public class DefaultSourcingService implements SourcingService {
     private Map<String, Object> splitInput(Order order, Run run, SourcingPlan chosen) {
         Map<String, Object> o = new LinkedHashMap<>();
         o.put("channel", order.channel());
-        o.put("notes", order.notes() == null ? "" : String.join(" ", order.notes().stream().map(Note::text).filter(t -> t != null).toList()));
+        o.put("notes", order.notes() == null ? "" : String.join(" ", order.notes().stream().map(Note::text).filter(t -> t != null).map(ai.intentoms.platform.pii.FreeTextRedactor::redact).toList()));
         o.put("intent", order.intent() == null ? "" : order.intent().policy());
         Map<String, Object> cust = new LinkedHashMap<>();
         cust.put("tier", order.customer() == null || order.customer().tier() == null ? "" : order.customer().tier());
