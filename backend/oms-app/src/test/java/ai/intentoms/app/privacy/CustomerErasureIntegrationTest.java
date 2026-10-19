@@ -139,6 +139,50 @@ class CustomerErasureIntegrationTest extends PostgresTestBase {
         assertThat(count("select count(*) from decision_record where tenant_id = :t and (details::text like '%' || :c || '%' or input::text like '%' || :c || '%')", ref)).isZero();
     }
 
+    @Autowired ai.intentoms.learning.event.LearningEvents learningEvents;
+
+    @Test
+    void erasureRewritesTheCustomersOldLearningEventsAndNothingElseCanUpdateTheLedger() {
+        String ref = "cust-ledger-" + Ids.shortId();
+        String token = ai.intentoms.platform.tenant.TenantContext.supplyAs(TENANT, () -> customerSubjects.key(ref));
+        String factA = Ids.prefixed("fact"), factB = Ids.prefixed("fact");
+        // fact.learned events the way builds before NF-07 wrote them: the raw reference and the learned value.
+        ai.intentoms.platform.tenant.TenantContext.runAs(TENANT, () -> {
+            learningEvents.factLearned(factA, ai.intentoms.platform.ledger.Actor.system("ci_preference"), Map.of("subjectType", "CUSTOMER", "subjectId", ref,
+                "factKey", "SPEED_VS_COST", "version", 1, "value", Map.of("type", "NumberValue", "value", -0.94), "learner", "ci_preference"));
+            learningEvents.factLearned(factB, ai.intentoms.platform.ledger.Actor.system("ci_preference"), Map.of("subjectType", "CUSTOMER", "subjectId", ref,
+                "factKey", "PREFERRED_CONTACT_CHANNEL", "version", 1, "value", Map.of("type", "TextValue", "value", "chat"), "learner", "ci_preference"));
+        });
+        assertThat(count("select count(*) from event where tenant_id = :t and type = 'fact.learned' and payload::text like '%' || :c || '%'", ref)).isEqualTo(2);
+
+        actAs("admin", Set.of("*"));
+        privacy.erase(ref);
+
+        assertThat(count("select count(*) from event where tenant_id = :t and payload::text like '%' || :c || '%'", ref)).as("no event names the erased customer").isZero();
+        List<Map<String, Object>> rewritten = jdbc.sql("select payload::text as p from event where tenant_id = :t and aggregate_type = 'learning' and aggregate_id in (:ids)")
+            .param("t", TENANT).param("ids", List.of(factA, factB)).query().listOfRows();
+        assertThat(rewritten).hasSize(2).allSatisfy(r -> {
+            Map<String, Object> p = Json.readMap((String) r.get("p"));
+            assertThat(p).containsEntry("subjectId", token).containsEntry("erased", true).doesNotContainKey("value").containsKey("payloadDigest");
+            assertThat((String) r.get("p")).doesNotContain("-0.94").doesNotContain("\"chat\"");
+        });
+
+        // Outside erasure the ledger is still append-only, and erasure itself may touch learning events only.
+        String eventId = jdbc.sql("select event_id from event where tenant_id = :t and aggregate_id = :a").param("t", TENANT).param("a", factA).query(String.class).single();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbc.sql("update event set payload = '{}'::jsonb where event_id = :e").param("e", eventId).update())
+            .hasMessageContaining("append-only");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbc.sql("delete from event where event_id = :e").param("e", eventId).update()).hasMessageContaining("append-only");
+        String orderEvent = jdbc.sql("select event_id from event where tenant_id = :t and aggregate_type <> 'learning' limit 1").param("t", TENANT).query(String.class).single();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbc.sql("""
+            with erasure as (select set_config('oms.legal_erasure', 'on', true) as on_)
+            update event set payload = '{}'::jsonb from erasure where event_id = :e and erasure.on_ = 'on'
+            """).param("e", orderEvent).update()).as("not a learning event").hasMessageContaining("append-only");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbc.sql("""
+            with erasure as (select set_config('oms.legal_erasure', 'on', true) as on_)
+            update event set type = 'x' from erasure where event_id = :e and erasure.on_ = 'on'
+            """).param("e", eventId).update()).as("only the payload may change").hasMessageContaining("append-only");
+    }
+
     @Autowired ai.intentoms.learning.store.CustomerSubjects customerSubjects;
 
     private long count(String sql, String c) {

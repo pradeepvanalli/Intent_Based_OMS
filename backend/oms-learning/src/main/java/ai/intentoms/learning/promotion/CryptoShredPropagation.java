@@ -96,14 +96,76 @@ public class CryptoShredPropagation {
             jdbc.sql("update segment set definition = :d where tenant_id = :t and segment_id = :id").param("d", ai.intentoms.platform.jdbc.Jsonb.of(out)).param("t", t).param("id", row.get("segment_id")).update();
             samples++;
         }
+        int ledger = scrubLearningEvents(t, customerId, alias != null ? alias : subjects == null ? null : subjects.key(customerId), names);
         Map<String, Object> extra = new LinkedHashMap<>();
         extra.put("evidenceDeleted", evidence);
         extra.put("orderRefsDeleted", orderRefs);
         extra.put("episodesDeleted", episodes);
         extra.put("pseudonymPurged", alias != null);
         extra.put("segmentSamplesScrubbed", samples);
+        extra.put("learningEventsScrubbed", ledger);
         return finish("customer", facts, 0, by, extra);
     }
+
+    /**
+     * GV-06 / C-N4 on the ledger, the one exception to its being append-only (platform migration V111): the customer's
+     * existing learning events ({@code fact.learned} and any other event of the {@code learning} aggregate that names
+     * them) are rewritten so the raw reference becomes the vault token and a customer fact's learned value is dropped.
+     * The event keeps its type, ids, position and time; its payload is marked {@code erased} and its digests are
+     * recomputed over what remains (an event later in the same learning stream keeps the chain digest it recorded). The
+     * update runs with {@code oms.legal_erasure} set for its own statement and cleared right after; nothing else can
+     * update an event. Returns how many events were rewritten.
+     */
+    int scrubLearningEvents(String t, String ref, String token, List<String> names) {
+        if (token == null) return 0;
+        List<Map<String, Object>> rows = jdbc.sql("""
+            select event_id, type, payload::text as payload from event
+            where tenant_id = :t and aggregate_type = 'learning'
+              and (payload::text like :n or (type = 'fact.learned' and payload->>'subjectType' = 'CUSTOMER' and payload->>'subjectId' in (:c) and jsonb_exists(payload, 'value')))
+            """).param("t", t).param("n", "%" + Json.write(ref) + "%").param("c", names).query().listOfRows();
+        int n = 0;
+        for (Map<String, Object> row : rows) {
+            Map<String, Object> payload = Json.readMap((String) row.get("payload"));
+            Object replaced = replace(payload, ref, token);
+            @SuppressWarnings("unchecked") Map<String, Object> out = new LinkedHashMap<>((Map<String, Object>) replaced);
+            if ("fact.learned".equals(row.get("type")) && "CUSTOMER".equals(out.get("subjectType")) && out.containsKey("value")) {
+                out.remove("value");
+                out.put("valueOmitted", "customer fact: the value was erased (GV-06)");
+            }
+            String previous = out.get("previousChainDigest") == null ? null : String.valueOf(out.get("previousChainDigest"));
+            out.remove("payloadDigest");
+            out.remove("chainDigest");
+            out.remove("previousChainDigest");
+            out.put("erased", true);
+            String digest = Json.sha256(out);
+            out.put("payloadDigest", digest);
+            if (previous != null) out.put("previousChainDigest", previous);
+            out.put("chainDigest", previous == null ? digest : Json.sha256(Map.of("previous", previous, "payload", digest)));
+            n += jdbc.sql("""
+                with erasure as (select set_config('oms.legal_erasure', 'on', true) as on_)
+                update event set payload = :p from erasure where tenant_id = :t and event_id = :id and erasure.on_ = 'on'
+                """).param("p", ai.intentoms.platform.jdbc.Jsonb.of(out)).param("t", t).param("id", row.get("event_id")).update();
+        }
+        jdbc.sql("select set_config('oms.legal_erasure', '', true)").query(String.class).single();
+        return n;
+    }
+
+    /** {@code v} with every string equal to {@code from} replaced by {@code to}, at any depth. */
+    static Object replace(Object v, String from, String to) {
+        if (v instanceof String s) return s.equals(from) ? to : s;
+        if (v instanceof Map<?, ?> m) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            m.forEach((k, x) -> out.put(String.valueOf(k), replace(x, from, to)));
+            return out;
+        }
+        if (v instanceof List<?> l) return l.stream().map(x -> replace(x, from, to)).toList();
+        return v;
+    }
+
+    private ai.intentoms.learning.store.CustomerSubjects subjects;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCustomerSubjects(ai.intentoms.learning.store.CustomerSubjects subjects) { this.subjects = subjects; }
 
     /** Tenant-wide purge, matching {@code Tokenizer.shred}'s tenant-level key rotation. */
     @Transactional

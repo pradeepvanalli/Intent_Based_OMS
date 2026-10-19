@@ -68,6 +68,7 @@ public class DecisionInputErasure {
                 """).param("input", scrubbed == null ? null : Jsonb.of(scrubbed)).param("details", details == null ? null : Jsonb.of(details))
                 .param("c", customerRef).param("p", pseudonym).param("t", t).param("id", r.get("id")).update();
         }
+        jdbc.sql("select set_config('oms.legal_erasure', '', true)").query(String.class).single(); // scoped to the erasure statements
         if (!rows.isEmpty()) log.info("GV-06: pseudonymised {} decision record(s) for tenant {}", rows.size(), t);
         return rows.size();
     }

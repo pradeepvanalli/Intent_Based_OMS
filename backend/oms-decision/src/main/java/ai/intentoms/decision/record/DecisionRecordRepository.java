@@ -151,6 +151,8 @@ public class DecisionRecordRepository {
             .param("payload", Jsonb.of(payload)).param("createdBy", by).param("createdAt", Timestamp.from(at == null ? Instant.now() : at));
         for (Map.Entry<String, Object> e : cacheParams.entrySet()) spec = spec.param(e.getKey(), e.getValue());
         spec.update();
+        // Scoped to this statement: an enclosing transaction gets no leftover licence to touch the cache columns.
+        jdbc.sql("select set_config('oms.decision_annotation', '', true)").query(String.class).single();
     }
 
     /** Every annotation of one record, oldest first (labels, overrides and human resolutions as they were appended). */
