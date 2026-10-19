@@ -37,6 +37,10 @@ public class SooSeedStatusController {
             out.put("counts", m.get("counts"));
             out.put("ids", m.get("ids"));
             out.put("pausedLearners", m.get("pausedLearners"));
+            out.put("liveFamilies", m.get("liveFamilies"));
+            // What the seed deliberately left out ({item, reason}): a live-use family whose range does not fit its
+            // domain or whose learners have learned nothing yet is not switched on.
+            out.put("skipped", m.get("skipped") == null ? java.util.List.of() : m.get("skipped"));
             if (m.get("warnings") != null) out.put("warnings", m.get("warnings"));
         });
         out.put("actor", SooDemoSeeder.SEED);

@@ -3,6 +3,8 @@ package ai.intentoms.app.glue.soo;
 import ai.intentoms.IntentOmsApplication;
 import ai.intentoms.learning.experiment.ExperimentManager;
 import ai.intentoms.learning.governance.LearnerGovernance;
+import ai.intentoms.learning.governance.LearnerRegistry;
+import ai.intentoms.learning.governance.LiveFamilies;
 import ai.intentoms.learning.governance.LiveParameterRepository;
 import ai.intentoms.learning.model.AutonomyLevel;
 import ai.intentoms.learning.model.LearnerState;
@@ -41,6 +43,7 @@ class SooDemoSeederIntegrationTest extends PostgresTestBase {
     @Autowired LiveParameterRepository liveParameters;
     @Autowired ExperimentManager experiments;
     @Autowired ObjectiveProfileRepository objectives;
+    @Autowired LearnerRegistry registry;
 
     @Test
     void demoTenantIsSeededOnceThroughTheRealServices() {
@@ -99,6 +102,53 @@ class SooDemoSeederIntegrationTest extends PostgresTestBase {
                     "fraud.signal_risk")
                 .doesNotContain("inventory.reservation_ttl", "decision.calibration", "fraud.agent_reputation", "fraud.agent_dispute_rate");
 
+            // B-1: every seeded live range sits inside its family's domain, and a learner feeding the family has learned something.
+            for (LiveParameterRepository.LiveParameter p : liveParameters.all().stream().filter(LiveParameterRepository.LiveParameter::live).toList()) {
+                assertThat(LiveFamilies.validate(p.parameter(), p.min(), p.max(), p.maxStep())).as("range of %s", p.parameter()).isEmpty();
+                List<String> feeders = registry.descriptors().stream().filter(d -> d.liveParameters().contains(p.parameter())).map(d -> d.key()).toList();
+                long facts = jdbc.sql("select count(*) from learned_fact where tenant_id = :t and learner in (:k) and valid_to is null")
+                    .param("t", DEMO).param("k", feeders).query(Long.class).single();
+                assertThat(facts).as("learned values behind live %s (learners %s)", p.parameter(), feeders).isPositive();
+            }
+            // Warn-early is a 0-4 breach-risk score: the seeded range must not warn on the default score of 1 (audit B-1 flood).
+            var warn = liveParameters.find("monitoring.warn_early_threshold").orElseThrow();
+            assertThat(warn.min()).isGreaterThan(1.0);
+            assertThat(warn.max()).isLessThanOrEqualTo(4.0);
+            assertThat(marker).containsKey("skipped");
+
+            // Reference data the learners need: matured fraud labels (FD-01, FD-03), labelled resolutions (DF-02), lane
+            // samples with a moderate stated-vs-actual gap (CX-01), storefront impressions (CX-02).
+            assertThat(factCount("FRAUD_SIGNAL_RATE")).as("fraud signal rates from the matured cohort").isGreaterThanOrEqualTo(5);
+            assertThat(jdbc.sql("select count(*) from proposal where tenant_id = :t and created_by = 'system:fraud_threshold_tuner'").param("t", DEMO).query(Long.class).single())
+                .as("the fraud threshold tuner proposed from the matured cohort").isPositive();
+            assertThat(jdbc.sql("select count(*) from learned_fact where tenant_id = :t and fact_key = 'CALIBRATION_CURVE' and subject_id = 'sla_breach_risk' and valid_to is null")
+                .param("t", DEMO).query(Long.class).single()).as("calibration curve from labelled breach-risk resolutions").isEqualTo(1);
+            Map<String, Object> label = jdbc.sql("select labels->'human_resolution' as l from decision_record where tenant_id = :t and id = 'dr-demo-sla_breach_risk-demo-esc-001'")
+                .param("t", DEMO).query((rs, i) -> ai.intentoms.platform.json.Json.readMap(rs.getString("l"))).single();
+            assertThat(label).containsKeys("value", "outcome", "reasonCode", "recommendedValue", "resolvedBy");
+            List<Double> offsets = jdbc.sql("select (value->>'value')::float from learned_fact where tenant_id = :t and fact_key = 'LANE_CALIBRATION_OFFSET' and valid_to is null")
+                .param("t", DEMO).query(Double.class).list();
+            assertThat(offsets).as("lane corrections").hasSizeGreaterThanOrEqualTo(5);
+            // The seeded range is -0.3..0.3: most lanes' corrections fall inside it, and most are a real correction (5 points or more).
+            assertThat(offsets.stream().filter(o -> Math.abs(o) <= 0.3).count()).as("corrections inside the seeded range: %s", offsets)
+                .isGreaterThanOrEqualTo(Math.round(offsets.size() * 0.8));
+            assertThat(offsets.stream().filter(o -> Math.abs(o) >= 0.05).count()).as("lanes with a correction of 5 points or more: %s", offsets)
+                .isGreaterThanOrEqualTo(offsets.size() / 2);
+            assertThat(factCount("PROMISE_BUFFER_DAYS")).as("promise buffers from storefront impressions").isPositive();
+
+            // §12 north star: whole-order episodes carry the perfect component, a mix of 1 and 0, holdout included.
+            Map<String, Object> perfect = jdbc.sql("""
+                select count(*) filter (where (e.reward_components->>'perfect')::float = 1) as ones, count(*) filter (where (e.reward_components->>'perfect')::float = 0) as zeros,
+                       count(distinct e.order_id) filter (where d.details->'experiment'->>'arm' = 'holdout') as holdout_orders
+                from episode e join decision_record d on d.tenant_id = e.tenant_id and d.id = e.decision_id
+                where e.tenant_id = :t and e.reward_components->>'perfect' is not null""").param("t", DEMO).query().singleRow();
+            assertThat(((Number) perfect.get("ones")).longValue()).isPositive();
+            assertThat(((Number) perfect.get("zeros")).longValue()).isPositive();
+            assertThat(((Number) perfect.get("holdout_orders")).longValue()).as("holdout orders with a perfect-order outcome").isGreaterThanOrEqualTo(30);
+
+            // FS-04: the seeded weight change was drafted by the (template) Author from the weight learner's hypothesis.
+            assertThat(proposals.get(SooDemoSeeder.PROP_WEIGHTS).createdBy()).isEqualTo(SooDemoSeeder.TEMPLATE_AUTHOR);
+
             // The T0 path: replay above zero and a passed shadow from a real shadow experiment.
             var t0 = proposals.get(SooDemoSeeder.PROP_T0_EXCEPTION);
             assertThat(t0.status()).isEqualTo(ProposalStatus.EVALUATED);
@@ -136,5 +186,9 @@ class SooDemoSeederIntegrationTest extends PostgresTestBase {
             assertThat(jdbc.sql("select count(*) from decision_record where tenant_id = :t and actor = 'system:demo-seed'").param("t", DEMO).query(Long.class).single()).isEqualTo(records);
             assertThat(jdbc.sql("select count(*) from proposal where tenant_id = :t").param("t", DEMO).query(Long.class).single()).isEqualTo(proposalCount);
         });
+    }
+
+    private long factCount(String key) {
+        return jdbc.sql("select count(*) from learned_fact where tenant_id = :t and fact_key = :k and valid_to is null").param("t", DEMO).param("k", key).query(Long.class).single();
     }
 }

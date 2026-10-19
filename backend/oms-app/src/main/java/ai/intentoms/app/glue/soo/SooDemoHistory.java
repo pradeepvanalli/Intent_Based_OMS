@@ -10,11 +10,13 @@ import ai.intentoms.learning.learner.CiPreferenceLearner;
 import ai.intentoms.learning.learner.FraudLabelCapture;
 import ai.intentoms.learning.learner.LaneDeliveryLearner;
 import ai.intentoms.learning.learner.NodeReliabilityLearner;
+import ai.intentoms.learning.learner.PromiseConversionRepository;
 import ai.intentoms.learning.model.Episode;
 import ai.intentoms.learning.model.OutcomeData;
 import ai.intentoms.learning.model.OutcomeRecord;
 import ai.intentoms.learning.store.EpisodeRepository;
 import ai.intentoms.learning.store.OutcomeRepository;
+import ai.intentoms.platform.config.TenantConfigStore;
 import ai.intentoms.platform.json.Json;
 import ai.intentoms.platform.ledger.Actor;
 import ai.intentoms.platform.ledger.Event;
@@ -25,6 +27,7 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -74,11 +77,36 @@ public class SooDemoHistory {
     static final List<String> BOOLS = List.of("true", "false");
     static final double EXPLORATION = 0.10;
 
+    /** Holdout orders the history tops up to (XP-01 needs at least 30 per arm for the perfect-order headline to be judged). */
+    static final int MIN_HOLDOUT_ORDERS = 45;
+    /** Matured payment-risk decisions (older than the chargeback window) the fraud learners train on (FD-01, FD-03). */
+    static final int FRAUD_COHORT = 180;
+    static final String FRAUD_PREFIX = "demo-fraud-";
+    /**
+     * How optimistic the static promise table is about each lane: the stated on-time probability on a package is the
+     * node and carrier's nominal rate less this, so the lane calibration (CX-01) finds a correction of a few points.
+     */
+    static final double STATED_HAIRCUT = 0.2;
+    /** Storefront promise buffers shown in the history (CX-02) and the share of shoppers who bought at each. */
+    static final double[] BUFFER_CONVERSION = {0.36, 0.31, 0.25};
+
     private final DecisionRecordRepository records;
     private final DecisionDefinitionRepository definitions;
     private final EpisodeRepository episodes;
     private final OutcomeRepository outcomes;
     private final List<EventSubscriber> learnersFed;
+    private final FraudLabelCapture fraudLabels;
+    private final PromiseConversionRepository promiseConversions;
+    private final TenantConfigStore config;
+    /** The tenant's clock (tenant.timezone), for day parts. */
+    private ZoneId zone = ZoneOffset.UTC;
+    /** Every order generated in the last run, for the storefront impressions. */
+    private final List<Order> generated = new ArrayList<>();
+    private int fraudCohortRecords;
+    private int labelledResolutions;
+    private int promiseImpressions;
+    private int holdoutTopUp;
+    private int recentHoldoutOrders;
 
     private int episodeCount;
     private int outcomeCount;
@@ -98,15 +126,25 @@ public class SooDemoHistory {
     static final List<String> EXCEPTION_TYPES = List.of("address", "inventory_short", "carrier_delay", "payment", "store_reject", "system", "other", "unclear");
 
     public SooDemoHistory(DecisionRecordRepository records, DecisionDefinitionRepository definitions, EpisodeRepository episodes, OutcomeRepository outcomes,
-                          NodeReliabilityLearner nodeReliability, LaneDeliveryLearner laneTransit, CiPreferenceLearner customerPreferences, FraudLabelCapture fraudLabels) {
+                          NodeReliabilityLearner nodeReliability, LaneDeliveryLearner laneTransit, CiPreferenceLearner customerPreferences, FraudLabelCapture fraudLabels,
+                          PromiseConversionRepository promiseConversions, TenantConfigStore config) {
         this.records = records;
         this.definitions = definitions;
         this.episodes = episodes;
         this.outcomes = outcomes;
         this.learnersFed = List.of(nodeReliability, laneTransit, customerPreferences, fraudLabels);
+        this.fraudLabels = fraudLabels;
+        this.promiseConversions = promiseConversions;
+        this.config = config;
     }
 
-    public record Result(Map<String, Integer> recordsByDecision, int episodes, int outcomes, int learnerEvents, int holdoutOrders, int exceptionRecords) {}
+    /**
+     * What one run produced. {@code fraudCohortRecords}: matured, labelled payment-risk decisions; {@code
+     * labelledResolutions}: decisions a person resolved, labelled {@code human_resolution}; {@code promiseImpressions}:
+     * storefront promise impressions; {@code holdoutTopUp}: extra holdout orders added to reach {@link #MIN_HOLDOUT_ORDERS}.
+     */
+    public record Result(Map<String, Integer> recordsByDecision, int episodes, int outcomes, int learnerEvents, int holdoutOrders, int exceptionRecords,
+                         int fraudCohortRecords, int labelledResolutions, int promiseImpressions, int holdoutTopUp) {}
 
     /** One synthetic order and everything that happened to it. */
     record Order(String id, Instant at, String customer, String channel, String shipMethod, String orderType, String node, String secondNode, String skuClass,
@@ -124,11 +162,18 @@ public class SooDemoHistory {
      */
     public Result generate(Instant now, java.util.function.Predicate<String> inHoldout, String holdoutExperimentId) {
         recordCount.clear();
+        generated.clear();
         episodeCount = 0;
         outcomeCount = 0;
         eventCount = 0;
         holdoutOrders = 0;
         exceptionRecords = 0;
+        fraudCohortRecords = 0;
+        labelledResolutions = 0;
+        promiseImpressions = 0;
+        holdoutTopUp = 0;
+        recentHoldoutOrders = 0;
+        zone = ai.intentoms.learning.model.DayPart.zone(config);
         this.holdoutExperimentId = holdoutExperimentId;
         Random rnd = new Random(20261019L);
         Map<String, Integer> versions = new LinkedHashMap<>();
@@ -138,42 +183,87 @@ public class SooDemoHistory {
             // A short tail older than every maturity window (so some episodes are MATURE), then 90 days of recent history.
             double ageDays = i < TAIL ? 135.0 - i : 90.0 - 88.0 * (i - TAIL) / ORDERS + rnd.nextDouble() * 0.25;
             Order o = order(i, now.minus(Duration.ofMinutes(Math.round(ageDays * 1440))), ageDays, rnd);
-            holdoutOrder = holdoutExperimentId != null && inHoldout.test(o.customer());
-            if (holdoutOrder) holdoutOrders++;
-            // Draw for every order, held out or not, so which customers the (randomly named) holdout picks never shifts
-            // the random sequence the rest of the history is drawn from: every other seeded outcome stays the same.
-            double splitDraw = rnd.nextDouble();
-            if (holdoutOrder && o.packages() == 1 && splitDraw < 0.25) o = split(o);
-
-            double snsConf = 0.55 + rnd.nextDouble() * 0.44;
-            double slaConf = 0.5 + rnd.nextDouble() * 0.49;
-            // About half of orders hit an exception that is classified; nearly a third of those land just above the act threshold.
-            double excDraw = rnd.nextDouble();
-            Double excConf = rnd.nextDouble() < 0.5 ? (excDraw < 0.3 ? EXCEPTION_ACT + rnd.nextDouble() * (EXCEPTION_PROPOSED_ACT - EXCEPTION_ACT)
-                : excDraw < 0.35 ? 0.35 + rnd.nextDouble() * 0.15 : EXCEPTION_PROPOSED_ACT + rnd.nextDouble() * 0.44) : null;
-            o = shapeOutcome(o, snsConf, slaConf, excConf, holdoutOrder, rnd);
-            if (o.delivered() && o.deliveredAt().isAfter(now.minus(Duration.ofHours(1)))) o = inTransit(o);
-            int slaScore = o.onTime() ? rnd.nextInt(2) : 2 + rnd.nextInt(3);
-
-            List<String> orderEpisodes = new ArrayList<>();
-            orderEpisodes.add(sourcingNodeScore(o, snsConf, versions.get("sourcing_node_score")));
-            orderEpisodes.add(slaBreachRisk(o, slaConf, slaScore, versions.get("sla_breach_risk"), rnd));
-            orderEpisodes.add(paymentRisk(o, versions.get("payment_risk"), rnd));
-            if (rnd.nextDouble() < 0.7) orderEpisodes.add(bandit(o, rnd));
-            if (o.cod()) orderEpisodes.add(rtoRisk(o, versions.get("rto_risk"), rnd));
-            if (excConf != null) orderEpisodes.add(exceptionClassify(o, excConf, versions.get("exception_classify"), rnd));
-            boolean addressChecked = ageDays >= 3 && ageDays <= 14 ? rnd.nextDouble() < 0.9 : rnd.nextDouble() < 0.12;
-            String addressEpisode = addressChecked ? addressRisk(o, versions.get("address_risk"), rnd) : null;
-
-            for (String ep : orderEpisodes) orderOutcomes(ep, o);
-            // Address-check outcomes stopped arriving for most recent orders (OC-07's silent data loss).
-            if (addressEpisode != null && (ageDays > 14 || rnd.nextDouble() < 0.5)) orderOutcomes(addressEpisode, o);
-            if (o.delivered() && o.returned()) returnRisk(o, versions.get("return_risk"), rnd, now);
-            feedLearners(o, now);
+            emit(o, ageDays, holdoutExperimentId != null && inHoldout.test(o.customer()), rnd, versions, now);
         }
+        topUpHoldout(inHoldout, versions, now);
         holdoutOrder = false;
         returnGroups(versions.get("return_risk"), now);
-        return new Result(Map.copyOf(recordCount), episodeCount, outcomeCount, eventCount, holdoutOrders, exceptionRecords);
+        breachEscalations(versions.get("sla_breach_risk"), now);
+        fraudCohort(versions.get("payment_risk"), now);
+        storefrontImpressions();
+        return new Result(Map.copyOf(recordCount), episodeCount, outcomeCount, eventCount, holdoutOrders, exceptionRecords,
+            fraudCohortRecords, labelledResolutions, promiseImpressions, holdoutTopUp);
+    }
+
+    /** One order's decisions, episodes, outcomes and learner events, drawn from {@code rnd} in a fixed order. */
+    private void emit(Order order, double ageDays, boolean heldOut, Random rnd, Map<String, Integer> versions, Instant now) {
+        Order o = order;
+        holdoutOrder = heldOut;
+        if (holdoutOrder) holdoutOrders++;
+        // Inside the lift window (the holdout started 92 days ago) and old enough to have been delivered.
+        if (holdoutOrder && ageDays >= 4 && ageDays <= 88) recentHoldoutOrders++;
+        // Draw for every order, held out or not, so which customers the (randomly named) holdout picks never shifts
+        // the random sequence the rest of the history is drawn from: every other seeded outcome stays the same.
+        double splitDraw = rnd.nextDouble();
+        if (holdoutOrder && o.packages() == 1 && splitDraw < 0.25) o = split(o);
+
+        double snsConf = 0.55 + rnd.nextDouble() * 0.44;
+        double slaConf = 0.5 + rnd.nextDouble() * 0.49;
+        // About half of orders hit an exception that is classified; nearly a third of those land just above the act threshold.
+        double excDraw = rnd.nextDouble();
+        Double excConf = rnd.nextDouble() < 0.5 ? (excDraw < 0.3 ? EXCEPTION_ACT + rnd.nextDouble() * (EXCEPTION_PROPOSED_ACT - EXCEPTION_ACT)
+            : excDraw < 0.35 ? 0.35 + rnd.nextDouble() * 0.15 : EXCEPTION_PROPOSED_ACT + rnd.nextDouble() * 0.44) : null;
+        o = shapeOutcome(o, snsConf, slaConf, excConf, holdoutOrder, rnd);
+        if (o.delivered() && o.deliveredAt().isAfter(now.minus(Duration.ofHours(1)))) o = inTransit(o);
+        int slaScore = o.onTime() ? rnd.nextInt(2) : 2 + rnd.nextInt(3);
+
+        List<String> orderEpisodes = new ArrayList<>();
+        orderEpisodes.add(sourcingNodeScore(o, snsConf, versions.get("sourcing_node_score")));
+        orderEpisodes.add(slaBreachRisk(o, slaConf, slaScore, versions.get("sla_breach_risk"), rnd));
+        orderEpisodes.add(paymentRisk(o, versions.get("payment_risk"), rnd));
+        if (rnd.nextDouble() < 0.7) orderEpisodes.add(bandit(o, rnd));
+        if (o.cod()) orderEpisodes.add(rtoRisk(o, versions.get("rto_risk"), rnd));
+        if (excConf != null) orderEpisodes.add(exceptionClassify(o, excConf, versions.get("exception_classify"), rnd));
+        boolean addressChecked = ageDays >= 3 && ageDays <= 14 ? rnd.nextDouble() < 0.9 : rnd.nextDouble() < 0.12;
+        String addressEpisode = addressChecked ? addressRisk(o, versions.get("address_risk"), rnd) : null;
+
+        for (String ep : orderEpisodes) orderOutcomes(ep, o);
+        // Address-check outcomes stopped arriving for most recent orders (OC-07's silent data loss).
+        if (addressEpisode != null && (ageDays > 14 || rnd.nextDouble() < 0.5)) orderOutcomes(addressEpisode, o);
+        if (o.delivered() && o.returned()) returnRisk(o, versions.get("return_risk"), rnd, now);
+        feedLearners(o, now);
+        generated.add(o);
+    }
+
+    /**
+     * XP-01 / §12: the holdout is 5% of customers, picked by the live router's sticky hash of a random experiment id, so
+     * on some databases it holds too few orders for the perfect-order headline to be judged (30 per arm). Extra orders
+     * for holdout customers, spread over the 90 days and drawn from their own random sequence (the rest of the history
+     * is unchanged), top it up to {@link #MIN_HOLDOUT_ORDERS}. Labelled demo data like the rest.
+     */
+    private void topUpHoldout(java.util.function.Predicate<String> inHoldout, Map<String, Integer> versions, Instant now) {
+        if (holdoutExperimentId == null || recentHoldoutOrders >= MIN_HOLDOUT_ORDERS) return;
+        List<String> held = new ArrayList<>();
+        for (int c = 1; c <= CUSTOMERS; c++) {
+            String customer = String.format(Locale.ROOT, "cust-demo-%03d", c);
+            if (inHoldout.test(customer)) held.add(customer);
+        }
+        if (held.isEmpty()) return;
+        Random rnd = new Random(20261021L);
+        int missing = MIN_HOLDOUT_ORDERS - recentHoldoutOrders;
+        for (int k = 0; k < missing; k++) {
+            double ageDays = 6.0 + 80.0 * k / missing + rnd.nextDouble() * 0.5;
+            Order o = withId(order(k, now.minus(Duration.ofMinutes(Math.round(ageDays * 1440))), ageDays, rnd),
+                ORDER_PREFIX + String.format(Locale.ROOT, "h%03d", k + 1), held.get(k % held.size()));
+            emit(o, ageDays, true, rnd, versions, now);
+            holdoutTopUp++;
+        }
+    }
+
+    private static Order withId(Order o, String id, String customer) {
+        return new Order(id, o.at(), customer, o.channel(), o.shipMethod(), o.orderType(), o.node(), o.secondNode(), o.skuClass(), o.carrier(), o.zip3(),
+            o.packages(), o.units(), o.value(), o.cost(), o.delivered(), o.onTime(), o.lateByHours(), o.shippedAt(), o.deliveredAt(), o.eta(), o.wismo(),
+            o.chargeback(), o.cod(), o.refused(), o.returned(), o.storeRejected());
     }
 
     private Order order(int i, Instant at, double ageDays, Random rnd) {
@@ -420,8 +510,9 @@ public class SooDemoHistory {
                 Instant at = now.minus(Duration.ofDays(6 + g * 9L + k * 2L));
                 String rma = "rma-demo-golden-" + g + "-" + k;
                 insert(recordId("return_risk", rma), "return_risk", version, "return", rma, null, Layer.L1_SYSTEM_ONE, Band.CONFIRM, value, 0.72, input, List.of(), List.of(),
-                    details("T2", Map.of()), Map.of("human_resolution", Map.of("action", String.valueOf(value), "reasonCode", "confirmed_recommendation", "resolvedBy", "user:risk")),
+                    details("T2", Map.of()), Map.of("human_resolution", resolution(value, value, "confirmed_recommendation", "user:risk")),
                     at, SCORES, String.valueOf(value), 1.0);
+                labelledResolutions++;
             }
         }
         // 62-84 days ago: inside the override learner's 90-day window, outside the golden-set learner's 60 days (both
@@ -431,8 +522,132 @@ public class SooDemoHistory {
             Instant at = now.minus(Duration.ofDays(62 + k));
             String rma = "rma-demo-override-" + k;
             insert(recordId("return_risk", rma), "return_risk", version, "return", rma, null, Layer.L1_SYSTEM_ONE, Band.CONFIRM, 2, 0.66, repeat, List.of(), List.of(),
-                details("T2", Map.of()), Map.of("human_resolution", Map.of("action", "1", "reasonCode", "receipt_present_low_value", "resolvedBy", k % 2 == 0 ? "user:risk" : "user:cs")),
+                details("T2", Map.of()), Map.of("human_resolution", resolution(1, 2, "receipt_present_low_value", k % 2 == 0 ? "user:risk" : "user:cs")),
                 at, SCORES, "2", 1.0);
+            labelledResolutions++;
+        }
+    }
+
+    /**
+     * OC-06's label of a person's resolution, the shape {@code HumanResolutionCapture} writes on {@code task.completed}:
+     * the value chosen ({@code value}, repeated as {@code action} for readers of the earlier shape), what was clicked
+     * ({@code outcome}: accept when the value is the recommendation, else override), why, by whom, and the recommendation.
+     */
+    static Map<String, Object> resolution(Object value, Object recommended, String reasonCode, String resolvedBy) {
+        Map<String, Object> label = new LinkedHashMap<>();
+        label.put("value", String.valueOf(value));
+        label.put("action", String.valueOf(value));
+        label.put("outcome", String.valueOf(value).equals(String.valueOf(recommended)) ? "accept" : "override");
+        label.put("reasonCode", reasonCode);
+        label.put("resolvedBy", resolvedBy);
+        label.put("recommendedValue", String.valueOf(recommended));
+        return label;
+    }
+
+    /**
+     * DF-02: breach-risk scores a person was asked to confirm over the last 60 days, each a different order, labelled
+     * with the score the person chose. People agreed with about half of the barely-confident ones and most of the
+     * confident ones, so the calibration curve has three bins with enough cases (20 or more) to correct. Every input
+     * differs, so no golden-case or rule candidate forms from them.
+     */
+    private void breachEscalations(int version, Instant now) {
+        Random rnd = new Random(20261023L);
+        double[][] bins = {{0.50, 0.50}, {0.60, 0.62}, {0.70, 0.86}}; // {bin start, share of people who agreed}
+        for (int b = 0; b < bins.length; b++) {
+            for (int k = 0; k < 24; k++) {
+                String subject = String.format(Locale.ROOT, "demo-esc-%d%02d", b, k + 1);
+                double conf = round4(bins[b][0] + 0.005 + rnd.nextDouble() * 0.09);
+                int recommended = 1 + rnd.nextInt(3);
+                boolean agreed = rnd.nextDouble() < bins[b][1];
+                int chosen = agreed ? recommended : recommended + (recommended >= 3 || rnd.nextBoolean() && recommended > 0 ? -1 : 1);
+                Instant at = now.minus(Duration.ofHours(30 + rnd.nextInt(60 * 24)));
+                Map<String, Object> input = Map.of("order", Map.of("id", subject, "state", "released", "hours_in_state", 4 + rnd.nextInt(40),
+                    "promise_hours_remaining", 6 + rnd.nextInt(60), "ship_method", rnd.nextDouble() < 0.75 ? "ground" : "express"),
+                    "node", Map.of("backlog_units", 60 + rnd.nextInt(500), "reject_rate", round2(0.02 + rnd.nextDouble() * 0.1), "minutes_to_cutoff", 20 + rnd.nextInt(300)),
+                    "carrier", Map.of("on_time_rate_7d", round2(0.82 + rnd.nextDouble() * 0.12)));
+                String reason = agreed ? "confirmed_recommendation" : chosen > recommended ? "carrier_backlog_known" : "promise_still_reachable";
+                insert(recordId("sla_breach_risk", subject), "sla_breach_risk", version, "order", subject, subject, Layer.L1_SYSTEM_ONE, Band.CONFIRM, recommended, conf,
+                    input, List.of(), List.of(), details("T1", Map.of()), Map.of("human_resolution", resolution(chosen, recommended, reason, k % 3 == 0 ? "user:ops" : "user:admin")),
+                    at, SCORES, String.valueOf(recommended), 1.0);
+                labelledResolutions++;
+            }
+        }
+    }
+
+    /**
+     * FD-01 / FD-03: payment-risk decisions old enough that their chargeback window (120 days by default) has closed,
+     * so {@code FraudLabels.sampled} counts them: 180 orders aged 125 to 300 days, about a third inside the tuner's
+     * 30-day cohort. Fraud follows the velocity and linkage signals; each label comes from the real
+     * {@code FraudLabelCapture} reading a chargeback (fraud) or a delivery with no chargeback (not fraud). Orders the
+     * model flagged with a confidence just above its act threshold were mostly good customers, so the fraud threshold
+     * tuner finds a better threshold to propose. Only the fraud-label capture sees these events.
+     */
+    private void fraudCohort(int version, Instant now) {
+        Random rnd = new Random(20261024L);
+        for (int i = 0; i < FRAUD_COHORT; i++) {
+            String orderId = FRAUD_PREFIX + String.format(Locale.ROOT, "%04d", i + 1);
+            double ageDays = i % 3 == 0 ? 122.0 + rnd.nextDouble() * 26.0 : 152.0 + rnd.nextDouble() * 148.0;
+            Instant at = now.minus(Duration.ofMinutes(Math.round(ageDays * 1440)));
+            int v1 = rnd.nextDouble() < 0.6 ? 0 : rnd.nextDouble() < 0.6 ? 1 : 2 + rnd.nextInt(4);
+            int v24 = v1 + (rnd.nextDouble() < 0.5 ? 0 : 1 + rnd.nextInt(4));
+            int address = rnd.nextDouble() < 0.65 ? 0 : rnd.nextDouble() < 0.5 ? 1 : 2 + rnd.nextInt(5);
+            int device = rnd.nextDouble() < 0.7 ? 0 : rnd.nextDouble() < 0.5 ? 1 : 2 + rnd.nextInt(3);
+            int tokenCustomers = rnd.nextDouble() < 0.85 ? 1 : 2 + rnd.nextInt(3);
+            double risk = 0.01 + 0.05 * Math.min(v1, 4) + 0.03 * Math.min(v24, 6) + 0.06 * Math.min(address, 4) + 0.07 * Math.min(device, 3) + 0.08 * (tokenCustomers - 1);
+            boolean fraud = rnd.nextDouble() < clamp(risk, 0.01, 0.85);
+            double total = round2(40 + rnd.nextDouble() * 260);
+            Map<String, Object> payment = new LinkedHashMap<>();
+            payment.put("velocity_1h", v1);
+            payment.put("velocity_24h", v24);
+            payment.put("address_linkage_count", address);
+            payment.put("device_linkage_count", device);
+            payment.put("token_customer_count", tokenCustomers);
+            payment.put("billing_shipping_mismatch", address > 1 && rnd.nextDouble() < 0.5);
+            Map<String, Object> input = Map.of("order", Map.of("id", orderId, "total", total, "channel", CHANNELS.get(rnd.nextInt(CHANNELS.size()))),
+                "payment", payment, "agent", Map.of("mandate_present", false));
+            boolean clean = v1 == 0 && v24 <= 1 && address == 0 && device == 0 && tokenCustomers == 1;
+            String id = recordId("payment_risk", orderId);
+            if (clean) {
+                insert(id, "payment_risk", version, "order", orderId, orderId, Layer.L0_RULE, Band.ACT, false, 1.0, input, List.of("no_risk_signals"), List.of("no_risk_signals"),
+                    details("T2", Map.of()), Map.of(), at, BOOLS, "false", 1.0);
+            } else {
+                // Flagged: fraud mostly scores well above the act threshold; good customers cluster just above it.
+                boolean flagged = fraud ? rnd.nextDouble() < 0.85 : rnd.nextDouble() < 0.45;
+                double conf = round4(!flagged ? 0.6 + rnd.nextDouble() * 0.35 : fraud ? 0.9 + rnd.nextDouble() * 0.09 : 0.88 + rnd.nextDouble() * 0.06);
+                insert(id, "payment_risk", version, "order", orderId, orderId, Layer.L1_SYSTEM_ONE, band(conf, 0.9, 0.5), flagged, conf, input, List.of(),
+                    flagged ? List.of("high_risk_payment") : List.of(), details("T2", Map.of()), Map.of(), at, BOOLS, String.valueOf(flagged), 1.0);
+            }
+            fraudCohortRecords++;
+            // The label, from the real capture: a fraud chargeback a month after delivery, or a delivery nobody disputed.
+            Instant delivered = at.plus(Duration.ofDays(4));
+            Event e = fraud
+                ? new Event("evt-demo-" + orderId + "-chargeback", TenantContext.require(), "order", orderId, 0, "payment.chargeback",
+                    Map.of("orderId", orderId, "fraud", true, "amount", total, "reasonCode", "fraudulent"), Actor.system("demo-seed"), null, orderId, Map.of(), delivered.plus(Duration.ofDays(30)))
+                : new Event("evt-demo-" + orderId + "-delivered", TenantContext.require(), "order", orderId, 0, "order.delivered",
+                    Map.of("orderId", orderId, "onTime", true, "lateByHours", 0), Actor.system("demo-seed"), null, orderId, Map.of(), delivered);
+            fraudLabels.on(e);
+            eventCount++;
+        }
+    }
+
+    /**
+     * CX-02: storefront promise impressions for the history's orders. Each order was bought after seeing a promise with
+     * a buffer of 0, 1 or 2 days (its promise date is then that much later); for every purchase there are the
+     * impressions of shoppers who did not buy, more of them the longer the buffer. The promise-buffer learner joins
+     * them to the deliveries the history fed to the learners and weighs conversion against keeping the promise.
+     */
+    private void storefrontImpressions() {
+        Random rnd = new Random(20261025L);
+        for (Order o : generated) {
+            int buffer = rnd.nextInt(BUFFER_CONVERSION.length);
+            int promisedDays = ("express".equals(o.shipMethod()) ? 2 : 4) + buffer;
+            String segment = "channel:" + o.channel();
+            if (promiseConversions.record("imp-demo-" + o.id(), segment, o.id(), promisedDays, buffer, true, o.at())) promiseImpressions++;
+            double lost = (1 - BUFFER_CONVERSION[buffer]) / BUFFER_CONVERSION[buffer];
+            int missed = (int) lost + (rnd.nextDouble() < lost - (int) lost ? 1 : 0);
+            for (int k = 0; k < missed; k++) {
+                if (promiseConversions.record("imp-demo-" + o.id() + "-" + k, segment, null, promisedDays, buffer, false, o.at().minus(Duration.ofMinutes(5 + k)))) promiseImpressions++;
+            }
         }
     }
 
@@ -485,8 +700,9 @@ public class SooDemoHistory {
         feed(base + "-captured", o.id(), "order.captured", captured, o.at());
 
         List<Map<String, Object>> packages = new ArrayList<>();
-        packages.add(pkg(o.node(), o.skuClass(), o.eta()));
-        if (o.packages() > 1) packages.add(pkg(o.secondNode(), o.skuClass(), o.eta()));
+        String dayPart = dayPart(o.at());
+        packages.add(pkg(o.node(), o.carrier(), o.skuClass(), o.eta(), dayPart));
+        if (o.packages() > 1) packages.add(pkg(o.secondNode(), o.carrier(), o.skuClass(), o.eta(), dayPart));
         feed(base + "-sourced", o.id(), "order.sourced", Map.of("orderId", o.id(), "packages", packages, "destinationZip3", o.zip3(), "shipMethod", o.shipMethod()),
             o.at().plus(Duration.ofMinutes(3)));
         if (o.storeRejected()) feed(base + "-resourced", o.id(), "order.resourced", Map.of("orderId", o.id(), "rejectedNodes", List.of(o.node())), o.at().plus(Duration.ofHours(2)));
@@ -502,14 +718,27 @@ public class SooDemoHistory {
             Map.of("orderId", o.id(), "fraud", true, "amount", o.value(), "reasonCode", "fraudulent"), cbAt);
     }
 
-    private static Map<String, Object> pkg(String node, String skuClass, LocalDate eta) {
+    /**
+     * A package as {@code order.sourced} carries it. The stated on-time probability ({@code onTime}, the same before any
+     * learned correction: {@code onTimeBase}) is the node and carrier's nominal rate less {@link #STATED_HAIRCUT}; real
+     * orders also waited for confirmations and hit exceptions, so they arrived on time a few points less often than
+     * stated, which is the gap the lane calibration (CX-01) learns to correct.
+     */
+    static Map<String, Object> pkg(String node, String carrier, String skuClass, LocalDate eta, String dayPart) {
+        double stated = statedOnTime(node, carrier);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("nodeId", node);
         m.put("skuClass", skuClass);
         m.put("eta", eta.toString());
-        m.put("onTime", 0.9);
+        m.put("onTime", stated);
+        m.put("onTimeBase", stated);
+        m.put("dayPart", dayPart);
         m.put("backlogUnits", 40 + Math.abs(node.hashCode() % 300));
         return m;
+    }
+
+    static double statedOnTime(String node, String carrier) {
+        return round2(clamp(NODE_ON_TIME.get(node) * CARRIER_FACTOR.get(carrier) - STATED_HAIRCUT, 0.05, 0.99));
     }
 
     private void feed(String id, String orderId, String type, Map<String, Object> payload, Instant at) {
@@ -561,10 +790,8 @@ public class SooDemoHistory {
         return NODES.get(0);
     }
 
-    private static String dayPart(Instant at) {
-        int h = at.atZone(ZoneOffset.UTC).getHour();
-        return h < 12 ? "morning" : h < 17 ? "afternoon" : "evening";
-    }
+    /** FS-02: the one day-part definition, on the tenant's clock (tenant.timezone), as the live sourcing stamps it. */
+    private String dayPart(Instant at) { return ai.intentoms.learning.model.DayPart.of(at, zone); }
 
     private static double clamp(double v, double lo, double hi) { return Math.max(lo, Math.min(hi, v)); }
     private static double round2(double v) { return Math.round(v * 100) / 100.0; }

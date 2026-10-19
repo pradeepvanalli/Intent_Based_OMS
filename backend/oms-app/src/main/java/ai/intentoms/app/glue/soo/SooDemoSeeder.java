@@ -8,6 +8,7 @@ import ai.intentoms.learning.explain.WeeklyLearningDigestService;
 import ai.intentoms.learning.governance.GovernedLearner;
 import ai.intentoms.learning.governance.LearnerGovernance;
 import ai.intentoms.learning.governance.LearnerRegistry;
+import ai.intentoms.learning.governance.LiveFamilies;
 import ai.intentoms.learning.model.ArtifactRef;
 import ai.intentoms.learning.model.AutonomyLevel;
 import ai.intentoms.learning.model.Direction;
@@ -19,6 +20,7 @@ import ai.intentoms.learning.model.PolicyChange;
 import ai.intentoms.learning.model.PolicyChangeset;
 import ai.intentoms.learning.model.Proposal;
 import ai.intentoms.learning.model.ProposalStatus;
+import ai.intentoms.learning.model.WeightLever;
 import ai.intentoms.learning.promotion.PromotionService;
 import ai.intentoms.learning.service.CoverageMonitor;
 import ai.intentoms.learning.service.ObjectiveService;
@@ -44,7 +46,6 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -74,12 +75,15 @@ import java.util.concurrent.ConcurrentHashMap;
 public class SooDemoSeeder {
     private static final Logger log = LoggerFactory.getLogger(SooDemoSeeder.class);
     public static final String MARKER = "learning.demo_seed";
-    public static final int VERSION = 2;
+    /** 3: live-use ranges checked against the family domains (B-1), and reference data for the fraud, calibration, lane and buffer learners. */
+    public static final int VERSION = 3;
     static final String SEED = "system:demo-seed";
     /** Seeded promotions have no live evidence behind them; the EX-07 gate records this reason as the override. */
     static final String SEEDED_OVERRIDE = "Demo reference data: seeded promotion with no live evidence";
     static final String STRATEGY = "system:demo-seed.strategy";
     static final String ADMIN = "system:demo-seed.admin";
+    /** FS-04: a weight learner raises a hypothesis and the (template, no-LLM) Author drafts the WeightChange; seeded on its behalf. */
+    static final String TEMPLATE_AUTHOR = "system:demo-seed.template-author";
     /** A proposal the named learner would have drafted, written by the seeder on its behalf. */
     static String byLearner(String learnerKey) { return "system:demo-seed." + learnerKey; }
 
@@ -202,6 +206,8 @@ public class SooDemoSeeder {
         Instant now = Instant.now();
         List<String> warnings = new ArrayList<>();
         Map<String, Object> counts = new LinkedHashMap<>();
+        // What the seed deliberately left out, and why (GET /learning/seed-status lists it next to what was seeded).
+        List<Map<String, Object>> skipped = new ArrayList<>();
 
         Map<String, String> ids = new LinkedHashMap<>();
         // The holdout exists (back-dated) before the history, so the history is tagged by the live router's own assignment.
@@ -211,19 +217,23 @@ public class SooDemoSeeder {
         counts.put("decisionRecords", h.recordsByDecision());
         counts.put("learnerEventsFed", h.learnerEvents());
         counts.put("holdoutOrders", h.holdoutOrders());
+        counts.put("holdoutTopUpOrders", h.holdoutTopUp());
         counts.put("exceptionChecks", h.exceptionRecords());
+        counts.put("maturedPaymentRiskDecisions", h.fraudCohortRecords());
+        counts.put("labelledHumanResolutions", h.labelledResolutions());
+        counts.put("promiseImpressions", h.promiseImpressions());
         step(warnings, "rewards", () -> counts.put("rewardsComputed", rewards.sweepOnce()));
         step(warnings, "supplier receipts", () -> counts.put("supplierReceipts", supplierReceipts(now)));
         step(warnings, "stock age", () -> counts.put("agedPositions", ageStock(now)));
         step(warnings, "agent mandates", () -> counts.put("agentMandates", agentHistory(now)));
         step(warnings, "autonomy", this::autonomy);
 
-        step(warnings, "live use", () -> liveUse(ids));
+        step(warnings, "live use", () -> liveUse(ids, skipped));
         step(warnings, "decision threshold promoted", () -> promotedThreshold(ids, now));
         step(warnings, "weights rolled back", () -> rolledBackWeights(ids));
         step(warnings, "canary", () -> canary(ids));
         step(warnings, "approved", () -> approvedThreshold(ids));
-        step(warnings, "evaluated", () -> evaluatedLiveUse(ids));
+        step(warnings, "evaluated", () -> evaluatedLiveUse(ids, skipped));
         step(warnings, "rejected", () -> rejectedAppeasement(ids));
         step(warnings, "t0 shadow", () -> t0WithShadow(ids));
 
@@ -240,6 +250,7 @@ public class SooDemoSeeder {
         step(warnings, "digest", () -> ids.put("digest", digests.publish(7, SEED).digestId()));
 
         counts.putAll(tally());
+        counts.put("referenceFacts", referenceFacts());
         Map<String, Object> marker = new LinkedHashMap<>();
         marker.put("version", VERSION);
         marker.put("complete", true);
@@ -251,9 +262,11 @@ public class SooDemoSeeder {
             .param("t", TenantContext.require()).query(String.class).list());
         marker.put("demoActors", List.of(SEED, STRATEGY, ADMIN, byLearner("<learner>")));
         marker.put("pausedLearners", governance.states().stream().filter(s -> s.paused()).map(s -> Map.of("learnerKey", s.learnerKey(), "reason", s.pausedReason())).toList());
+        marker.put("skipped", skipped);
         if (!warnings.isEmpty()) marker.put("warnings", warnings);
         config.set(MARKER, marker);
         log.info("Self-optimizing demo data seeded for tenant {} in {} ms: {}", TenantContext.require(), marker.get("durationMs"), counts);
+        if (!skipped.isEmpty()) log.info("Self-optimizing demo seed left out: {}", skipped);
         if (!warnings.isEmpty()) log.warn("Self-optimizing demo seed warnings: {}", warnings);
         return marker;
     }
@@ -341,54 +354,98 @@ public class SooDemoSeeder {
 
     // ------------------------------------------------------------------ proposals in every status
 
-    /** PROMOTED live use: the node-reliability and lane-transit values reach live sourcing and promise decisions. */
-    private void liveUse(Map<String, String> ids) {
-        liveUseProposal(PROP_LIVE_NODE_REJECT, "sourcing.node_reject_rate", "node_reliability", 0.0, 0.5, 0.15,
-            "Use each node's learned reject rate in live sourcing instead of the static store default", true);
-        liveUseProposal(PROP_LIVE_NODE_ON_TIME, "sourcing.node_on_time_rate", "node_reliability", 0.5, 1.0, null,
-            "Give the sourcing score each node's observed on-time rate", true);
-        liveUseProposal(PROP_LIVE_LANE_TRANSIT, "promise.lane_transit_days", "lane_transit", 1.0, 8.0, 2.0,
-            "Promise dates from learned carrier-lane transit times, within two days of the static table", true);
-        liveUseProposal(PROP_LIVE_LANE_CALIBRATION, "promise.lane_calibration", "lane_transit", -0.2, 0.2, 0.05,
-            "Correct the stated on-time probability by each lane's observed calibration gap", true);
-        List<String> promoted = new ArrayList<>(List.of(PROP_LIVE_NODE_REJECT, PROP_LIVE_NODE_ON_TIME, PROP_LIVE_LANE_TRANSIT, PROP_LIVE_LANE_CALIBRATION));
-        // More learned values reach live decisions (each bounded by its range and max step); the bandit makes live
-        // sourcing explore, so new orders log real propensities for off-policy evaluation.
-        Object[][] more = {
+    /**
+     * PROMOTED live use: learned values reach live sourcing, promise, monitoring and payment-risk decisions, each bounded
+     * by a range in the family's own units (B-1, {@link LiveFamilies}). A family is switched on only when its range fits
+     * the family's domain and a learner feeding it has learned something; otherwise it is left off and listed under
+     * {@code skipped} with the reason. Warn-early is a 0-4 breach-risk score: a range of 1.5 to 3.5 keeps warnings for
+     * orders that are really at risk (0.3-0.9 once warned every order that scored 1, audit defect B-1).
+     */
+    private void liveUse(Map<String, String> ids, List<Map<String, Object>> skipped) {
+        Object[][] families = {
+            {PROP_LIVE_NODE_REJECT, "sourcing.node_reject_rate", "node_reliability", 0.0, 0.5, 0.15, "Use each node's learned reject rate in live sourcing instead of the static store default"},
+            {PROP_LIVE_NODE_ON_TIME, "sourcing.node_on_time_rate", "node_reliability", 0.5, 1.0, null, "Give the sourcing score each node's observed on-time rate"},
+            {PROP_LIVE_LANE_TRANSIT, "promise.lane_transit_days", "lane_transit", 1.0, 8.0, 2.0, "Promise dates from learned carrier-lane transit times, within two days of the static table"},
+            {PROP_LIVE_LANE_CALIBRATION, "promise.lane_calibration", "lane_transit", -0.3, 0.3, 0.3, "Correct the stated on-time probability by each lane's observed calibration gap"},
+            // The bandit makes live sourcing explore, so new orders log real propensities for off-policy evaluation.
             {"prop_demo_live_bandit", "sourcing.policy_bandit", "sourcing_policy_bandit", null, null, null, "Let the sourcing policy explorer try alternative policies on up to 10% of orders"},
             {"prop_demo_live_reject_penalty", "sourcing.reject_penalty", "node_reliability", 0.1, 2.0, 0.5, "Use each node's learned, decaying reject penalty when a store rejects"},
             {"prop_demo_live_customer_prefs", "customer.preferences", "ci_preference", null, null, null, "Give decisions each customer's learned preferences (split tolerance, speed vs cost, pickup, channel)"},
             {"prop_demo_live_backlog", "sourcing.node_backlog_breach", "node_backlog_breach", 0.0, 1.0, 0.2, "Steer orders away from nodes whose backlog is about to cause missed promises"},
-            {"prop_demo_live_warn_early", "monitoring.warn_early_threshold", "warn_early", 0.3, 0.9, 0.1, "Warn customers about a likely delay at the learned risk level"},
+            {"prop_demo_live_warn_early", "monitoring.warn_early_threshold", "warn_early", 1.5, 3.5, 1.0, "Warn customers about a likely delay at the learned breach-risk score (0-4)"},
             {"prop_demo_live_buffer", "promise.buffer_days", "promise_buffer", 0.0, 3.0, 1.0, "Add the learned promise buffer per customer segment"},
             {"prop_demo_live_fraud_signals", "fraud.signal_risk", "fraud_signals", 0.0, 1.0, 0.2, "Give the payment-risk check the learned fraud rate of each signal level"},
+            {"prop_demo_live_backorder", "inventory.backorder_conversion", "inventory_backorder", 0.0, 1.0, 0.2, "Give the backorder decision each option's learned conversion rate"},
         };
-        for (Object[] m : more) {
+        List<String> promoted = new ArrayList<>();
+        for (Object[] m : families) {
             try {
-                liveUseProposal((String) m[0], (String) m[1], (String) m[2], (Double) m[3], (Double) m[4], (Double) m[5], (String) m[6], true);
-                promoted.add((String) m[0]);
+                if (liveUseProposal((String) m[0], (String) m[1], (String) m[2], (Double) m[3], (Double) m[4], (Double) m[5], (String) m[6], true, skipped)) promoted.add((String) m[0]);
             } catch (RuntimeException e) {
                 log.warn("Demo live use of {} skipped: {}", m[1], e.getMessage());
+                skip(skipped, (String) m[1], "could not be promoted: " + e.getMessage());
             }
-        }
-        if (jdbc.sql("select count(*) from learned_fact where tenant_id = :t and fact_key = 'BACKORDER_CONVERSION_RATE' and valid_to is null")
-                .param("t", TenantContext.require()).query(Long.class).single() > 0) {
-            liveUseProposal("prop_demo_live_backorder", "inventory.backorder_conversion", "inventory_backorder", 0.0, 1.0, 0.2,
-                "Give the backorder decision each option's learned conversion rate", true);
-            promoted.add("prop_demo_live_backorder");
         }
         ids.put("promotedLiveUse", String.join(",", promoted));
     }
 
     /** EVALUATED live use, waiting for an approver (deliberately not live, so the "not promoted" path stays visible). */
-    private void evaluatedLiveUse(Map<String, String> ids) {
+    private void evaluatedLiveUse(Map<String, String> ids, List<Map<String, Object>> skipped) {
         liveUseProposal(PROP_LIVE_RESERVATION_TTL, "inventory.reservation_ttl", "inventory_reservation_ttl", 5.0, 1440.0, 60.0,
-            "Hold carts for the learned time before releasing their stock", false);
+            "Hold carts for the learned time before releasing their stock", false, skipped);
         ids.put("evaluated", PROP_LIVE_RESERVATION_TTL);
         ids.put("notLive", "inventory.reservation_ttl");
     }
 
-    private void liveUseProposal(String id, String family, String learner, Double min, Double max, Double maxStep, String reason, boolean promote) {
+    private static void skip(List<Map<String, Object>> skipped, String what, String reason) {
+        Map<String, Object> s = new LinkedHashMap<>();
+        s.put("item", what);
+        s.put("reason", reason);
+        skipped.add(s);
+    }
+
+    /**
+     * Why a family cannot be used live yet, if it cannot: no learner feeds it, or none of the learners that do has a
+     * current learned value. Batch learners feeding it are run once first (the main learner run comes later in the seed).
+     */
+    private Optional<String> missingEvidence(String family) {
+        List<GovernedLearner> feeders = learners.stream().filter(l -> l.descriptor().liveParameters().contains(family)).toList();
+        if (feeders.isEmpty()) return Optional.of("no learner feeds " + family);
+        List<String> keys = feeders.stream().map(l -> l.descriptor().key()).toList();
+        if (currentFacts(keys) > 0) return Optional.empty();
+        for (GovernedLearner l : feeders) {
+            if (!l.runnable()) continue;
+            try { l.runNow(); } catch (RuntimeException e) { log.warn("Demo seed: running {} for live-use evidence failed: {}", l.descriptor().key(), e.toString()); }
+        }
+        if (currentFacts(keys) > 0) return Optional.empty();
+        String names = String.join(" / ", feeders.stream().map(l -> l.descriptor().displayName()).toList());
+        return Optional.of(names + " has not learned any value yet, so there is nothing to use in live decisions");
+    }
+
+    private long currentFacts(List<String> learnerKeys) {
+        return jdbc.sql("select count(*) from learned_fact where tenant_id = :t and learner in (:keys) and valid_to is null")
+            .param("t", TenantContext.require()).param("keys", learnerKeys).query(Long.class).single();
+    }
+
+    /**
+     * Drafts (and, with {@code promote}, evaluates, approves and promotes) a live-use proposal. Returns false, with the
+     * reason added to {@code skipped}, when the range does not fit the family's domain or, for a promotion, when there is
+     * no learned value behind it.
+     */
+    private boolean liveUseProposal(String id, String family, String learner, Double min, Double max, Double maxStep, String reason, boolean promote,
+                                    List<Map<String, Object>> skipped) {
+        List<String> problems = LiveFamilies.validate(family, min, max, maxStep);
+        if (!problems.isEmpty()) {
+            skip(skipped, family, "range does not fit the family's values: " + String.join("; ", problems));
+            return false;
+        }
+        if (promote) {
+            Optional<String> missing = missingEvidence(family);
+            if (missing.isPresent()) {
+                skip(skipped, family, missing.get());
+                return false;
+            }
+        }
         Map<String, Object> to = new LinkedHashMap<>();
         to.put("enabled", true);
         to.put("learner", learner);
@@ -398,9 +455,10 @@ public class SooDemoSeeder {
         Proposal p = draft(id, new ArtifactRef("parameter", "live:" + family), 0,
             List.of(new PolicyChange.ParameterChange("live:" + family, Map.of("enabled", false), to)), reason, PolicyChangeset.RiskTier.T1, STRATEGY, null);
         evaluate(p);
-        if (!promote) return;
+        if (!promote) return true;
         approve(id, ADMIN);
         promotion.promote(id, Actor.parse(ADMIN), SEEDED_OVERRIDE);
+        return true;
     }
 
     /** PROMOTED decision change with rollback available: the node score acts a little sooner (replay shows confirm-band orders shipped later). */
@@ -419,18 +477,28 @@ public class SooDemoSeeder {
         ids.put("promotedDecision", PROP_SOURCING_THRESHOLD);
     }
 
-    /** ROLLED_BACK: a plan-weight change promoted, then reverted when on-time slipped in its first week. */
+    /**
+     * ROLLED_BACK: a plan-weight change promoted, then reverted when on-time slipped in its first week. As FS-04 works
+     * now, the sourcing weight learner raised a typed weight hypothesis ({@link WeightLever}) and the template Author
+     * (no LLM) drafted the {@code WeightChange} from it, so the proposal is the Author's.
+     */
     private void rolledBackWeights(Map<String, String> ids) {
         if (config.get(SourcingConfigKeys.WEIGHTS).isEmpty()) {
             config.set(SourcingConfigKeys.WEIGHTS, Map.of("cost", SourcingConfigKeys.DEFAULT_W_COST, "time", SourcingConfigKeys.DEFAULT_W_TIME,
                 "soft", SourcingConfigKeys.DEFAULT_W_SOFT, "split", SourcingConfigKeys.DEFAULT_W_SPLIT));
         }
-        String hyp = hypothesis("hyp_demo_sourcing_weights", Map.of("target", "config:sourcing.weights"), "reward", Direction.INCREASE,
-            Map.of("action", "reweight", "target", "config:sourcing.weights"),
+        Map<String, Double> current = new LinkedHashMap<>();
+        current.put("cost", SourcingConfigKeys.DEFAULT_W_COST);
+        current.put("time", SourcingConfigKeys.DEFAULT_W_TIME);
+        current.put("soft", SourcingConfigKeys.DEFAULT_W_SOFT);
+        current.put("split", SourcingConfigKeys.DEFAULT_W_SPLIT);
+        Map<String, Double> proposed = new LinkedHashMap<>(current);
+        proposed.put("cost", 0.45);
+        WeightLever lever = new WeightLever(SourcingConfigKeys.WEIGHTS, current, proposed, Map.of("cost", 0.21, "time", 0.08, "soft", 0.02, "split", -0.05), 312, 90);
+        String hyp = hypothesis("hyp_demo_sourcing_weights", Map.of("target", lever.target()), "reward", Direction.INCREASE, lever.toLever(),
             List.of("cost component vs reward correlation 0.21", "time component vs reward correlation 0.08"), "Plan-score weights should follow the components that go with better outcomes.");
-        Proposal p = draft(PROP_WEIGHTS, new ArtifactRef("config", SourcingConfigKeys.WEIGHTS), 0,
-            List.of(new PolicyChange.WeightChange(SourcingConfigKeys.WEIGHTS, "cost", SourcingConfigKeys.DEFAULT_W_COST, 0.45)),
-            "Weigh cost a little more in the sourcing plan score", PolicyChangeset.RiskTier.T1, byLearner("sourcing_weights"), hyp);
+        Proposal p = draft(PROP_WEIGHTS, new ArtifactRef("config", SourcingConfigKeys.WEIGHTS), 0, lever.changes(),
+            "Weigh cost a little more in the sourcing plan score", PolicyChangeset.RiskTier.T1, TEMPLATE_AUTHOR, hyp);
         evaluate(p);
         approve(PROP_WEIGHTS, STRATEGY);
         promotion.promote(PROP_WEIGHTS, Actor.parse(ADMIN), SEEDED_OVERRIDE);
@@ -522,7 +590,7 @@ public class SooDemoSeeder {
 
     /** XP-07: an objective drafted by the strategy lead and approved by the admin, with a peak-season freeze window ahead. */
     private void objective(Map<String, String> ids) {
-        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        LocalDate today = LocalDate.now(ai.intentoms.learning.model.DayPart.zone(config)); // the tenant's own calendar (tenant.timezone)
         Map<String, Object> constraints = new LinkedHashMap<>();
         constraints.put("freezeWindows", List.of(Map.of("from", today.plusDays(37).toString(), "to", today.plusDays(44).toString(), "reason", "Peak season: no automatic changes")));
         constraints.put("marginFloorPct", 0.18);
@@ -591,6 +659,22 @@ public class SooDemoSeeder {
         m.put("hypotheses", jdbc.sql("select count(*) from hypothesis where tenant_id = :t").param("t", t).query(Long.class).single());
         m.put("experiments", jdbc.sql("select count(*) from experiment where tenant_id = :t").param("t", t).query(Long.class).single());
         m.put("segments", jdbc.sql("select count(*) from segment where tenant_id = :t").param("t", t).query(Long.class).single());
+        return m;
+    }
+
+    /**
+     * What the learners made of the reference data, by fact: fraud rates per signal level (FD-01), the tuner's
+     * false-positive rate and draft (FD-03), confidence curves (DF-02), lane corrections (CX-01), promise buffers (CX-02),
+     * aged stock (IU-03) and the warn-early level (CX-03).
+     */
+    private Map<String, Object> referenceFacts() {
+        String t = TenantContext.require();
+        Map<String, Object> m = new LinkedHashMap<>();
+        for (String key : List.of("FRAUD_SIGNAL_RATE", "FALSE_POSITIVE_RATE", "CALIBRATION_CURVE", "LANE_CALIBRATION_OFFSET", "PROMISE_BUFFER_DAYS", "STOCK_AGE_DAYS",
+                "WARN_EARLY_THRESHOLD")) {
+            m.put(key, jdbc.sql("select count(*) from learned_fact where tenant_id = :t and fact_key = :k and valid_to is null").param("t", t).param("k", key).query(Long.class).single());
+        }
+        m.put("fraudTunerDrafts", jdbc.sql("select count(*) from proposal where tenant_id = :t and created_by = 'system:fraud_threshold_tuner'").param("t", t).query(Long.class).single());
         return m;
     }
 
