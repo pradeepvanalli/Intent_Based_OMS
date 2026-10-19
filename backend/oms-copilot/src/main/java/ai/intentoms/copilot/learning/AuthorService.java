@@ -48,13 +48,16 @@ import java.util.Optional;
  *
  * <p>Without a model key, or once the monthly learning budget is spent, the {@link TemplateAuthor} writes what a
  * hypothesis states precisely (a rule people agreed on, a rule to retire, an abuse rule, an allow-list change), labelled
- * as template output. The model is always preferred when it is available.
+ * as template output. The model is always preferred when it is available, except for changes a hypothesis states
+ * exactly: allow-list changes and plan-score weight changes (FS-04) are written as stated in either case.
  */
 @Service
 public class AuthorService {
     private static final Logger log = LoggerFactory.getLogger(AuthorService.class);
     private static final String FEATURE = "learning_author";
     private static final String PROMPT = "system-author.md";
+    /** Who LLM-drafted proposals and prompt versions are attributed to (DF-06). */
+    public static final String ACTOR = "system:author";
     /** AllowListChange must never let refund/cancel into an autonomous allow-list — same hard rule as the Control Tower. */
     private static final List<String> NEVER_AUTONOMOUS = List.of("refund", "cancel");
 
@@ -97,6 +100,8 @@ public class AuthorService {
         Hypothesis h = hypotheses.find(hypothesisId).orElseThrow(() -> new ValidationException("Hypothesis " + hypothesisId + " not found"));
         if (h.status() != Hypothesis.Status.OPEN) return Optional.empty();
         if (TemplateAuthor.allowList(h)) return template.draft(h); // a config list change: exact, no model needed
+        // FS-04: a weight hypothesis states exact numbers its learner derived and replays; there is nothing for a model to add.
+        if (ai.intentoms.learning.model.WeightLever.of(h).isPresent()) return template.draft(h);
         if (!llm.available()) { log.info("Author: no copilot model key configured, using the template author"); return template.draft(h); }
         String leverTarget = leverTarget(h);
         ArtifactRef ref;
@@ -143,10 +148,12 @@ public class AuthorService {
         PolicyChangeset.RiskTier tier = PolicyChangeset.RiskTier.valueOf(live.tier().name()); // the decision's own tier, never the model's claim
         PolicyChangeset changeset = new PolicyChangeset(new ArtifactRef("decision", live.name()), live.version(), changes, out.path("motivatedBy").asText(h.rationale()), tier);
 
-        Proposal p = new Proposal(Ids.prefixed("prop"), changeset, hypothesisId, tier, ProposalStatus.DRAFT, null, null, "system:author", Instant.now(), Instant.now(),
+        Proposal p = new Proposal(Ids.prefixed("prop"), changeset, hypothesisId, tier, ProposalStatus.DRAFT, null, null, ACTOR, Instant.now(), Instant.now(),
             null, null, null, null, null, null, null, null);
         proposals.insert(p);
         hypotheses.updateStatus(hypothesisId, Hypothesis.Status.DRAFTED);
+        // DF-06: the agreed guidance also goes to the prompt as a draft version, attributed to this author.
+        if ("add_rule".equals(h.lever().get("action")) && h.lever().get("when") != null && h.lever().get("suggestedThen") != null) template.draftPromptGuidance(h, live, ACTOR);
         audit.record("author", FEATURE, "hypothesis", hypothesisId, LearningSchemas.CHANGESET, PROMPT, prompt, "ok", p.proposalId());
         // proposal.drafted is recorded by ProposalRepository.insert (GV-04); the schema hash is on the audit row above.
         return Optional.of(p);

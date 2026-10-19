@@ -2,6 +2,7 @@ package ai.intentoms.sourcing.plan;
 
 import ai.intentoms.decision.model.DecisionOptions;
 import ai.intentoms.decision.model.DecisionResult;
+import ai.intentoms.decision.model.Mode;
 import ai.intentoms.decision.runtime.DecisionService;
 import ai.intentoms.learning.governance.ParameterResolver;
 import ai.intentoms.learning.hooks.NodeReliabilityFeatures;
@@ -99,7 +100,8 @@ public class DefaultSourcingService implements SourcingService {
     private static final Set<String> INACTIVE_GROUP = Set.of("rejected", "cancelled", "shipped", "delivered", "picked_up");
     private static final Logger log = LoggerFactory.getLogger(DefaultSourcingService.class);
 
-    private record Run(Order order, SourcingRequest req, List<Candidate> candidates, SoftScorer.SoftScores soft, List<SourcingPlan> plans, Map<String, Double> loadShift) {
+    private record Run(Order order, SourcingRequest req, List<Candidate> candidates, SoftScorer.SoftScores soft, List<SourcingPlan> plans, Map<String, Double> loadShift,
+                       String fulfillmentGroupId) {
         boolean empty() { return plans.isEmpty(); }
     }
 
@@ -161,14 +163,15 @@ public class DefaultSourcingService implements SourcingService {
     @Override
     public List<SourcingPlan> options(String orderId) {
         Order order = orders.get(orderId);
-        return asSubject(order, () -> metrics.time("oms.sourcing.options", () -> bestPerPolicy(run(order, Set.of(), Actor.parse(authz.actorRef())).plans())));
+        // E-1: read-only (CS screen, replays, re-promise previews): scored in SHADOW mode, never a LIVE record or episode.
+        return asSubject(order, () -> metrics.time("oms.sourcing.options", () -> bestPerPolicy(run(order, Set.of(), Actor.parse(authz.actorRef()), Mode.SHADOW, null).plans())));
     }
 
     @Override
     @Transactional
     public SourcingResult source(String orderId, Actor actor) {
         Order order = orders.get(orderId);
-        return asSubject(order, () -> metrics.time("oms.sourcing.source", () -> sourceInternal(order, Set.of(), actor, new ArrayList<>())));
+        return asSubject(order, () -> metrics.time("oms.sourcing.source", () -> sourceInternal(order, Set.of(), actor, new ArrayList<>(), null)));
     }
 
     /**
@@ -220,7 +223,8 @@ public class DefaultSourcingService implements SourcingService {
             Order updated = orders.update(order.withFulfilmentGroups(groups).withLines(lines));
             List<String> reasons = new ArrayList<>();
             reasons.add("re-sourced after reject at " + rejectedNodes + ": " + reason);
-            SourcingResult result = sourceInternal(updated, rejectedNodes, actor, reasons);
+            // OC-02: the re-sourcing decision is about the rejected group, so its episode is that group's.
+            SourcingResult result = sourceInternal(updated, rejectedNodes, actor, reasons, rejectedIds.iterator().next());
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("reason", reason == null ? "" : reason);
             payload.put("rejectedNodes", List.copyOf(rejectedNodes));
@@ -238,13 +242,13 @@ public class DefaultSourcingService implements SourcingService {
 
     // ---- the run ----------------------------------------------------------------------------------------------------
 
-    private Run run(Order order, Set<String> excluded, Actor actor) {
+    private Run run(Order order, Set<String> excluded, Actor actor, Mode mode, String fulfillmentGroupId) {
         SourcingRequest.Constraints constraints = constraintsFor(order).excluding(excluded);
         SourcingRequest req = SourcingRequest.from(order, constraints);
         List<Candidate> cands = candidates.generate(req, 0);
-        if (cands.isEmpty()) return new Run(order, req, cands, SoftScorer.SoftScores.neutral("no candidates"), List.of(), Map.of());
+        if (cands.isEmpty()) return new Run(order, req, cands, SoftScorer.SoftScores.neutral("no candidates"), List.of(), Map.of(), fulfillmentGroupId);
         RateCard card = rates.current();
-        SoftScorer.SoftScores soft = softScorer.score(req, cands, card, actor);
+        SoftScorer.SoftScores soft = softScorer.score(req, cands, card, actor, mode, fulfillmentGroupId);
         Map<String, Double> softMap = new LinkedHashMap<>();
         double floor = SoftScorer.floorScore(soft.byNode());
         for (Candidate c : cands) softMap.put(c.nodeId(), soft.byNode().getOrDefault(c.nodeId(), floor));
@@ -270,7 +274,7 @@ public class DefaultSourcingService implements SourcingService {
         }
         if (plans.isEmpty()) plans = build(req, cands, card, softMap, now, penalties, calibration, soft);
         if (!loadShift.isEmpty()) plans = plans.stream().map(p -> p.withExplain("loadShift", loadShift)).toList();
-        return new Run(order, req, cands, soft, plans, loadShift);
+        return new Run(order, req, cands, soft, plans, loadShift, fulfillmentGroupId);
     }
 
     private List<SourcingPlan> build(SourcingRequest req, List<Candidate> cands, RateCard card, Map<String, Double> softMap, Instant now, PenaltyLookup penalties,
@@ -306,8 +310,8 @@ public class DefaultSourcingService implements SourcingService {
         return out;
     }
 
-    private SourcingResult sourceInternal(Order order, Set<String> excluded, Actor actor, List<String> reasons) {
-        Run run = run(order, excluded, actor);
+    private SourcingResult sourceInternal(Order order, Set<String> excluded, Actor actor, List<String> reasons, String fulfillmentGroupId) {
+        Run run = run(order, excluded, actor, Mode.LIVE, fulfillmentGroupId);
         Instant now = time.now();
         if (run.empty()) {
             Map<String, Object> payload = new LinkedHashMap<>();
@@ -410,9 +414,10 @@ public class DefaultSourcingService implements SourcingService {
             if (baseByNode.containsKey(pk.nodeId())) m.put("onTimeBase", baseByNode.get(pk.nodeId()));
             Candidate cand = candidateByNode.get(pk.nodeId());
             if (cand != null) {
-                // FS-02: the date the package must leave the node (today in its zone, or tomorrow past its cutoff), and the node-local day part.
+                // FS-02: the date the package must leave the node (today in its zone, or tomorrow past its cutoff), and the
+                // day part on the tenant's clock, the same one the decision read its node facts under.
                 m.put("shipBy", String.valueOf(Transit.today(cand.node(), now).plusDays(Transit.cutoffDelayDays(cand.node(), now))));
-                m.put("dayPart", NodeReliabilityLearner.dayPart(now, Transit.zone(cand.node())));
+                m.put("dayPart", ai.intentoms.learning.model.DayPart.of(now, config));
             }
             return m;
         }).toList());
@@ -659,6 +664,7 @@ public class DefaultSourcingService implements SourcingService {
         input.put("customer", cust);
         input.put("plan_options", options);
         input.put("chosen_plan", Map.of("margin", chosen.pnl().marginRatio(), "packages", chosen.packageCount()));
+        if (run.fulfillmentGroupId() != null) input.put("fulfillmentGroupId", run.fulfillmentGroupId()); // OC-02: re-sourcing one group
         return input;
     }
 

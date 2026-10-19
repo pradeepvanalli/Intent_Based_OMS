@@ -10,6 +10,7 @@ import ai.intentoms.learning.model.PolicyChange;
 import ai.intentoms.learning.model.PolicyChangeset;
 import ai.intentoms.learning.model.Proposal;
 import ai.intentoms.learning.model.ProposalStatus;
+import ai.intentoms.learning.model.WeightLever;
 import ai.intentoms.learning.promotion.ChangesetApplier;
 import ai.intentoms.learning.store.HypothesisRepository;
 import ai.intentoms.learning.store.ProposalRepository;
@@ -39,7 +40,10 @@ import java.util.Optional;
  *       payments to that address; a channel with concentrated fraud ({@code lever: ruleAdd}, scope {@code channel}) one
  *       that sends that channel's orders to a person;</li>
  *   <li>an allow-list change ({@code lever: allowListChange} with {@code listName}, {@code entry}, {@code add}) becomes an
- *       {@code AllowListChange}, never adding refund or cancel to an autonomous list.</li>
+ *       {@code AllowListChange}, never adding refund or cancel to an autonomous list;</li>
+ *   <li>a weight hypothesis ({@link WeightLever}, FS-04) becomes {@code WeightChange}s on {@code config:<key>} when it
+ *       starts from the weights in force, evaluated with the evidence its learner produces (the sourcing weights'
+ *       {@code plan_rescoring_replay}).</li>
  * </ul>
  * Every changeset is checked like the LLM author's: it must name the live artifact's real state and lint clean once
  * applied. Anything else is left for the LLM author or a person.
@@ -55,19 +59,25 @@ public class TemplateAuthor {
     private final HypothesisRepository hypotheses;
     private final ProposalRepository proposals;
     private final PromptVersionService prompts;
+    private final List<WeightLever.Evidence> weightEvidence;
+    private final ai.intentoms.learning.event.LearningEvents events;
 
     public TemplateAuthor(DecisionStudioService studio, DecisionDefinitionRepository definitions, HypothesisRepository hypotheses, ProposalRepository proposals,
-                          PromptVersionService prompts) {
+                          PromptVersionService prompts, List<WeightLever.Evidence> weightEvidence, ai.intentoms.learning.event.LearningEvents events) {
         this.studio = studio;
         this.definitions = definitions;
         this.hypotheses = hypotheses;
         this.proposals = proposals;
         this.prompts = prompts;
+        this.weightEvidence = weightEvidence == null ? List.of() : weightEvidence;
+        this.events = events;
     }
 
     public Optional<Proposal> draft(Hypothesis h) {
         if (h.status() != Hypothesis.Status.OPEN) return Optional.empty();
         if (allowList(h)) return draftAllowList(h);
+        Optional<WeightLever> weights = WeightLever.of(h);
+        if (weights.isPresent()) return draftWeights(h, weights.get());
         String target = AuthorService.leverTarget(h);
         if (target == null) return Optional.empty();
         ArtifactRef ref;
@@ -90,7 +100,7 @@ public class TemplateAuthor {
             null, null, null, null, null, null, null, null);
         proposals.insert(p);
         hypotheses.updateStatus(h.hypothesisId(), Hypothesis.Status.DRAFTED);
-        if ("add_rule".equals(h.lever().get("action"))) draftPromptGuidance(h, live);
+        if ("add_rule".equals(h.lever().get("action"))) draftPromptGuidance(h, live, ACTOR);
         log.info("Template author drafted {} from hypothesis {}: {}", p.proposalId(), h.hypothesisId(), changes);
         return Optional.of(p);
     }
@@ -138,8 +148,41 @@ public class TemplateAuthor {
         return Optional.of(p);
     }
 
-    /** DF-06: a draft prompt version for the main question that states the guidance people agreed on. */
-    private void draftPromptGuidance(Hypothesis h, DecisionDefinition live) {
+    /**
+     * FS-04: a weight hypothesis becomes {@code WeightChange}s (T1) on {@code config:<key>}, evaluated with the
+     * {@code plan_rescoring_replay} its learner produces. Refused when no learner owns the key, when a proposal on it is
+     * already open, or when the weights it starts from are no longer the ones in force (hallucinated-lever guard).
+     */
+    private Optional<Proposal> draftWeights(Hypothesis h, WeightLever lever) {
+        WeightLever.Evidence evidence = weightEvidence.stream().filter(e -> e.supports(lever.configKey())).findFirst().orElse(null);
+        if (evidence == null || proposals.existsOpenFor(lever.target())) return Optional.empty();
+        Map<String, Double> live = evidence.liveWeights();
+        boolean fromLive = lever.current().entrySet().stream().allMatch(e -> live.get(e.getKey()) != null && Math.abs(live.get(e.getKey()) - e.getValue()) < 1e-4);
+        if (!fromLive) {
+            log.info("Template author: weight hypothesis {} starts from {} but {} is now {}; rejected", h.hypothesisId(), lever.current(), lever.configKey(), live);
+            hypotheses.updateStatus(h.hypothesisId(), Hypothesis.Status.REJECTED);
+            return Optional.empty();
+        }
+        List<PolicyChange> changes = lever.changes();
+        if (changes.isEmpty()) return Optional.empty();
+        Instant now = Instant.now();
+        PolicyChangeset changeset = new PolicyChangeset(new ArtifactRef("config", lever.configKey()), 0, changes, "Template author (no LLM): " + h.rationale(), PolicyChangeset.RiskTier.T1);
+        Proposal p = new Proposal(Ids.prefixed("prop"), changeset, h.hypothesisId(), PolicyChangeset.RiskTier.T1, ProposalStatus.DRAFT, null, null, ACTOR, now, now,
+            null, null, null, null, null, null, null, null);
+        proposals.insert(p);
+        hypotheses.updateStatus(h.hypothesisId(), Hypothesis.Status.DRAFTED);
+        Map<String, Object> report = evidence.report(lever.current(), lever.proposed());
+        proposals.markEvaluated(p.proposalId(), report, now);
+        events.proposalEvaluated(p.proposalId(), ai.intentoms.platform.ledger.Actor.system("template-author"), report);
+        log.info("Template author drafted {} from weight hypothesis {}: {} (replay lift {})", p.proposalId(), h.hypothesisId(), changes, report.get("liftEstimate"));
+        return proposals.find(p.proposalId()).or(() -> Optional.of(p));
+    }
+
+    /**
+     * DF-06: a draft prompt version for the main question that states the guidance people agreed on, attributed to the
+     * author that wrote it ({@code system:template-author} or {@code system:author}).
+     */
+    void draftPromptGuidance(Hypothesis h, DecisionDefinition live, String author) {
         try {
             var main = live.main().orElse(null);
             String question = live.questions().entrySet().stream().filter(e -> e.getValue() == main).map(Map.Entry::getKey).findFirst().orElse(null);
@@ -147,7 +190,8 @@ public class TemplateAuthor {
             String base = main.effectiveInstructions() == null ? "" : main.effectiveInstructions().strip();
             String guidance = "Reviewers agreed (" + h.lever().getOrDefault("resolutions", "several") + " cases, " + pct(h.lever().get("agreement")) + "): when "
                 + h.lever().get("when") + ", the answer is \"" + h.lever().get("suggestedThen") + "\".";
-            prompts.draft(live.name(), question, base + "\n" + guidance, "Template author from hypothesis " + h.hypothesisId(), null);
+            String by = ACTOR.equals(author) ? "Template author" : "Author";
+            prompts.draft(live.name(), question, base + "\n" + guidance, by + " from hypothesis " + h.hypothesisId(), null, author);
         } catch (RuntimeException e) {
             log.info("Template author: no prompt draft for {}: {}", h.hypothesisId(), e.getMessage());
         }

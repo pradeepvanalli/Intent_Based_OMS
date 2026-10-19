@@ -109,6 +109,56 @@ class SelfOptimizingSourcingIntegrationTest extends SourcingTestBase {
         assertThat(aged.plan().explain()).containsKey("agedStockTieBreak");
     }
 
+    @Autowired ai.intentoms.learning.service.ObjectiveService objectiveService;
+    @Autowired DefaultSourcingService sourcingImpl;
+
+    private void liveObjective(double cost, double inv) {
+        var draft = objectiveService.draft(new ai.intentoms.learning.model.ObjectiveWeights(1, 1, cost, 1, 1, 1, inv), Map.of(), "user:strategy", null, "manual", Map.of());
+        objectiveService.approve(draft.version(), "user:approver");
+    }
+
+    /**
+     * IU-03: the cost the tie-break will pay to ship older stock is the reward's own trade-off: the base tolerance
+     * ({@code sourcing.aged_stock_tiebreak_cost_pct}) times the live objective's aged-stock weight over its cost weight.
+     * A plan a few percent dearer is taken only once the objective values aged-stock relief enough, and never at weight 0.
+     */
+    @Test
+    void agedStockToleranceScalesWithTheObjectivesAgedStockWeight() {
+        stock("TEE-BLK-M", "DC-TX", 50); stock("TEE-BLK-M", "ST-AUS-03", 50);
+        facts.number(SubjectType.SKU_NODE, "TEE-BLK-M|ST-AUS-03", FactKey.STOCK_AGE_DAYS, 200, 10, "stock_age", 0.5);
+        factCache.invalidateAll();
+        parameters.promote(DefaultSourcingService.AGED_STOCK_PARAMETER, "stock_age", null, null, null, null, "test");
+
+        // How much dearer the aged-stock plan is: the cheapest plan without the tie-break, the aged one with any tolerance.
+        config.set(DefaultSourcingService.AGED_STOCK_COST_PCT, 0.0);
+        double cheapest = sourcing.source(order("marketplace", null, DALLAS, line("L1", "TEE-BLK-M", 1, 28, 7.5)).id(), actor).plan().totalCost().amount().doubleValue();
+        config.set(DefaultSourcingService.AGED_STOCK_COST_PCT, 5.0);
+        SourcingResult anyCost = sourcing.source(order("marketplace", null, DALLAS, line("L1", "TEE-BLK-M", 1, 28, 7.5)).id(), actor);
+        assertThat(anyCost.plan().packages().get(0).nodeId()).isEqualTo("ST-AUS-03");
+        double gap = anyCost.plan().totalCost().amount().doubleValue() / cheapest - 1;
+        assertThat(gap).as("the aged-stock plan costs more").isPositive();
+
+        // Base tolerance two thirds of the gap: a balanced objective (aged stock weighs as much as cost) keeps the cheaper plan.
+        double base = gap / 1.5;
+        config.set(DefaultSourcingService.AGED_STOCK_COST_PCT, base);
+        assertThat(sourcingImpl.agedStockTolerance()).isCloseTo(base, within(1e-9));
+        assertThat(sourcing.source(order("marketplace", null, DALLAS, line("L1", "TEE-BLK-M", 1, 28, 7.5)).id(), actor).plan().packages().get(0).nodeId()).isEqualTo("DC-TX");
+
+        // Aged stock weighted twice cost: the tolerance doubles past the gap and the older stock ships.
+        liveObjective(1.0, 2.0);
+        assertThat(sourcingImpl.agedStockTolerance()).isCloseTo(2 * base, within(1e-9));
+        SourcingResult aged = sourcing.source(order("marketplace", null, DALLAS, line("L1", "TEE-BLK-M", 1, 28, 7.5)).id(), actor);
+        assertThat(aged.plan().packages().get(0).nodeId()).isEqualTo("ST-AUS-03");
+        Map<?, ?> tieBreak = (Map<?, ?>) aged.plan().explain().get("agedStockTieBreak");
+        assertThat(((Number) tieBreak.get("costTolerance")).doubleValue()).isCloseTo(2 * base, within(1e-9));
+
+        // Aged stock not valued at all: no tolerance, whatever the base.
+        liveObjective(1.0, 0.0);
+        config.set(DefaultSourcingService.AGED_STOCK_COST_PCT, 5.0);
+        assertThat(sourcingImpl.agedStockTolerance()).isZero();
+        assertThat(sourcing.source(order("marketplace", null, DALLAS, line("L1", "TEE-BLK-M", 1, 28, 7.5)).id(), actor).plan().packages().get(0).nodeId()).isEqualTo("DC-TX");
+    }
+
     @Test
     void promiseUsesLearnedLaneTransitCalibrationAndBufferOnlyWhenPromoted() {
         stock("TEE-BLK-M", "DC-NJ", 50);

@@ -77,8 +77,21 @@ public class LaneKnowledge {
     public double calibration(String service, String nodeId, String zip3) {
         try {
             String carrier = carrierFor(service, nodeId);
-            if (carrier == null) return 0.0;
-            for (String lane : LaneDeliveryLearner.lanesFor(carrier, service, nodeId, zip3)) {
+            return carrier == null ? 0.0 : servedCorrection(LaneDeliveryLearner.laneKey(carrier, service, nodeId, zip3));
+        } catch (RuntimeException e) {
+            return 0.0;
+        }
+    }
+
+    /**
+     * CX-01: the correction served now on a lane ({@code carrier|service|node[|zip3]}): the exact lane's learned offset,
+     * else the carrier x service x origin lane's, through {@link ParameterResolver} (0 while not promoted).
+     */
+    public double servedCorrection(String laneKey) {
+        try {
+            String[] p = laneKey.split("\\|");
+            if (p.length < 3) return 0.0;
+            for (String lane : LaneDeliveryLearner.lanesFor(p[0], p[1], p[2], p.length > 3 ? p[3] : null)) {
                 Optional<LearnedFact> f = facts.active(SubjectType.LANE, lane, FactKey.LANE_CALIBRATION_OFFSET)
                     .filter(x -> x.sampleSize() >= MIN_CALIBRATION_SAMPLES && x.value() instanceof TypedValue.NumberValue);
                 if (f.isPresent()) return parameters.resolve(LaneDeliveryLearner.CALIBRATION_PARAMETER, 0.0, ((TypedValue.NumberValue) f.get().value()).value());

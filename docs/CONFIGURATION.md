@@ -121,6 +121,7 @@ Values are JSON. Strings written through the API are plain JSON strings. Default
 | `sourcing.backorder_lead_days` | 14 | Promise offset when nothing is in stock |
 | `sourcing.order_type_constraints` | from `order-types.yaml` | `{orderType: {nodeTypes, capabilities, maxDistanceKm, allowBackorder, includeInbound}}` |
 | `sourcing.reject_penalty` | 0.3 | Penalty added to node+SKU on a store reject or timeout |
+| `sourcing.aged_stock_tiebreak_cost_pct` | 0.03 | IU-03 base cost tolerance of the aged-stock tie-break (only while `sourcing.aged_stock_tiebreak` is promoted). The tolerance applied is this base × the live objective's aged-stock weight ÷ its cost weight: a same-policy plan that ships older stock, keeps the margin floor and is no later is preferred when it costs at most that much more. Balanced weights → the base; aged stock weighted 2× cost → twice the base; aged-stock weight 0 → never |
 
 ### Inventory
 | Key | Default | Meaning |
@@ -203,6 +204,9 @@ Values are JSON. Strings written through the API are plain JSON strings. Default
 | `orchestration.fulfilment_timeout` | P5D | Time in `await_fulfilment` before a `fulfilment_timeout` exception |
 | `orchestration.delivery_timeout` | P14D | Time waiting for a delivery scan |
 | `orchestration.pickup_window` | P5D | BOPIS pickup window |
+| `tenant.timezone` | UTC | IANA zone of the tenant's clock. The one day-part definition (night 00-06, morning 06-12, afternoon 12-18, evening 18-24) for learned node reliability: the learner files outcomes and the sourcing decision reads facts on this clock (FS-02) |
+| `learning.fraud.chargeback_window_days` | 120 | Days a card payment can be charged back. Fraud learners sample `payment_risk` / `address_risk` outcomes only from decisions at least this old, frauds and goods alike (FD-03) |
+| `learning.fraud.outcome_window_days` | 30 | The same observation window for `rto_risk` and `return_risk` (a refused parcel or a return grading arrives within it) |
 | `webhooks.inbound_secret` | unset | When set, WMS/carrier/inventory webhooks require `X-Webhook-Signature` |
 | `alerts.slack_webhook`, `alerts.pagerduty_routing_key`, `alerts.email` | unset | Alert channels |
 | `alerts.dedupe_minutes` | 15 | Alert de-duplication window |

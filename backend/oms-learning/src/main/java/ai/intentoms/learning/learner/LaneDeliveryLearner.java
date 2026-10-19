@@ -37,7 +37,7 @@ public class LaneDeliveryLearner implements EventSubscriber, GovernedLearner {
     private static final Logger log = LoggerFactory.getLogger(LaneDeliveryLearner.class);
     private static final int SAMPLE_CAP = 200;
     static final int MIN_TRANSIT_SAMPLES = 5;
-    static final int MIN_RATE_SAMPLES = 10;
+    public static final int MIN_RATE_SAMPLES = 10;
 
     private final NodeAssignmentRepository assignments;
     private final LaneDeliverySampleRepository samples;

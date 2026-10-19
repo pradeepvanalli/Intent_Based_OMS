@@ -53,7 +53,17 @@ public class HumanResolutionCapture implements EventSubscriber {
             String outcome = str(e.payload().get("outcome"));
             String reason = str(e.payload().get("reason"));
             String by = e.actor() == null ? "system:task" : e.actor().ref();
-            Map<String, Object> label = Map.of("action", outcome == null ? "" : outcome, "reasonCode", reason == null ? "" : reason, "resolvedBy", by);
+            Object recommended = details.getOrDefault("recommendedValue", taskPayload.get("recommendedValue"));
+            Object value = chosenValue(details, outcome, recommended);
+            // OC-06: what the person chose (value), what they clicked (outcome) and why (reasonCode). "action" keeps the
+            // chosen value for readers of the earlier label shape.
+            Map<String, Object> label = new java.util.LinkedHashMap<>();
+            label.put("value", value == null ? "" : String.valueOf(value));
+            label.put("action", value == null ? "" : String.valueOf(value));
+            label.put("outcome", outcome == null ? "" : outcome);
+            label.put("reasonCode", reason == null ? "" : reason);
+            label.put("resolvedBy", by);
+            if (recommended != null) label.put("recommendedValue", String.valueOf(recommended));
             // The anchor record plus every re-evaluation linked to the same task: the person answered the question for
             // all of them, and each is a labelled outcome the learners (OC-06, DF-03) should see.
             Set<String> records = new LinkedHashSet<>();
@@ -65,6 +75,19 @@ public class HumanResolutionCapture implements EventSubscriber {
         } finally {
             TenantContext.clear();
         }
+    }
+
+    /**
+     * The person's answer, read the same way {@code DecisionEscalationTaskSubscriber} resolves the escalation:
+     * {@code details.value} when given, the recommendation for an accepting outcome, otherwise the outcome itself
+     * (unless it is just the word "override", which says a value was chosen but not which).
+     */
+    static Object chosenValue(Map<String, Object> details, String outcome, Object recommended) {
+        if (details.get("value") != null && !String.valueOf(details.get("value")).isBlank()) return details.get("value");
+        String o = outcome == null ? "" : outcome.toLowerCase(java.util.Locale.ROOT);
+        if (ai.intentoms.learning.model.HumanResolution.ACCEPT.contains(o)) return recommended;
+        if (o.isBlank() || o.equals("override") || o.equals("overridden")) return null;
+        return outcome;
     }
 
     private static String str(Object o) { return o == null ? null : String.valueOf(o); }

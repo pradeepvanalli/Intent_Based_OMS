@@ -55,7 +55,7 @@ class SoftScorerTest {
     void inputCarriesTheDeclaredStateOnly() {
         SourcingRequest req = Fixtures.request("ground", "10001", "NY", List.of(Fixtures.line("L1", "A", 2, 50, 20)));
         Candidate c = Fixtures.candidate(Fixtures.dc("DC-NJ", 40.5187, -74.4121, "NJ", 1.1), req, Map.of("A", 5), Fixtures.demoCard());
-        Map<String, Object> in = SoftScorer.input(req, List.of(c), Fixtures.demoCard(), Fixtures.NOON_UTC);
+        Map<String, Object> in = SoftScorer.input(req, List.of(c), Fixtures.demoCard(), Fixtures.NOON_UTC, java.time.ZoneOffset.UTC);
         assertThat(in).containsOnlyKeys("order", "candidates");
         @SuppressWarnings("unchecked") Map<String, Object> order = (Map<String, Object>) in.get("order");
         assertThat(order).containsEntry("destination_state", "NY").containsEntry("ship_method", "ground").containsEntry("line_count", 1);

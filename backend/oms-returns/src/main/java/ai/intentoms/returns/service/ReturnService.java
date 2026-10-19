@@ -650,6 +650,9 @@ public class ReturnService {
             payload.put("condition", cond);
             payload.put("note", note);
             payload.put("inspectedAt", now.toString());
+            payload.put("rmaId", rmaId);
+            payload.put("orderId", updated.orderId());
+            payload.put("fraudConfirmed", ItemCondition.isFraud(cond)); // FD-06: the grading labels this return's return_risk decision
             append(updated, ReturnEvents.INSPECTED, payload, who, null);
             metrics.count("oms.returns.inspected", "condition", cond);
             boolean gated = isRefundOnInspection(updated.refundTiming()) && !updated.refunded() && (updated.refund() == null || !updated.refund().awaitingApproval());
@@ -1081,7 +1084,8 @@ public class ReturnService {
     /**
      * OC-03 / FD-06: what the self-optimizing layer needs to score the decisions behind the order this return came back
      * from. {@code fraudConfirmed} comes from return grading: an inspection that found a different item than the one
-     * sold ({@code wrong_item}) is confirmed return fraud. {@code refundAmount} is the refund issued, or the value of
+     * sold ({@code wrong_item}) or an item that is not what the buyer described ({@code not_as_described}) is confirmed
+     * return fraud (see {@link ItemCondition#isFraud}). {@code refundAmount} is the refund issued, or the value of
      * the returned lines while the refund is still pending.
      */
     static Map<String, Object> outcomeFacts(ReturnRma rma, Map<String, Object> payload) {
@@ -1091,7 +1095,8 @@ public class ReturnService {
         if (rma.reasonCode() != null) p.putIfAbsent("reasonCode", rma.reasonCode());
         if (rma.condition() != null) p.putIfAbsent("condition", rma.condition());
         p.putIfAbsent("disposition", rma.disposition());
-        p.put("fraudConfirmed", ItemCondition.WRONG_ITEM.equals(rma.condition()));
+        p.putIfAbsent("rmaId", rma.rmaId());
+        p.put("fraudConfirmed", ItemCondition.isFraud(rma.condition()));
         p.putIfAbsent("refundAmount", refundValue(rma));
         return p;
     }

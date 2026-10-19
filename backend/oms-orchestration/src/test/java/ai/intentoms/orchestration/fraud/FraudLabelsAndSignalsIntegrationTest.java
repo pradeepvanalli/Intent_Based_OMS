@@ -111,7 +111,7 @@ class FraudLabelsAndSignalsIntegrationTest extends OrchestrationTestBase {
     void signalLevelsAndAgentHistoryBecomeLearnedFeaturesServedOnlyWhenPromoted() {
         learnerOn(FraudSignalLearner.KEY);
         String agent = "agt-" + Ids.shortId();
-        Instant at = Instant.now().minus(Duration.ofDays(3));
+        Instant at = Instant.now().minus(Duration.ofDays(130)); // FD-03: the cohort whose chargeback window has closed
         // 20 orders with no extra cards (1 fraud) and 20 with 2-3 extra cards in a day (10 fraud); 10 of the latter by one agent (6 fraud).
         int fraudAtAgent = 0;
         for (int i = 0; i < 40; i++) {
@@ -165,6 +165,54 @@ class FraudLabelsAndSignalsIntegrationTest extends OrchestrationTestBase {
         DecisionRecord live = records.find(String.valueOf(assessed.get("recordId"))).orElseThrow();
         assertThat(Json.path(live.input(), "payment.learned_fraud_rates.velocity_24h")).isNotNull();
         assertThat(Json.path(live.state(), "payment.learned_fraud_rate")).isNotNull();
+    }
+
+    /** A payment_risk decision already carrying its fraud label: a chargeback (fraud) or the delivered, no-chargeback-yet label. */
+    private void paymentWithOutcome(Instant at, int velocity24h, boolean fraud) {
+        int version = definitions.byStatus("payment_risk", "live").get(0).definition().version();
+        String id = Ids.prefixed("dr"), orderId = "ord_" + Ids.shortId();
+        Map<String, Object> in = input(velocity24h, null);
+        Map<String, Object> label = Map.of(FraudLabels.LABEL, Map.of("confirmed", fraud, "kind", fraud ? "chargeback_fraud" : "delivered_no_chargeback", "provisional", !fraud));
+        records.insert(new DecisionRecord(id, "payment_risk", version, Mode.LIVE, "order", orderId, orderId, Layer.L1_SYSTEM_ONE, Band.ACT, "act", false, Map.of(), 0.9,
+            "test", "t-1", Json.sha256(in), in, in, List.of(), List.of(), 0, 0, 0, false, null, "system:test", Map.of("mode", "LIVE"), null, null, null, null,
+            label, at, in, List.of("true", "false"), "false", 1.0, version));
+    }
+
+    /** Velocity levels for a cohort with a 2% fraud mix: most traffic at 0 extra cards, frauds over-represented at 2-3. */
+    private void cohort(int size, java.util.function.IntFunction<Instant> at) {
+        int frauds = size / 50;
+        for (int i = 0; i < size; i++) {
+            boolean fraud = i < frauds;
+            int velocity = fraud ? (i % 2 == 0 ? 3 : i % 4 == 1 ? 1 : 0) : (i % 10 < 7 ? 0 : i % 10 < 9 ? 1 : 3);
+            paymentWithOutcome(at.apply(i), velocity, fraud);
+        }
+    }
+
+    /**
+     * FD-01 / FD-03: frauds surface within days (a chargeback) while goods stay provisional for the 120-day window. A young
+     * tenant therefore has only frauds as usable labels; sampling them alone would put every signal level near 100%.
+     * Frauds and goods now come from the same matured cohort: the young tenant learns nothing, and once a matured year
+     * exists the rates sit near the real 2% mix.
+     */
+    @Test
+    void signalRatesComeFromAnUnbiasedSampleWithARealisticFraudMix() {
+        learnerOn(FraudSignalLearner.KEY);
+        // 60 days of trading, 2% fraud: 30 chargebacks already in, 1470 goods still provisional.
+        cohort(1500, i -> Instant.now().minus(Duration.ofHours(1 + (i % 1440))));
+        assertThat(signals.learnTenant()).as("no matured cohort yet: nothing to learn from").isZero();
+        for (String level : List.of("0", "1", "2-3")) assertThat(facts.active(SubjectType.DECISION, FraudSignalLearner.subject("velocity_24h", level), FactKey.FRAUD_SIGNAL_RATE)).isEmpty();
+
+        // A year earlier, the same mix, now past the chargeback window.
+        cohort(1000, i -> Instant.now().minus(Duration.ofDays(130 + (i % 200))));
+        assertThat(signals.learnTenant()).isPositive();
+        double none = rate(SubjectType.DECISION, FraudSignalLearner.subject("velocity_24h", "0"));
+        double one = rate(SubjectType.DECISION, FraudSignalLearner.subject("velocity_24h", "1"));
+        double busy = rate(SubjectType.DECISION, FraudSignalLearner.subject("velocity_24h", "2-3"));
+        assertThat(List.of(none, one, busy)).as("not every level is pushed to 0.2 or more").anySatisfy(r -> assertThat(r).isLessThan(0.2));
+        assertThat(none).isLessThan(0.05);
+        assertThat(busy).isGreaterThan(none).isLessThan(0.2);
+        assertThat(facts.active(SubjectType.DECISION, FraudSignalLearner.subject("velocity_24h", "0"), FactKey.FRAUD_SIGNAL_RATE).orElseThrow().sampleSize())
+            .as("only the matured cohort is in the sample").isLessThanOrEqualTo(1000);
     }
 
     /** FD-06: a reviewer's answer on a fraud decision's escalation task becomes a fraud label. */

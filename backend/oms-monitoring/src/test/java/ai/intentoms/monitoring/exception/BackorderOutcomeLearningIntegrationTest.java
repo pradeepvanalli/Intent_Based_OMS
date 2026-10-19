@@ -146,4 +146,22 @@ class BackorderOutcomeLearningIntegrationTest extends MonitoringTestBase {
         assertThat(((Map<?, ?>) after.state().get("line")).containsKey("backorder_conversion_rate")).isTrue();
         assertThat(after.state()).containsKey("history");
     }
+
+    @Autowired ai.intentoms.platform.ledger.OutboxRelay outbox;
+    @Autowired ai.intentoms.learning.store.EpisodeRepository episodes;
+
+    /** OC-02: each backordered line's decision is its own decision point, so its episode carries the line and the order. */
+    @Test
+    void theBackorderDecisionOpensTheLinesEpisode() {
+        Order o = backorderedOrder();
+        DecisionRecord d = breach(o);
+        assertThat(ai.intentoms.learning.model.DecisionPoints.lineId(d)).isEqualTo("L1");
+        int guard = 0;
+        while (outbox.drainBatch() > 0 && guard++ < 50) { /* deliver decision.evaluated to the episode assembler */ }
+        ai.intentoms.platform.tenant.TenantContext.set(TENANT);
+        assertThat(episodes.findByDecisionId(d.id())).hasValueSatisfying(e -> {
+            assertThat(e.lineId()).isEqualTo("L1");
+            assertThat(e.orderId()).isEqualTo(o.id());
+        });
+    }
 }

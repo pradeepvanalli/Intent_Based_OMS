@@ -70,6 +70,10 @@ public class CiPreferenceLearner implements EventSubscriber, GovernedLearner {
     private final LearnerGovernance governance;
     private final TenantConfigStore config;
     private final JdbcClient jdbc;
+    private ai.intentoms.learning.store.ErasedSubjects erasedSubjects;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setErasedSubjects(ai.intentoms.learning.store.ErasedSubjects erasedSubjects) { this.erasedSubjects = erasedSubjects; }
 
     public CiPreferenceLearner(CustomerEvidenceRepository evidence, LearnedFactRepository facts, LearnerGovernance governance, TenantConfigStore config, JdbcClient jdbc) {
         this.evidence = evidence;
@@ -188,6 +192,7 @@ public class CiPreferenceLearner implements EventSubscriber, GovernedLearner {
 
     /** Adds one observation for the customer and their cohort, then re-derives the customer's fact. */
     void observe(String customer, String cohort, FactKey key, String option, Instant at) {
+        if (erasedSubjects != null && erasedSubjects.erased(customer)) return; // GV-06 / N2: not even the cohort learns from an erased customer
         double hl = halfLife();
         evidence.add(CustomerEvidenceRepository.CUSTOMER, customer, key.name(), option, 1.0, hl, at);
         evidence.add(CustomerEvidenceRepository.SEGMENT, cohort, key.name(), option, 1.0, hl, at);
@@ -294,12 +299,18 @@ public class CiPreferenceLearner implements EventSubscriber, GovernedLearner {
         }
     }
 
-    /** Re-derives the facts of customers with no evidence for a quarter of the half-life; returns how many were refreshed. */
+    /**
+     * Re-derives the facts of customers with no evidence for a quarter of the half-life (CI-04 decay), and of customers
+     * whose evidence is newer than their facts: evidence is stored even while the learner is switched off or paused, and
+     * this is where it becomes facts once it may run again (A8, within one sweep, daily by default). Returns how many
+     * customers were refreshed.
+     */
     public int refreshDecayed() {
         if (!governance.begin(KEY).mayRun()) return 0;
         governance.recordRun(KEY);
         Instant now = Instant.now();
-        List<String> stale = evidence.staleCustomers(now.minus(Duration.ofSeconds((long) (halfLife() * 86400 / 4))), 5000);
+        java.util.LinkedHashSet<String> stale = new java.util.LinkedHashSet<>(evidence.staleCustomers(now.minus(Duration.ofSeconds((long) (halfLife() * 86400 / 4))), 5000));
+        stale.addAll(evidence.customersWithUnderivedEvidence(5000));
         for (String customer : stale) {
             String cohort = evidence.latestCohort(customer).orElse(null);
             for (String k : evidence.factKeysFor(customer)) {

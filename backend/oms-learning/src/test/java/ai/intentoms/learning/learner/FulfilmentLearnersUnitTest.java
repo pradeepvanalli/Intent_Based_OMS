@@ -33,9 +33,12 @@ class FulfilmentLearnersUnitTest {
         // The default arm is applied most of the time (p = 0.93) and earns 0.5; the explored arm (p = 0.033) earns 0.9.
         for (int i = 0; i < 60; i++) logged.add(new BanditRewardLearner.Logged("b", "ship_complete", 0.9333, 0.5));
         for (int i = 0; i < 8; i++) logged.add(new BanditRewardLearner.Logged("b", "split_up_to_k", 0.0333, 0.9));
-        for (int i = 0; i < 2; i++) logged.add(new BanditRewardLearner.Logged("b", "nearest_node", 0.0333, 0.1)); // too few: gets the mean
+        for (int i = 0; i < 2; i++) logged.add(new BanditRewardLearner.Logged("b", "nearest_node", 0.0333, 0.1)); // too few: shrunk toward the prior
         Map<String, Double> w = BanditRewardLearner.weights(logged, 5, 0.2);
         assertThat(w.get("split_up_to_k")).isGreaterThan(w.get("ship_complete"));
+        // B-4: two poor explorations pull the arm below the prior (mean of 0.5 and 0.9 = 0.7): value (2 x 0.1 + 3 x 0.7) / 5 = 0.46,
+        // so it ranks below both well-sampled arms instead of level with the best one.
+        assertThat(w.get("nearest_node")).isLessThan(w.get("ship_complete")).isPositive();
         assertThat(w.values().stream().mapToDouble(Double::doubleValue).sum()).isCloseTo(1.0, within(0.001));
         assertThat(w).containsKey("nearest_node");
         assertThat(BanditRewardLearner.encode(w)).allMatch(s -> s.contains(":"));

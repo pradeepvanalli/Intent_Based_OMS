@@ -37,8 +37,10 @@ import java.util.Map;
  * <p>On-time is the node's own job, an on-time pick (FS-02): the package left the node by the date sourcing set for it
  * ({@code packages[].shipBy} on {@code order.sourced}, compared with the first {@code order.shipped} from that node).
  * Whether the carrier then delivered on time is the lane's business ({@code LaneDeliveryLearner}). Older events with no
- * ship-by date fall back to delivery against the promised ETA. Day part is the node's local time when sourcing assigned
- * it ({@code packages[].dayPart}), else the tenant's time zone ({@code tenant.timezone}), else UTC.
+ * ship-by date fall back to delivery against the promised ETA. Day part follows the one definition in
+ * {@link ai.intentoms.learning.model.DayPart}: the tenant's clock ({@code tenant.timezone}, else UTC) when sourcing
+ * assigned the package ({@code packages[].dayPart}), else when the event happened, the same clock the decision uses to
+ * pick which facts to read.
  *
  * <p>Evidence fades with a half-life ({@code learning.node_reliability.half_life_days}, default 30): a node that rejected
  * a lot last quarter but has shipped cleanly since recovers, and its reject penalty with it (FS-06).
@@ -185,22 +187,11 @@ public class NodeReliabilityLearner implements EventSubscriber, GovernedLearner 
         return dayPart == null ? nodeId + "|" + skuClass : nodeId + "|" + skuClass + "|" + dayPart;
     }
 
-    public static String dayPart(Instant at) { return dayPart(at, ZoneOffset.UTC); }
-
-    /** Night, morning, afternoon or evening in the given zone (a node's or the tenant's local time). */
-    public static String dayPart(Instant at, java.time.ZoneId zone) {
-        int hour = at.atZone(zone).getHour();
-        if (hour < 6) return "night";
-        if (hour < 12) return "morning";
-        if (hour < 18) return "afternoon";
-        return "evening";
-    }
+    /** Night, morning, afternoon or evening in the given zone ({@link ai.intentoms.learning.model.DayPart}). */
+    public static String dayPart(Instant at, java.time.ZoneId zone) { return ai.intentoms.learning.model.DayPart.of(at, zone); }
 
     /** The tenant's time zone ({@code tenant.timezone}), UTC when unset or invalid. */
-    java.time.ZoneId tenantZone() {
-        try { return java.time.ZoneId.of(config.getString("tenant.timezone", "UTC")); }
-        catch (RuntimeException e) { return ZoneOffset.UTC; }
-    }
+    java.time.ZoneId tenantZone() { return ai.intentoms.learning.model.DayPart.zone(config); }
 
     double halfLifeDays() {
         try { return Math.max(1.0, config.getDouble(HALF_LIFE_KEY, 30.0)); } catch (RuntimeException e) { return 30.0; }

@@ -89,11 +89,9 @@ public class OverrideToRuleLearner implements GovernedLearner {
         return n;
     }
 
-    @SuppressWarnings("unchecked")
+    /** The value the person chose (OC-06), never the task's outcome word. */
     static String action(DecisionRecord r) {
-        Object res = r.labels() == null ? null : r.labels().get(HUMAN_RESOLUTION_LABEL);
-        Object action = res instanceof Map<?, ?> m ? ((Map<String, Object>) m).get("action") : null;
-        return action == null || String.valueOf(action).isBlank() ? null : String.valueOf(action);
+        return ai.intentoms.learning.model.HumanResolution.value(r).orElse(null);
     }
 
     static boolean isOverride(DecisionRecord r) {

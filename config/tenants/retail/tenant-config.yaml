@@ -11,6 +11,7 @@ description: >-
   surge capacity, curbside promise.
 
 # ---- Sourcing and promise -------------------------------------------------------------------------------------------
+tenant.timezone: America/New_York           # FS-02: day parts (night/morning/afternoon/evening) of learned node reliability use this clock
 sourcing.margin_floor: 0.12                 # 12 % contribution-margin floor: below it finance approves (GR-01, scenario R3)
 sourcing.max_split_packages: 2              # general merchandise: at most two boxes before we ask the customer
 sourcing.split_penalty_usd: 11.0            # negotiated: one extra carton costs us about $11

@@ -127,19 +127,45 @@ class FulfilmentLiveQualityIntegrationTest extends SourcingTestBase {
         assertThat(pkg).containsKeys("shipBy", "dayPart");
     }
 
-    /** CX-01, measured: the residual after calibration per lane, against the 3-point target, worst first. */
+    @Autowired ai.intentoms.learning.learner.LaneDeliverySampleRepository laneSamples;
+
+    /** Deliveries on a lane: each told {@code base} before lane calibration (and that, uncalibrated, as stated), {@code onTime} of them on time. */
+    private void deliveries(String lane, int n, int onTime, double base) {
+        for (int i = 0; i < n; i++) laneSamples.record(lane, 2.0, i < onTime, base, base, "ord-" + Ids.shortId(), "N");
+    }
+
+    /**
+     * CX-01, measured on the probability served: deliveries told 95% while 80% arrived on time are 15 points off as
+     * recorded, but once the learned -15 point correction is served the residual is 0. Lanes with fewer than
+     * {@code minSamples} deliveries are listed but do not count toward the 3-point target.
+     */
     @Test
-    void calibrationResidualIsReportedPerLaneAgainstTheTarget() {
-        facts.number(SubjectType.LANE, LaneDeliveryLearner.laneKey("UPS", "ground", "DC-NJ", "100"), FactKey.LANE_CALIBRATION_ERROR, -0.02, 40, LaneDeliveryLearner.KEY, 0.001);
-        facts.number(SubjectType.LANE, LaneDeliveryLearner.laneKey("UPS", "ground", "DC-TX", "787"), FactKey.LANE_CALIBRATION_ERROR, -0.08, 30, LaneDeliveryLearner.KEY, 0.001);
-        facts.number(SubjectType.LANE, LaneDeliveryLearner.laneKey("UPS", "ground", "DC-TX", "787"), FactKey.LANE_CALIBRATION_OFFSET, -0.15, 30, LaneDeliveryLearner.KEY, 0.001);
-        facts.number(SubjectType.LANE, LaneDeliveryLearner.laneKey("FDX", "ground", "DC-TX", "787"), FactKey.LANE_CALIBRATION_ERROR, -0.30, 4, LaneDeliveryLearner.KEY, 0.001);
-        Map<String, Object> r = calibration.calibration(10);
-        assertThat(r).containsEntry("targetPoints", 3.0).containsEntry("lanesMeasured", 2).containsEntry("lanesWithinTarget", 1);
+    void calibrationResidualIsMeasuredOnTheServedProbabilityAndCountsOnlyWithEnoughSamples() {
+        String calibrated = LaneDeliveryLearner.laneKey("UPS", "ground", "DC-NJ", "100");
+        String off = LaneDeliveryLearner.laneKey("UPS", "ground", "DC-TX", "787");
+        String thin = LaneDeliveryLearner.laneKey("FDX", "ground", "DC-TX", "787");
+        deliveries(calibrated, 40, 32, 0.95);
+        deliveries(off, 30, 21, 0.90);
+        deliveries(thin, 12, 6, 0.90);
+        facts.number(SubjectType.LANE, calibrated, FactKey.LANE_CALIBRATION_OFFSET, -0.15, 40, LaneDeliveryLearner.KEY, 0.001);
+        facts.number(SubjectType.LANE, calibrated, FactKey.LANE_CALIBRATION_ERROR, -0.15, 40, LaneDeliveryLearner.KEY, 0.001);
+
+        // Not promoted: the served probability is still 95%, 15 points above what happened.
+        factCache.invalidateAll();
+        @SuppressWarnings("unchecked") Map<String, Object> before = ((List<Map<String, Object>>) calibration.calibration(30).get("lanes")).stream()
+            .filter(m -> calibrated.equals(m.get("lane"))).findFirst().orElseThrow();
+        assertThat(before).containsEntry("residualPoints", -15.0).containsEntry("servedCorrectionPoints", 0.0).containsEntry("withinTarget", false);
+
+        parameters.promote(LaneDeliveryLearner.CALIBRATION_PARAMETER, LaneDeliveryLearner.KEY, -0.3, 0.3, null, null, "test");
+        factCache.invalidateAll();
+        Map<String, Object> r = calibration.calibration(30);
+        assertThat(r).containsEntry("targetPoints", 3.0).containsEntry("minSamples", 30).containsEntry("lanesMeasured", 3).containsEntry("lanesCounted", 2)
+            .containsEntry("lanesWithinTarget", 1);
         @SuppressWarnings("unchecked") List<Map<String, Object>> lanes = (List<Map<String, Object>>) r.get("lanes");
-        assertThat(lanes.get(0)).containsEntry("lane", "UPS|ground|DC-TX|787").containsEntry("residualPoints", -8.0).containsEntry("withinTarget", false)
-            .containsEntry("learnedOffsetPoints", -15.0);
-        assertThat(lanes.get(1)).containsEntry("residualPoints", -2.0).containsEntry("withinTarget", true);
+        assertThat(lanes.get(0)).containsEntry("lane", off).containsEntry("residualPoints", -20.0).containsEntry("countsTowardTarget", true).containsEntry("withinTarget", false);
+        assertThat(lanes.get(1)).containsEntry("lane", calibrated).containsEntry("residualPoints", 0.0).containsEntry("servedCorrectionPoints", -15.0)
+            .containsEntry("recordedResidualPoints", -15.0).containsEntry("learnedOffsetPoints", -15.0).containsEntry("withinTarget", true);
+        assertThat(lanes.get(2)).containsEntry("lane", thin).containsEntry("samples", 12L).containsEntry("countsTowardTarget", false).containsEntry("withinTarget", false);
     }
 
     /** CX-02: while the learned buffer is live, a small bounded share of promises try one day more or less, and say so. */
@@ -161,6 +187,22 @@ class FulfilmentLiveQualityIntegrationTest extends SourcingTestBase {
             if (p.bufferExplored()) { explored++; assertThat(p.bufferDays()).isIn(1, 3); } else assertThat(p.bufferDays()).isEqualTo(2);
         }
         assertThat(explored).isBetween(10, 80);   // about 10% of 400
+    }
+
+    /** B-5: the buffer family promoted with nothing learned yet: the static buffer is served as is and never explored. */
+    @Test
+    void noBufferExplorationWithoutALearnedBuffer() {
+        stock("TEE-BLK-M", "DC-NJ", 50);
+        config.set(ai.intentoms.learning.learner.PromiseBufferLearner.EXPLORATION_KEY, 0.5);
+        parameters.promote(ai.intentoms.learning.learner.PromiseBufferLearner.PARAMETER, ai.intentoms.learning.learner.PromiseBufferLearner.KEY, 0.0, 5.0, null, null, "test");
+        factCache.invalidateAll();
+        PromiseRequest req = new PromiseRequest(List.of(new PromiseRequest.PromiseLine("TEE-BLK-M", 1)), "10001", "NY", "web", "ground");
+        for (int i = 0; i < 200; i++) {
+            promiseImpl.invalidateAll();
+            Promise p = promise.promise(req);
+            assertThat(p.bufferExplored()).isFalse();
+            assertThat(p.bufferDays()).isZero();
+        }
     }
 
     /** FS-05: a node whose learned curve says a breach is likely at its backlog loses the load before the breach. */

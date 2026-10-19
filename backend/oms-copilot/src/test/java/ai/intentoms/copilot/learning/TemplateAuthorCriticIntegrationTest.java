@@ -74,6 +74,7 @@ class TemplateAuthorCriticIntegrationTest extends NoLlmTestBase {
         assertThat(prompts.list("fulfilment_intent")).anySatisfy(v -> {
             assertThat(v.status()).isEqualTo("draft");
             assertThat(v.text()).contains("input.order.channel == 'marketplace'").contains("ship_complete");
+            assertThat(v.createdBy()).as("C6: the template author wrote it, not whoever triggered the run").isEqualTo(TemplateAuthor.ACTOR);
         });
 
         // FD-04: an address-reuse ring becomes a hold rule on payment_risk.

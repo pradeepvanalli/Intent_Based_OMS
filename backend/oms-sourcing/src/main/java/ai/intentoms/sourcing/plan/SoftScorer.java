@@ -5,6 +5,7 @@ import ai.intentoms.decision.model.Band;
 import ai.intentoms.decision.model.DecisionOptions;
 import ai.intentoms.decision.model.DecisionResult;
 import ai.intentoms.decision.model.Layer;
+import ai.intentoms.decision.model.Mode;
 import ai.intentoms.decision.runtime.DecisionService;
 import ai.intentoms.platform.ledger.Actor;
 import ai.intentoms.platform.observability.Metrics;
@@ -55,21 +56,36 @@ public class SoftScorer {
     private final DecisionService decisions;
     private final TimeSource time;
     private final Metrics metrics;
+    private final ai.intentoms.platform.config.TenantConfigStore config;
 
-    public SoftScorer(DecisionService decisions, TimeSource time, Metrics metrics) {
+    public SoftScorer(DecisionService decisions, TimeSource time, Metrics metrics, ai.intentoms.platform.config.TenantConfigStore config) {
         this.decisions = decisions;
         this.time = time;
         this.metrics = metrics;
+        this.config = config;
     }
 
     public SoftScores score(SourcingRequest req, List<Candidate> candidates, RateCard card, Actor actor) {
+        return score(req, candidates, card, actor, Mode.LIVE, null);
+    }
+
+    /**
+     * @param mode               {@code LIVE} when the plan will be committed; {@code SHADOW} for read-only paths (sourcing
+     *                           options, replays, re-promise previews): same learned features and calibration, but the
+     *                           record is not LIVE, so it never opens or repoints an episode nor counts in guardrail,
+     *                           holdout or coverage figures (E-1)
+     * @param fulfillmentGroupId the group being re-sourced, when the decision is about one group (OC-02): its episode
+     *                           then carries {@code fulfillment_group_id} instead of repointing the order's
+     */
+    public SoftScores score(SourcingRequest req, List<Candidate> candidates, RateCard card, Actor actor, Mode mode, String fulfillmentGroupId) {
         if (candidates.isEmpty()) return SoftScores.neutral("no candidates");
         // Learned node reliability (FS-02) is merged into the candidates by the decision fabric's learning hook
         // (oms-learning NodeReliabilityFeatures), so the decision record shows which facts and versions it used.
-        Map<String, Object> input = input(req, candidates, card, time.now());
+        Map<String, Object> input = input(req, candidates, card, time.now(), ai.intentoms.learning.model.DayPart.zone(config));
+        if (fulfillmentGroupId != null) input.put("fulfillmentGroupId", fulfillmentGroupId);
         DecisionResult r;
         try {
-            r = decisions.decide(DECISION, input, DecisionOptions.live("order", req.orderId(), actor));
+            r = decisions.decide(DECISION, input, new DecisionOptions("order", req.orderId(), null, mode == null ? Mode.LIVE : mode, null, actor, Map.of()));
         } catch (RuntimeException e) {
             log.warn("sourcing_node_score unavailable for order {}: {}", req.orderId(), e.getMessage());
             metrics.count("oms.sourcing.soft_score.unavailable");
@@ -78,8 +94,8 @@ public class SoftScorer {
         return fromResult(r);
     }
 
-    /** Builds the minimal typed state the decision declares (section 9 rule 2). */
-    public static Map<String, Object> input(SourcingRequest req, List<Candidate> candidates, RateCard card, Instant now) {
+    /** Builds the minimal typed state the decision declares (section 9 rule 2); {@code tenantZone} sets the day part. */
+    public static Map<String, Object> input(SourcingRequest req, List<Candidate> candidates, RateCard card, Instant now, java.time.ZoneId tenantZone) {
         double weight = 0;
         for (var l : req.lines()) weight += l.weightKg() * l.qty();
         List<Map<String, Object>> cands = new ArrayList<>(candidates.size());
@@ -101,7 +117,7 @@ public class SoftScorer {
         order.put("line_count", req.lines().size());
         // FS-02: the SKU class carrying most units and the day part, so learned reliability can be that specific.
         order.put("sku_class", dominantCategory(req));
-        order.put("day_part", ai.intentoms.learning.learner.NodeReliabilityLearner.dayPart(now));
+        order.put("day_part", ai.intentoms.learning.model.DayPart.of(now, tenantZone));
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("order", order);
         input.put("candidates", cands);

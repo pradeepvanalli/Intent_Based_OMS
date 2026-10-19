@@ -23,8 +23,15 @@ public class CustomerEvidenceRepository {
     public static final String SEGMENT = "segment";
 
     private final JdbcClient jdbc;
+    private ErasedSubjects erased;
 
     public CustomerEvidenceRepository(JdbcClient jdbc) { this.jdbc = jdbc; }
+
+    /** GV-06 / N2: no evidence or order attribution is kept for an erased customer. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setErasedSubjects(ErasedSubjects erased) { this.erased = erased; }
+
+    private boolean erased(String customerRef) { return erased != null && erased.erased(customerRef); }
 
     private static String t() { return TenantContext.require(); }
 
@@ -37,6 +44,7 @@ public class CustomerEvidenceRepository {
     /** Decays every option of (subject, key) to {@code at}, then adds {@code amount} to {@code option}. */
     @Transactional
     public void add(String subjectKind, String subjectId, String factKey, String option, double amount, double halfLifeDays, Instant at) {
+        if (CUSTOMER.equals(subjectKind) && erased(subjectId)) return;
         Timestamp ts = Timestamp.from(at);
         jdbc.sql("""
             update customer_preference_evidence
@@ -69,6 +77,20 @@ public class CustomerEvidenceRepository {
             """).param("t", t()).param("before", Timestamp.from(before)).param("lim", limit).query(String.class).list();
     }
 
+    /**
+     * A8: customers holding evidence newer than their current fact for the same key (or no fact at all), e.g. evidence
+     * that arrived while the learner was switched off, so the sweep can derive what was never derived.
+     */
+    public List<String> customersWithUnderivedEvidence(int limit) {
+        return jdbc.sql("""
+            select distinct e.subject_id from customer_preference_evidence e
+            where e.tenant_id = :t and e.subject_kind = 'customer'
+              and not exists (select 1 from learned_fact f where f.tenant_id = e.tenant_id and f.subject_type = 'CUSTOMER' and f.subject_id = e.subject_id
+                              and f.fact_key = e.fact_key and f.valid_to is null and f.created_at >= e.updated_at)
+            limit :lim
+            """).param("t", t()).param("lim", limit).query(String.class).list();
+    }
+
     public List<String> factKeysFor(String customerRef) {
         return jdbc.sql("select distinct fact_key from customer_preference_evidence where tenant_id = :t and subject_kind = 'customer' and subject_id = :s")
             .param("t", t()).param("s", customerRef).query(String.class).list();
@@ -81,6 +103,7 @@ public class CustomerEvidenceRepository {
     }
 
     public void registerOrder(String orderId, String customerRef, String cohort) {
+        if (erased(customerRef)) return;
         jdbc.sql("""
             insert into customer_order_ref(tenant_id, order_id, customer_ref, cohort) values (:t, :o, :c, :k)
             on conflict (tenant_id, order_id) do update set customer_ref = excluded.customer_ref, cohort = excluded.cohort

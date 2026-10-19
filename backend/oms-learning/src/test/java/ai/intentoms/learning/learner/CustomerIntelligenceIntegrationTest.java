@@ -248,6 +248,59 @@ class CustomerIntelligenceIntegrationTest extends PostgresTestBase {
         });
     }
 
+    @Autowired ai.intentoms.platform.pii.Tokenizer tokenizer;
+
+    /**
+     * GV-06 / audit defect N2: once a customer is erased, nothing is learned about them again: no fact, no preference
+     * evidence, no order attribution, no segment membership, whether later events carry the old reference or the
+     * pseudonym that replaced it on their orders.
+     */
+    @Test
+    void anErasedCustomerIsNeverLearnedAgainUnderTheirReferenceOrPseudonym() {
+        String c = "n2-" + Ids.shortId(), o1 = "ord-" + Ids.shortId();
+        learner.on(captured(o1, c, "next_day", "standard_ship", "IL", 1));
+        learner.on(event("cs.wismo", o1, Map.of("orderId", o1, "customerRef", c, "channel", "sms")));
+        assertThat(value(c, FactKey.PREFERRED_CONTACT_CHANNEL)).as("learned before the erasure").isEqualTo("sms");
+
+        String pseudonym = tokenizer.shredSubject(c, "user:privacy").pseudonym();
+        assertThat(value(c, FactKey.PREFERRED_CONTACT_CHANNEL)).as("purged by the erasure").isNull();
+
+        String o2 = "ord-" + Ids.shortId();
+        learner.on(event("cs.complaint", o1, Map.of("orderId", o1, "customerRef", pseudonym, "channel", "email", "reason", "complaint")));
+        learner.on(event("cs.wismo", o1, Map.of("orderId", o1, "customerRef", c, "channel", "chat")));
+        learner.on(captured(o2, pseudonym, "next_day", "pickup_in_store", "IL", 2));
+        for (String subject : List.of(c, pseudonym)) {
+            for (FactKey k : FactKey.values()) assertThat(facts.active(SubjectType.CUSTOMER, subject, k)).as(subject + " " + k).isEmpty();
+            assertThat(jdbc.sql("select count(*) from customer_preference_evidence where tenant_id = :t and subject_kind = 'customer' and subject_id = :s")
+                .param("t", TENANT).param("s", subject).query(Long.class).single()).as("evidence for " + subject).isZero();
+        }
+        assertThat(evidence.order(o2)).as("no order attribution").isEmpty();
+        // Segment membership is a customer fact: discovery (or any writer) cannot record one for them.
+        Instant now = Instant.now();
+        facts.insert(new LearnedFact(Ids.prefixed("fact"), SubjectType.CUSTOMER, pseudonym, FactKey.SEGMENT_MEMBERSHIP, new TypedValue.TextValue("fast_movers"), 0.9, 5,
+            CiSegmentDiscovery.KEY, 1, now, null, now));
+        assertThat(facts.active(SubjectType.CUSTOMER, pseudonym, FactKey.SEGMENT_MEMBERSHIP)).isEmpty();
+    }
+
+    @Autowired ai.intentoms.learning.governance.LearnerGovernance governance;
+
+    /** A8: evidence kept while the kill switch was on becomes facts on the first sweep after it is lifted. */
+    @Test
+    void evidenceStoredWhileSwitchedOffIsDerivedOnceLearningMayRunAgain() {
+        String c = "a8-" + Ids.shortId(), o = "ord-" + Ids.shortId();
+        governance.setTenantKillSwitch(true, "user:tester");
+        try {
+            learner.on(captured(o, c, "standard", "standard_ship", "IL", 1));
+            learner.on(event("cs.wismo", o, Map.of("orderId", o, "customerRef", c, "channel", "whatsapp")));
+            assertThat(value(c, FactKey.PREFERRED_CONTACT_CHANNEL)).as("kill switch on: evidence only").isNull();
+            assertThat(learner.refreshDecayed()).isZero();
+        } finally {
+            governance.setTenantKillSwitch(false, "user:tester");
+        }
+        learner.refreshDecayed();
+        assertThat(value(c, FactKey.PREFERRED_CONTACT_CHANNEL)).isEqualTo("whatsapp");
+    }
+
     private void put(String customer, FactKey key, TypedValue v, Instant at) {
         facts.supersede(SubjectType.CUSTOMER, customer, key, at);
         facts.insert(new LearnedFact(Ids.prefixed("fact"), SubjectType.CUSTOMER, customer, key, v, 0.8, 5, CiPreferenceLearner.KEY, 1, at, null, at));

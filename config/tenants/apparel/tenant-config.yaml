@@ -10,6 +10,7 @@ description: >-
   stores and to boutiques on net terms. One DC, one 3PL, a returns centre and a 30 % return rate driven by fit.
 
 # ---- Sourcing and promise -------------------------------------------------------------------------------------------
+tenant.timezone: America/New_York           # FS-02: day parts (night/morning/afternoon/evening) of learned node reliability use this clock
 sourcing.margin_floor: 0.18                 # fashion gross margins are high; a plan below 18 % contribution needs finance approval
 sourcing.max_split_packages: 2              # two boxes at most: a third box on a $150 basket wipes out the margin
 sourcing.split_penalty_usd: 9.50            # negotiated carrier cost of one extra parcel

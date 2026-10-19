@@ -5,19 +5,14 @@ import ai.intentoms.learning.event.LearningEvents;
 import ai.intentoms.learning.governance.GovernedLearner;
 import ai.intentoms.learning.governance.LearnerDescriptor;
 import ai.intentoms.learning.governance.LearnerGovernance;
-import ai.intentoms.learning.model.ArtifactRef;
 import ai.intentoms.learning.model.Direction;
 import ai.intentoms.learning.model.Episode;
 import ai.intentoms.learning.model.Hypothesis;
-import ai.intentoms.learning.model.PolicyChange;
-import ai.intentoms.learning.model.PolicyChangeset;
-import ai.intentoms.learning.model.Proposal;
-import ai.intentoms.learning.model.ProposalStatus;
+import ai.intentoms.learning.model.WeightLever;
 import ai.intentoms.learning.store.EpisodeRepository;
 import ai.intentoms.learning.store.HypothesisRepository;
 import ai.intentoms.learning.store.ProposalRepository;
 import ai.intentoms.platform.ids.Ids;
-import ai.intentoms.platform.ledger.Actor;
 import ai.intentoms.platform.tenant.TenantContext;
 import ai.intentoms.sourcing.config.SourcingConfigKeys;
 import ai.intentoms.sourcing.config.SourcingSettings;
@@ -42,16 +37,18 @@ import java.util.Map;
  * the components that go with better outcomes. For each order whose chosen plan has a rewarded
  * {@code sourcing_node_score} episode, the plan's score components are paired with the episode's reward; a component
  * whose higher values go with higher reward (positive correlation) gains weight, a negatively correlated one loses
- * it, each by at most {@code maxStep} per proposal, and the vector is renormalised to sum to 1. The result is a
- * {@code WeightChange} proposal (T1) on {@code config:sourcing.weights}, with the evidence in its hypothesis; it is
- * approved and applied through the normal promotion gate, never written directly.
+ * it, each by at most {@code maxStep} per proposal, and the vector is renormalised to sum to 1. The result is a typed
+ * hypothesis ({@link WeightLever}: current and suggested weights, correlations, sample size) that the Author turns into
+ * a {@code WeightChange} proposal (T1) on {@code config:sourcing.weights}; it is approved and applied through the normal
+ * promotion gate, never written directly.
  *
- * <p>Validated by replay ({@link SourcingWeightReplay}): every recorded order's considered plans are re-scored under the
- * proposed weights, and the orders whose chosen plan would change are scored with a reward model fitted on the chosen
- * plans. That report, with its 95% interval, is the proposal's evaluation ({@code plan_rescoring_replay}).
+ * <p>Validated by replay ({@link SourcingWeightReplay}, served to the Author as {@link WeightLever.Evidence}): every
+ * recorded order's considered plans are re-scored under the proposed weights, and the orders whose chosen plan would
+ * change are scored with a reward model fitted on the chosen plans. That report, with its 95% interval, is the
+ * proposal's evaluation ({@code plan_rescoring_replay}).
  */
 @Component
-public class SourcingWeightLearner implements GovernedLearner {
+public class SourcingWeightLearner implements GovernedLearner, WeightLever.Evidence {
     public static final String KEY = "sourcing_weights";
     public static final String TARGET = "config:" + SourcingConfigKeys.WEIGHTS;
     static final List<String> COMPONENTS = List.of("cost", "time", "soft", "split");
@@ -98,47 +95,62 @@ public class SourcingWeightLearner implements GovernedLearner {
     private int sweepTenant() {
         if (!governance.begin(KEY).mayPropose()) return 0;
         governance.recordRun(KEY);
-        if (proposals.existsOpenFor(TARGET)) return 0;
+        if (proposals.existsOpenFor(TARGET) || openHypothesis()) return 0;
         List<double[]> rows = new ArrayList<>(); // cost, time, soft, split, reward
+        rewardedOrders(rows);
+        if (rows.size() < minSamples) return 0;
+        Map<String, Double> current = liveWeights();
+        Map<String, Double> corr = correlations(rows);
+        Map<String, Double> proposed = propose(current, corr, maxStep);
+        WeightLever lever = new WeightLever(SourcingConfigKeys.WEIGHTS, current, proposed, corr, rows.size(), windowDays);
+        if (lever.changes().isEmpty()) return 0;
+        List<String> evidence = new ArrayList<>();
+        evidence.add(rows.size() + " sourced orders with a rewarded episode in the last " + windowDays + " days");
+        for (String k : COMPONENTS) evidence.add(String.format(Locale.ROOT, "%s component vs reward correlation %.3f (weight %.3f -> %.3f)", k, corr.get(k), current.get(k), proposed.get(k)));
+        Hypothesis h = new Hypothesis(Ids.prefixed("hyp"), Map.of("target", TARGET), "reward", Direction.INCREASE, lever.toLever(), 0.5, evidence,
+            "Plan-score weights should follow the components that go with better outcomes.", Hypothesis.Status.OPEN, Instant.now());
+        hypotheses.insert(h);
+        log.info("FS-04 hypothesis {} for {}: {} -> {} ({} rewarded orders)", h.hypothesisId(), TARGET, current, proposed, rows.size());
+        return 1;
+    }
+
+    private boolean openHypothesis() {
+        return hypotheses.byStatus("OPEN", 500).stream().anyMatch(h -> WeightLever.of(h).filter(l -> TARGET.equals(l.target())).isPresent());
+    }
+
+    /** Chosen-plan components paired with the order's rewarded sourcing episode; fills {@code rows} and returns reward by order. */
+    private Map<String, Double> rewardedOrders(List<double[]> rows) {
         Map<String, Double> rewardByOrder = new LinkedHashMap<>();
         for (var e : plans.chosenComponentsSince(Instant.now().minus(Duration.ofDays(windowDays)), 5_000)) {
             Double reward = episodes.forOrder(e.getKey()).stream().filter(ep -> SoftScorer.DECISION.equals(ep.decisionName()) && ep.reward() != null)
                 .map(Episode::reward).findFirst().orElse(null);
             if (reward == null) continue;
             Map<String, Double> c = e.getValue();
-            rows.add(new double[]{c.get("cost"), c.get("time"), c.get("soft"), c.get("split"), reward});
+            if (rows != null) rows.add(new double[]{c.get("cost"), c.get("time"), c.get("soft"), c.get("split"), reward});
             rewardByOrder.put(e.getKey(), reward);
         }
-        if (rows.size() < minSamples) return 0;
+        return rewardByOrder;
+    }
+
+    // ---- WeightLever.Evidence: what the Author attaches to the proposal it drafts from the hypothesis ----------------
+
+    @Override public boolean supports(String configKey) { return SourcingConfigKeys.WEIGHTS.equals(configKey); }
+
+    @Override
+    public Map<String, Double> liveWeights() {
         Map<String, Double> current = new LinkedHashMap<>();
         var w = settings.weights();
-        current.put("cost", w.cost()); current.put("time", w.time()); current.put("soft", w.soft()); current.put("split", w.split());
-        Map<String, Double> corr = correlations(rows);
-        Map<String, Double> proposed = propose(current, corr, maxStep);
-        List<PolicyChange> changes = new ArrayList<>();
-        for (String k : COMPONENTS) {
-            if (Math.abs(proposed.get(k) - current.get(k)) >= 0.005) changes.add(new PolicyChange.WeightChange(SourcingConfigKeys.WEIGHTS, k, round(current.get(k)), round(proposed.get(k))));
-        }
-        if (changes.isEmpty()) return 0;
-        List<String> evidence = new ArrayList<>();
-        evidence.add(rows.size() + " sourced orders with a rewarded episode in the last " + windowDays + " days");
-        for (String k : COMPONENTS) evidence.add(String.format(Locale.ROOT, "%s component vs reward correlation %.3f (weight %.3f -> %.3f)", k, corr.get(k), current.get(k), proposed.get(k)));
-        Instant now = Instant.now();
-        Hypothesis h = new Hypothesis(Ids.prefixed("hyp"), Map.of("target", TARGET), "reward", Direction.INCREASE,
-            Map.of("action", "reweight", "target", TARGET, "proposed", proposed), 0.5, evidence,
-            "Plan-score weights should follow the components that go with better outcomes.", Hypothesis.Status.DRAFTED, now);
-        hypotheses.insert(h);
-        PolicyChangeset cs = new PolicyChangeset(new ArtifactRef("config", SourcingConfigKeys.WEIGHTS), 0, changes, h.hypothesisId(), PolicyChangeset.RiskTier.T1);
-        String proposalId = Ids.prefixed("prop");
-        proposals.insert(new Proposal(proposalId, cs, h.hypothesisId(), PolicyChangeset.RiskTier.T1, ProposalStatus.DRAFT, null, null,
-            Actor.system(KEY).ref(), now, now, null, null, null, null, null, null, null, null));
-        Map<String, Object> report = new LinkedHashMap<>(SourcingWeightReplay.replay(replayOrders(rewardByOrder), current, proposed));
+        current.put("cost", round(w.cost())); current.put("time", round(w.time())); current.put("soft", round(w.soft())); current.put("split", round(w.split()));
+        return current;
+    }
+
+    /** The {@code plan_rescoring_replay} for a move from {@code current} to {@code proposed}, over the same window of rewarded orders. */
+    @Override
+    public Map<String, Object> report(Map<String, Double> current, Map<String, Double> proposed) {
+        Map<String, Object> report = new LinkedHashMap<>(SourcingWeightReplay.replay(replayOrders(rewardedOrders(null)), current, proposed));
         report.put("changeTypes", List.of("WeightChange"));
-        report.put("evaluatedAt", now.toString());
-        proposals.markEvaluated(proposalId, report, now);
-        events.proposalEvaluated(proposalId, Actor.system(KEY), report);
-        log.info("FS-04 proposal for {}: {} -> {} (replay lift {})", TARGET, current, proposed, report.get("liftEstimate"));
-        return 1;
+        report.put("evaluatedAt", Instant.now().toString());
+        return report;
     }
 
     /** The recorded orders to replay: every considered plan with its components, the chosen one marked, and the reward. */
