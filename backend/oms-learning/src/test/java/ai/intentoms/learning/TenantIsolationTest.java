@@ -57,4 +57,56 @@ class TenantIsolationTest extends PostgresTestBase {
         assertThat(((TypedValue.NumberValue) aFact.value()).value()).isEqualTo(0.95);
         assertThat(episodes.forOrder("order-a")).hasSize(1);
     }
+
+    @Autowired ai.intentoms.learning.learner.NodeReliabilityLearner nodeReliability;
+    @Autowired ai.intentoms.learning.learner.CiPreferenceLearner preferences;
+
+    /**
+     * NF-06 through the real learners: the same order id, node id and customer ref get opposite outcomes in two tenants,
+     * fed as ledger events; each tenant's learned facts reflect only its own outcomes.
+     */
+    @Test
+    void outcomesFedThroughRealLearnersNeverCrossTenants() {
+        String tenantB = "tenant-iso-" + Ids.shortId().toLowerCase();
+        jdbc.sql("insert into tenant(tenant_id, name) values (:t, :t) on conflict do nothing").param("t", tenantB).update();
+        String order = "ord-iso-" + Ids.shortId();
+        String node = "DC-ISO-" + Ids.shortId();
+        String customer = "cust-iso-" + Ids.shortId();
+        java.time.LocalDate today = java.time.LocalDate.now(java.time.ZoneOffset.UTC);
+
+        // Tenant A: express shopper; the node shipped late (promised yesterday, delivered today).
+        feed(TENANT, order, node, customer, "express", today.minusDays(1));
+        // Tenant B: same ids, ground shopper; the node was on time (promised tomorrow, delivered today).
+        feed(tenantB, order, node, customer, "ground", today.plusDays(1));
+
+        double aOnTime = number(TENANT, SubjectType.NODE, node, FactKey.NODE_ON_TIME_RATE);
+        double bOnTime = number(tenantB, SubjectType.NODE, node, FactKey.NODE_ON_TIME_RATE);
+        assertThat(aOnTime).isLessThan(bOnTime);
+        double aSpeed = number(TENANT, SubjectType.CUSTOMER, customer, FactKey.SPEED_VS_COST);
+        double bSpeed = number(tenantB, SubjectType.CUSTOMER, customer, FactKey.SPEED_VS_COST);
+        assertThat(aSpeed).isGreaterThan(0.0);
+        assertThat(bSpeed).isLessThan(0.0);
+
+        // Feeding more on-time deliveries in B never moves A's facts.
+        feed(tenantB, order + "-2", node, customer, "ground", today.plusDays(2));
+        assertThat(number(TENANT, SubjectType.NODE, node, FactKey.NODE_ON_TIME_RATE)).isEqualTo(aOnTime);
+        assertThat(number(TENANT, SubjectType.CUSTOMER, customer, FactKey.SPEED_VS_COST)).isEqualTo(aSpeed);
+    }
+
+    private void feed(String tenant, String order, String node, String customer, String shipMethod, java.time.LocalDate eta) {
+        Instant now = Instant.now();
+        preferences.on(event(tenant, order, "order.captured", Map.of("orderId", order, "customerRef", customer, "shipMethod", shipMethod, "orderType", "standard_ship",
+            "channel", "web"), now.minusSeconds(7200)));
+        nodeReliability.on(event(tenant, order, "order.sourced", Map.of("orderId", order, "shipMethod", shipMethod,
+            "packages", java.util.List.of(Map.of("nodeId", node, "eta", eta.toString(), "skuClass", "apparel"))), now.minusSeconds(3600)));
+        nodeReliability.on(event(tenant, order, "order.delivered", Map.of("orderId", order), now));
+    }
+
+    private static ai.intentoms.platform.ledger.Event event(String tenant, String order, String type, Map<String, Object> payload, Instant at) {
+        return new ai.intentoms.platform.ledger.Event(Ids.id(), tenant, "order", order, 1, type, payload, ai.intentoms.platform.ledger.Actor.system("test"), null, order, Map.of(), at);
+    }
+
+    private double number(String tenant, SubjectType type, String subject, FactKey key) {
+        return TenantContext.supplyAs(tenant, () -> ((TypedValue.NumberValue) facts.active(type, subject, key).orElseThrow().value()).value());
+    }
 }
