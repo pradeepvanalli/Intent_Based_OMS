@@ -108,6 +108,7 @@ class ExplainabilityIntegrationTest extends PostgresTestBase {
         @SuppressWarnings("unchecked") Map<String, Object> impact = (Map<String, Object>) d.summary().get("impact");
         @SuppressWarnings("unchecked") List<Map<String, Object>> rewards = (List<Map<String, Object>>) impact.get("rewardByDecision");
         assertThat(rewards).anySatisfy(r -> { assertThat(r.get("decision")).isEqualTo(decision); assertThat(((Number) r.get("maturedEpisodes")).intValue()).isEqualTo(3); });
+        assertThat(impact).containsKey("liftVsHoldout"); // XP-04: lift against the holdout (null while none is running)
         @SuppressWarnings("unchecked") Map<String, Object> changed = (Map<String, Object>) d.summary().get("changed");
         assertThat((List<?>) changed.get("promoted")).isNotEmpty();
         assertThat(api.latestDigest().digestId()).isEqualTo(d.digestId());

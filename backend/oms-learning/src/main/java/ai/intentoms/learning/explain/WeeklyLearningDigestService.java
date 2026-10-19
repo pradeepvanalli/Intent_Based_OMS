@@ -130,6 +130,7 @@ public class WeeklyLearningDigestService {
         }
         impact.put("rewardByDecision", rewards);
         impact.put("coverage", coverage.latest());
+        impact.put("liftVsHoldout", liftSummary());
 
         Map<String, Object> pending = new LinkedHashMap<>();
         pending.put("proposalsByStatus", rows("select status, count(*) as proposals, min(created_at) as oldest from proposal where tenant_id = :t and status in ('DRAFT','EVALUATED','APPROVED','CANARY') group by status", t, null, null));
@@ -146,6 +147,37 @@ public class WeeklyLearningDigestService {
         s.put("headline", headline(changed, pending));
         return s;
     }
+
+    /**
+     * XP-04: impact as cumulative lift against the persistent holdout (XP-01), per metric, with whether it is clearly
+     * better than chance; null when no holdout is running.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> liftSummary() {
+        ai.intentoms.learning.experiment.LiftService l = lift == null ? null : lift.getIfAvailable();
+        if (l == null) return null;
+        try {
+            Map<String, Object> report = l.lift(90);
+            if (report.get("holdout") == null) return null;
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("windowDays", report.get("windowDays"));
+            List<Map<String, Object>> metrics = new ArrayList<>();
+            for (Map<String, Object> m : (List<Map<String, Object>>) report.getOrDefault("metrics", List.of())) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                for (String k : List.of("metric", "treatedMean", "holdoutMean", "lift", "ciLower", "ciUpper", "significant", "improvement", "enoughData")) {
+                    if (m.containsKey(k)) row.put(k, m.get(k));
+                }
+                metrics.add(row);
+            }
+            out.put("metrics", metrics);
+            return out;
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ObjectProvider<ai.intentoms.learning.experiment.LiftService> lift;
 
     private List<Map<String, Object>> rows(String sql, String tenant, Instant start, Instant end) {
         var spec = jdbc.sql(sql).param("t", tenant);
@@ -182,6 +214,14 @@ public class WeeklyLearningDigestService {
         b.append("\nMeasured impact\n");
         for (Map<String, Object> r : (List<Map<String, Object>>) ((Map<String, Object>) s.get("impact")).get("rewardByDecision"))
             b.append("- ").append(r.get("decision")).append(": mean reward ").append(r.get("meanReward")).append(r.get("change") == null ? "" : " (" + r.get("change") + " vs last week)").append(" over ").append(r.get("maturedEpisodes")).append(" matured episodes\n");
+        Map<String, Object> liftVs = (Map<String, Object>) ((Map<String, Object>) s.get("impact")).get("liftVsHoldout");
+        if (liftVs != null) {
+            b.append("\nAgainst the holdout (last ").append(liftVs.get("windowDays")).append(" days)\n");
+            for (Map<String, Object> m : (List<Map<String, Object>>) liftVs.get("metrics")) {
+                b.append("- ").append(m.get("metric")).append(": ").append(m.get("lift") == null ? "n/a" : m.get("lift"))
+                    .append(Boolean.TRUE.equals(m.get("significant")) ? " (clearly different)" : " (not yet clear)").append("\n");
+            }
+        }
         Map<String, Object> pending = (Map<String, Object>) s.get("pending");
         b.append("\nWhat is pending\n");
         for (Map<String, Object> r : (List<Map<String, Object>>) pending.get("proposalsByStatus")) b.append("- ").append(r.get("proposals")).append(" proposal(s) ").append(r.get("status")).append("\n");
