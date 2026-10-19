@@ -86,6 +86,10 @@ class GovernanceEventsIntegrationTest extends PostgresTestBase {
         assertThat(approved.get("actor")).isEqualTo("user:tester");
         Map<String, Object> payload = Json.readMap((String) approved.get("payload"));
         assertThat(payload).containsKey("payloadDigest").containsEntry("target", "decision:return_risk");
+        // The proposal's stream is hash-chained: the approval names the drafted event's chain digest.
+        Map<String, Object> drafted = Json.readMap((String) events(p.proposalId()).get(0).get("payload"));
+        assertThat(payload.get("previousChainDigest")).isEqualTo(drafted.get("chainDigest"));
+        assertThat(payload.get("chainDigest")).isNotNull().isNotEqualTo(drafted.get("chainDigest"));
 
         Proposal q = LearningFixtures.threshold("return_risk", 0.80, 0.70, "system:band_threshold", null);
         proposals.insert(q);

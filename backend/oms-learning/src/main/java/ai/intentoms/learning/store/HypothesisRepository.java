@@ -30,15 +30,19 @@ public class HypothesisRepository {
     private static final String COLS = "hypothesis_id, scope::text as scope, target_metric, direction, lever::text as lever, prior_confidence, " +
         "evidence_refs::text as evidence_refs, rationale, status, created_at";
 
-    public void insert(Hypothesis h) {
+    /** Inserts a hypothesis attributed to whoever is raising it (see {@link #raisedBy()}). */
+    public void insert(Hypothesis h) { insert(h, raisedBy()); }
+
+    /** Inserts a hypothesis raised by {@code actorRef} (for example {@code system:golden_set_growth}, {@code system:analyst}). */
+    public void insert(Hypothesis h, String actorRef) {
         jdbc.sql("""
-            insert into hypothesis(hypothesis_id, tenant_id, scope, target_metric, direction, lever, prior_confidence, evidence_refs, rationale, status, created_at)
-            values (:id, :t, :scope, :metric, :dir, :lever, :conf, :evidence, :rationale, :status, :created)
+            insert into hypothesis(hypothesis_id, tenant_id, scope, target_metric, direction, lever, prior_confidence, evidence_refs, rationale, status, created_at, raised_by)
+            values (:id, :t, :scope, :metric, :dir, :lever, :conf, :evidence, :rationale, :status, :created, :by)
             """)
             .param("id", h.hypothesisId()).param("t", TenantContext.require()).param("scope", Jsonb.of(h.scope())).param("metric", h.targetMetric())
             .param("dir", h.expectedDirection().name()).param("lever", Jsonb.of(h.lever())).param("conf", h.priorConfidence())
             .param("evidence", Jsonb.of(h.evidence())).param("rationale", h.rationale()).param("status", h.status().name()).param("created", Timestamp.from(h.createdAt()))
-            .update();
+            .param("by", actorRef).update();
         if (events != null) {
             Map<String, Object> payload = new java.util.LinkedHashMap<>();
             payload.put("scope", h.scope());
@@ -46,8 +50,40 @@ public class HypothesisRepository {
             payload.put("direction", h.expectedDirection().name());
             payload.put("priorConfidence", h.priorConfidence());
             payload.put("lever", h.lever());
-            events.hypothesisRaised(h.hypothesisId(), ai.intentoms.platform.ledger.Actor.system("learning"), payload);
+            payload.put("raisedBy", actorRef);
+            events.hypothesisRaised(h.hypothesisId(), ai.intentoms.platform.ledger.Actor.parse(actorRef), payload);
         }
+    }
+
+    /** Who raised a hypothesis, recorded on insert; null for rows written before attribution existed. */
+    public Optional<String> raisedBy(String hypothesisId) {
+        return jdbc.sql("select raised_by from hypothesis where tenant_id = :t and hypothesis_id = :id").param("t", TenantContext.require()).param("id", hypothesisId)
+            .query(String.class).optional();
+    }
+
+    /**
+     * The author of a hypothesis inserted through {@link #insert(Hypothesis)}: the calling learner (its {@code KEY}
+     * constant), the analyst, or the demo seeder — even when a person triggered the run — else the signed-in person,
+     * else the calling class.
+     */
+    static String raisedBy() {
+        Class<?> caller = StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE).walk(frames -> frames
+            .map(StackWalker.StackFrame::getDeclaringClass)
+            .filter(c -> c != HypothesisRepository.class && !c.getName().contains("$$") && !c.getName().startsWith("org.springframework") && !c.getName().startsWith("java.")
+                && !c.getName().startsWith("jdk.") && !c.getName().startsWith("sun."))
+            .findFirst().orElse(null));
+        if (caller != null) {
+            try {
+                Object key = caller.getField("KEY").get(null);
+                if (key != null) return "system:" + key;
+            } catch (ReflectiveOperationException | RuntimeException ignored) { /* no KEY constant */ }
+            if (caller.getSimpleName().contains("Analyst")) return "system:analyst";
+            if (caller.getSimpleName().contains("DemoSeeder")) return "system:demo-seed";
+        }
+        var principal = ai.intentoms.platform.security.SecurityContextHolderUtil.currentPrincipal();
+        if (principal.isPresent() && principal.get().type() == ai.intentoms.platform.security.Principal.Type.USER) return principal.get().actorRef();
+        if (caller == null) return "system:learning";
+        return "system:" + caller.getSimpleName().replaceAll("([a-z])([A-Z])", "$1_$2").toLowerCase(java.util.Locale.ROOT);
     }
 
     public List<Hypothesis> byStatus(String status, int limit) {
