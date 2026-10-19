@@ -25,6 +25,8 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -142,7 +144,10 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         boolean allShipped = s.allLinesIn(fresh, FINISHED_LINE);
         Map<String, Object> capture = s.captureForShipment(fresh, shippedByLine, allShipped, "shipment " + shipment.id());
         Set<String> groupsDone = new LinkedHashSet<>();
-        if (group != null && group.allocations().stream().allMatch(a -> s.qtyIn(fresh, a.lineId(), "released") + s.qtyIn(fresh, a.lineId(), "picking") + s.qtyIn(fresh, a.lineId(), "packed") == 0)) groupsDone.add(group.id());
+        // Judged per group: when a line is split by quantity across nodes, the other node's units of the line are still
+        // released, so the line's state alone never says this group has shipped everything it was allocated (audit B-2).
+        if (group != null && (groupFullyShipped(group, shipments.forOrder(order.id()))
+                || group.allocations().stream().allMatch(a -> s.qtyIn(fresh, a.lineId(), "released") + s.qtyIn(fresh, a.lineId(), "picking") + s.qtyIn(fresh, a.lineId(), "packed") == 0))) groupsDone.add(group.id());
         Map<String, Object> evt = new LinkedHashMap<>();
         evt.put("shipmentId", shipment.id());
         evt.put("nodeId", nodeId);
@@ -195,6 +200,19 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         m.put("orderValue", order.totals() == null || order.totals().grandTotal() == null ? 0.0 : order.totals().grandTotal().amount().doubleValue());
         m.put("lineIds", shipLines.stream().map(ShipmentRecord.Line::lineId).distinct().toList());
         return m;
+    }
+
+    /** Every allocation of the group is covered by units in the group's own parcels. */
+    static boolean groupFullyShipped(FulfilmentGroup group, List<ShipmentRecord> orderShipments) {
+        if (group.allocations().isEmpty()) return false;
+        Map<String, Integer> shipped = new HashMap<>();
+        for (ShipmentRecord sh : orderShipments) {
+            if (!group.id().equals(sh.fulfilmentGroupId())) continue;
+            for (ShipmentRecord.Line l : sh.lines()) shipped.merge(l.lineId(), l.qty(), Integer::sum);
+        }
+        Map<String, Integer> planned = new HashMap<>();
+        for (FulfilmentGroup.Allocation a : group.allocations()) planned.merge(a.lineId(), a.qty(), Integer::sum);
+        return planned.entrySet().stream().allMatch(e -> shipped.getOrDefault(e.getKey(), 0) >= e.getValue());
     }
 
     /** Cumulative shipped units per {@code sku|node} across the order's shipments (so partial shipments consume reservations once covered). */
@@ -364,15 +382,29 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         Order fresh = s.orders().get(order.id());
         boolean all = s.allLinesIn(fresh, Set.of("delivered", "cancelled"));
         List<ShipmentRecord> allShipments = shipments.forOrder(order.id());
+        // A parcel has arrived for the workflow once a scan naming it has been processed here, not when the webhook
+        // moved its shipment record: two scans a few ms apart both reach the records before the first is processed,
+        // and the first would otherwise complete (and silently mark delivered) the second scan's group (audit B-2).
+        Set<String> processed = new HashSet<>();
+        Set<String> credited = new HashSet<>();
+        for (Map<String, Object> earlier : s.orderEvents(order.id(), "order.delivered")) {
+            if (earlier.get("shipments") instanceof List<?> ids) ids.forEach(id -> processed.add(String.valueOf(id)));
+            if (Boolean.TRUE.equals(earlier.get("groupDelivered")) && earlier.get("fulfilmentGroupId") != null) credited.add(String.valueOf(earlier.get("fulfilmentGroupId")));
+        }
+        for (ShipmentRecord sh : targets) processed.add(sh.id());
         Set<String> groupsDone = new LinkedHashSet<>();
         for (FulfilmentGroup g : fresh.fulfilmentGroups()) {
-            boolean shippedGroup = "shipped".equalsIgnoreCase(g.status()) || (all && "released".equalsIgnoreCase(g.status()));
+            String st = String.valueOf(g.status()).toLowerCase(java.util.Locale.ROOT);
+            if (st.equals("rejected") || st.equals("cancelled")) continue;
+            boolean shippedGroup = st.equals("shipped") || st.equals("delivered") || groupFullyShipped(g, allShipments) || (all && st.equals("released"));
             if (!shippedGroup) continue;
             List<ShipmentRecord> parcels = allShipments.stream().filter(sh -> g.id().equals(sh.fulfilmentGroupId())).toList();
-            boolean arrived = all || (!parcels.isEmpty() && parcels.stream().allMatch(sh -> "delivered".equals(sh.status())));
+            boolean arrived = all || (!parcels.isEmpty() && parcels.stream().allMatch(sh -> processed.contains(sh.id())));
             if (arrived) groupsDone.add(g.id());
         }
-        if (!groupsDone.isEmpty()) s.markGroups(fresh.id(), groupsDone, "delivered", null);
+        Set<String> newlyDone = new LinkedHashSet<>();
+        for (FulfilmentGroup g : fresh.fulfilmentGroups()) if (groupsDone.contains(g.id()) && !"delivered".equalsIgnoreCase(g.status())) newlyDone.add(g.id());
+        if (!newlyDone.isEmpty()) s.markGroups(fresh.id(), newlyDone, "delivered", null);
         Order afterGroups = s.orders().get(order.id());
 
         java.time.LocalDate today = java.time.LocalDate.now();
@@ -405,7 +437,8 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
             evt.put("shipments", entry.getValue());
             evt.put("lineIds", List.copyOf(linesByGroup.getOrDefault(groupId, Set.of())));
             evt.put("tracking", String.valueOf(payload.getOrDefault("tracking", "")));
-            evt.put("groupDelivered", g == null || groupsDone.contains(g.id()));
+            // True exactly once per group: on the scan that brings its last parcel (a repeated scan credits nobody again).
+            evt.put("groupDelivered", g == null || (groupsDone.contains(g.id()) && !credited.contains(g.id())));
             evt.put("allDelivered", all);
             evt.put("onTime", onTime);
             evt.put("lateByHours", lateByHours);

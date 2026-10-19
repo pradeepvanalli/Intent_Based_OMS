@@ -378,6 +378,11 @@ public class OrderWorkflowSupport {
         events.append("order", orderId, new NewEvent(type, payload, ACTOR, null, orderId, Map.of()));
     }
 
+    /** Payloads of the order's ledger events of {@code type} appended so far, oldest first. */
+    public List<Map<String, Object>> orderEvents(String orderId, String type) {
+        return events.load("order", orderId).stream().filter(e -> type.equals(e.type())).map(e -> e.payload() == null ? Map.<String, Object>of() : e.payload()).toList();
+    }
+
     // ------------------------------------------------------------------ misc
 
     @SuppressWarnings("unchecked")
