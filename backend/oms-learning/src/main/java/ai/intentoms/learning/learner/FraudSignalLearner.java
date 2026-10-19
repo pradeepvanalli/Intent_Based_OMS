@@ -25,8 +25,9 @@ import java.util.Map;
 /**
  * FD-01: what the {@code payment_risk} signals have meant for this tenant. The workflow hands the decision raw counts
  * (extra cards in the last hour / day, other customers on the same address, device or card); this learner turns them
- * into learned features from labelled outcomes ({@code fraud_outcome}, provisional labels only after the chargeback
- * window, see {@link FraudLabels}):
+ * into learned features from labelled outcomes ({@code fraud_outcome}) of the year of decisions whose chargeback window
+ * has closed, frauds and goods alike, so the rates are not inflated by frauds that surface before goods do (see
+ * {@link FraudLabels#sampled}):
  * <ul>
  *   <li>per signal and level ({@code 0}, {@code 1}, {@code 2-3}, {@code 4+}), the fraud rate of decisions that saw that
  *       level, shrunk toward the tenant's base rate with weight 10: {@code FRAUD_SIGNAL_RATE} for subject DECISION
@@ -85,14 +86,15 @@ public class FraudSignalLearner implements GovernedLearner {
         if (!governance.begin(KEY).mayRun()) return 0;
         governance.recordRun(KEY);
         Instant now = Instant.now();
-        int window = config.getInt(FraudLabels.WINDOW_KEY, FraudLabels.DEFAULT_WINDOW_DAYS);
-        Instant since = now.minus(Duration.ofDays(365 + window));
+        int window = FraudLabels.windowDays(config, DECISION);
+        Instant until = FraudLabels.cohortEnd(now, window); // frauds and goods from the same matured cohort (FD-03)
+        Instant since = until.minus(Duration.ofDays(365));
         int n = 0, fraud = 0;
         Map<String, int[]> levels = new HashMap<>();
         Map<String, int[]> agents = new HashMap<>();
         for (int[] v : decisionRecords.activeVersions(DECISION, since)) {
-            for (DecisionRecord r : decisionRecords.labelledBetween(DECISION, v[0], since, now)) {
-                Boolean label = FraudLabels.usable(r, now, window);
+            for (DecisionRecord r : decisionRecords.labelledBetween(DECISION, v[0], since, until)) {
+                Boolean label = FraudLabels.sampled(r, now, window);
                 if (label == null || r.input() == null) continue;
                 n++;
                 if (label) fraud++;

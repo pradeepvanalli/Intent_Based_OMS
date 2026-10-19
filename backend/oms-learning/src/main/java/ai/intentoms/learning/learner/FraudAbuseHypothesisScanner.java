@@ -42,7 +42,8 @@ import java.util.stream.Collectors;
  *       for live use), and at {@code oms.learning.fraud.ring-min-customers} (default 3) or more a hypothesis is raised
  *       with the evidence, once per address while it is open.</li>
  *   <li><b>Channel concentration.</b> A confirmed-fraud rate of 15% or more in one order channel for a fraud decision
- *       (at least 20 labelled cases).</li>
+ *       (at least 20 labelled cases), over an unbiased sample: 30 days of decisions whose observation window has closed,
+ *       frauds and goods alike ({@link FraudLabels#sampled}).</li>
  * </ul>
  */
 @Component
@@ -57,11 +58,14 @@ public class FraudAbuseHypothesisScanner implements GovernedLearner {
     private final HypothesisRepository hypotheses;
     private final LearnedFactRepository facts;
     private final LearnerGovernance governance;
+    private final ai.intentoms.platform.config.TenantConfigStore config;
 
     @Value("${oms.learning.fraud.ring-min-customers:3}") private int ringMinCustomers = 3;
 
-    public FraudAbuseHypothesisScanner(DecisionRecordRepository decisionRecords, HypothesisRepository hypotheses, LearnedFactRepository facts, LearnerGovernance governance) {
+    public FraudAbuseHypothesisScanner(DecisionRecordRepository decisionRecords, HypothesisRepository hypotheses, LearnedFactRepository facts, LearnerGovernance governance,
+                                       ai.intentoms.platform.config.TenantConfigStore config) {
         this.governance = governance;
+        this.config = config;
         this.decisionRecords = decisionRecords;
         this.hypotheses = hypotheses;
         this.facts = facts;
@@ -85,15 +89,22 @@ public class FraudAbuseHypothesisScanner implements GovernedLearner {
         // L0 observes: ring counts are still measured and published as facts (never used live at L0), but no hypothesis.
         scanAddressRings(since, gate.mayPropose());
         if (!gate.mayPropose()) return;
+        Instant now = Instant.now();
         for (String decision : FRAUD_DECISIONS) {
+            // FD-03: frauds and goods from the same observation window (30 days of decisions whose window has closed);
+            // labels still provisional, and decisions too recent to have shown fraud, are not in the sample.
+            int window = FraudLabels.windowDays(config, decision);
+            Instant until = FraudLabels.cohortEnd(now, window), from = until.minus(Duration.ofDays(30));
             List<DecisionRecord> labelled = new ArrayList<>();
-            for (int v : versions(decision, since)) labelled.addAll(decisionRecords.labelledBetween(decision, v, since, Instant.now()));
+            for (int v : versions(decision, from)) {
+                for (DecisionRecord r : decisionRecords.labelledBetween(decision, v, from, until)) if (FraudLabels.sampled(r, now, window) != null) labelled.add(r);
+            }
             if (labelled.size() < MIN_SAMPLE) continue;
             Map<String, List<DecisionRecord>> byChannel = labelled.stream().collect(Collectors.groupingBy(r -> String.valueOf(channel(r))));
             for (var entry : byChannel.entrySet()) {
                 List<DecisionRecord> group = entry.getValue();
                 if (group.size() < MIN_SAMPLE) continue;
-                long confirmed = group.stream().filter(r -> Boolean.TRUE.equals(fraudConfirmed(r))).count();
+                long confirmed = group.stream().filter(r -> Boolean.TRUE.equals(FraudLabels.sampled(r, now, window))).count();
                 double rate = (double) confirmed / group.size();
                 if (rate < ELEVATED_RATE_THRESHOLD) continue;
                 raiseChannelHypothesis(decision, entry.getKey(), rate, group.size());

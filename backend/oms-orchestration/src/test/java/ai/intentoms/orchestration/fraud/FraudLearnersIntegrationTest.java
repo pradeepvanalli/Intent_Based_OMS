@@ -70,12 +70,24 @@ class FraudLearnersIntegrationTest extends OrchestrationTestBase {
             "billing_shipping_mismatch", false), "order", Map.of("total", total, "channel", "web"));
     }
 
-    /** Fraud is confirmed by a chargeback; "not fraud" is the provisional delivered label, matured past the 120-day window. */
+    /**
+     * Fraud is confirmed by a chargeback; "not fraud" is the provisional delivered label, matured past the 120-day window.
+     * FD-03: frauds and goods come from the same cohort, decisions old enough that the window has closed.
+     */
     private void labelled(boolean saidRisky, double confidence, boolean fraud, int n) {
         for (int i = 0; i < n; i++) {
-            DecisionRecord r = paymentRisk(saidRisky, confidence, input(0, 120.0), Instant.now().minus(Duration.ofDays(fraud ? 2 : 130)));
+            DecisionRecord r = paymentRisk(saidRisky, confidence, input(0, 120.0), Instant.now().minus(Duration.ofDays(130)));
             records.insert(r);
             records.label(r.id(), "fraud_outcome", Map.of("confirmed", fraud, "kind", fraud ? "chargeback_fraud" : "delivered_no_chargeback", "provisional", !fraud));
+        }
+    }
+
+    /** FD-03: a chargeback on last week's order is real, but its goods are not known yet; counting it alone would bias the sample. */
+    private void recentFraud(int n) {
+        for (int i = 0; i < n; i++) {
+            DecisionRecord r = paymentRisk(false, 0.95, input(0, 120.0), Instant.now().minus(Duration.ofDays(5)));
+            records.insert(r);
+            records.label(r.id(), "fraud_outcome", Map.of("confirmed", true, "kind", "chargeback_fraud", "provisional", false));
         }
     }
 
@@ -94,6 +106,7 @@ class FraudLearnersIntegrationTest extends OrchestrationTestBase {
         labelled(false, 0.95, false, 15);  // good orders it gets right
         labelled(true, 0.97, true, 5);     // fraud it catches
         freshProvisional(true, 10);        // still inside the chargeback window: not counted
+        recentFraud(6);                    // nor the frauds of that young cohort (same observation window for both)
 
         tuner.runNow();
 
