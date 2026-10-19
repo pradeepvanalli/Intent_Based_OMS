@@ -1,4 +1,5 @@
 import { expect, request, type APIRequestContext, type APIResponse } from '@playwright/test';
+import { createHash } from 'node:crypto';
 import { BASE_URL } from '../playwright.config';
 import { TENANT } from './roles';
 
@@ -128,4 +129,53 @@ export async function shipAndDeliver(api: APIRequestContext, orderId: string): P
 export function opsAgentKey(logText: string): string | null {
   const m = /Registered demo agent ops-copilot \(tier 3, protocol mcp\) secret=\S+ apiKey=(\S+)/.exec(logText);
   return m ? m[1] : null;
+}
+
+/**
+ * The server's sticky experiment split (ExperimentManager.stickyInTreatment): SHA-256 of "experimentId:key", first two
+ * bytes as a bucket out of 10 000. Lets a spec pick a customer the persistent holdout will hold back, without guessing.
+ */
+export function stickyInTreatment(experimentId: string, key: string, share: number): boolean {
+  const d = createHash('sha256').update(`${experimentId}:${key}`, 'utf8').digest();
+  return ((d[0] << 8) | d[1]) % 10_000 < Math.round(share * 10_000);
+}
+
+/** A fresh order reference whose customer (`cust-<ref>`, as createOrder names it) is in, or out of, the running holdout. */
+export async function customerRefFor(api: APIRequestContext, holdout: boolean): Promise<{ ref: string; experimentId: string }> {
+  const running = (await experiments(api)).find((e) => e.mode === 'HOLDOUT' && e.status === 'RUNNING');
+  if (!running) throw new Error('no running holdout experiment (the demo seed starts one)');
+  for (let i = 0; i < 5000; i++) {
+    const ref = `e2e-${uid()}-${i}`;
+    if (stickyInTreatment(running.experimentId, `customer:cust-${ref}`, running.trafficShare) === holdout) return { ref, experimentId: running.experimentId };
+  }
+  throw new Error(`no ${holdout ? 'holdout' : 'treatment'} customer found for ${running.experimentId}`);
+}
+
+/** The order view with the parts the parcel specs read. */
+export type FullOrderView = {
+  order: { id: string; status: string; lines: Array<{ lineId: string; status: string }> };
+  fulfilmentGroups: Array<{ id: string; nodeId: string; status: string; allocations: Array<{ lineId: string; qty: number }> }>;
+  shipments: Array<{ id: string; tracking?: string; status: string; lines: Array<{ lineId: string; qty: number }> }>;
+  ledger: Array<{ type: string; data?: Record<string, unknown> }>;
+};
+
+/** WMS "shipped" for one line of an order as its own parcel, from the node that line was sourced to. */
+export async function shipLine(api: APIRequestContext, orderId: string, lineId: string, tracking: string): Promise<void> {
+  const view = await ok<FullOrderView>(api.get(`/api/v1/orders/${orderId}/view`));
+  const live = view.fulfilmentGroups.filter((g) => !/rejected|cancelled/i.test(g.status));
+  const group = live.find((g) => g.allocations.some((a) => a.lineId === lineId));
+  if (!group) throw new Error(`line ${lineId} of ${orderId} is not allocated to any fulfilment group`);
+  const qty = group.allocations.filter((a) => a.lineId === lineId).reduce((s, a) => s + a.qty, 0);
+  const hooks = await anonymous();
+  await ok(hooks.post(`/webhooks/wms/${group.nodeId}`, {
+    data: { eventId: `wms-${tracking}`, type: 'shipped', orderId, fulfilmentGroupId: group.id, carrier: 'UPS', service: 'ground', tracking, lines: [{ lineId, qty }] },
+  }), 200, 201, 202);
+  await hooks.dispose();
+}
+
+/** Carrier "delivered" scan for one parcel, by its tracking number. */
+export async function deliverParcel(orderId: string, tracking: string): Promise<void> {
+  const hooks = await anonymous();
+  await ok(hooks.post('/webhooks/carrier', { data: { eventId: `car-${tracking}`, type: 'delivered', orderId, tracking } }), 200, 201, 202);
+  await hooks.dispose();
 }
