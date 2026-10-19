@@ -105,6 +105,28 @@ class DecisionRuntimeIntegrationTest extends DecisionTestBase {
         assertThat(events("decision", second.recordId(), "decision.evaluated")).hasSize(1);
     }
 
+    /** XP-05 / FR-XAI-04: the customer view of a sourcing decision names no location, rate, score, cost or backlog. */
+    @Test
+    void customerViewOfASourcingDecisionLeaksNoInternals() {
+        List<Map<String, Object>> candidates = List.of(
+            Map.of("id", "DC-NJ", "type", "dc", "backlog_units", 120, "reject_rate", 0.0437, "staffing", 0.8, "minutes_to_cutoff", 95, "distance_km", 41.5, "cost_usd", 7.25, "on_time_rate", 0.9312),
+            Map.of("id", "ST-CHI-01", "type", "store", "backlog_units", 18, "reject_rate", 0.1121, "staffing", 0.6, "minutes_to_cutoff", 30, "distance_km", 1180.2, "cost_usd", 11.4, "on_time_rate", 0.7731));
+        DecisionResult r = decisions.decide("sourcing_node_score", Map.of("candidates", candidates, "order", Map.of("id", "ord_safe_1")),
+            DecisionOptions.live("order", "ord_safe_1", Actor.system("test")));
+        actAs("cs", Set.of("decision.read"));
+        Object view = new ai.intentoms.decision.api.DecisionRecordController(decisions).why(r.recordId(), "customer");
+        assertThat(view).isInstanceOf(CustomerSafeTraceView.class);
+        CustomerSafeTraceView safe = (CustomerSafeTraceView) view;
+        String json = Json.write(safe);
+        assertThat(json).doesNotContain("DC-NJ").doesNotContain("ST-CHI-01").doesNotContain("0.9312").doesNotContain("0.0437").doesNotContain("7.25")
+            .doesNotContainIgnoringCase("on_time_rate").doesNotContainIgnoringCase("reject_rate").doesNotContainIgnoringCase("backlog").doesNotContainIgnoringCase("staffing")
+            .doesNotContainIgnoringCase("distance").doesNotContainIgnoringCase("cost").doesNotContainIgnoringCase("heuristic").doesNotContainIgnoringCase("probabilit");
+        assertThat(safe.value()).isNull();
+        assertThat(safe.state()).isEmpty();
+        assertThat(safe.questions()).isEmpty();
+        assertThat(safe.summary()).isNotBlank();
+    }
+
     /** OC-01: every candidate is logged as an arm, and the arm is what was applied, not what the model said. */
     @Test
     void armsListEveryCandidateAndChosenArmIsTheAppliedValue() {

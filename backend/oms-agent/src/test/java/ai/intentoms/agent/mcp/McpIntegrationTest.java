@@ -214,4 +214,23 @@ class McpIntegrationTest extends AgentTestBase {
         JsonNode ok = Json.tree(signed("shopbot-ucp", rotated.get("secret"), signedHeaderTimestamp(), HttpMethod.POST, "/mcp", rpc(1, "ping", null), Map.of()).getBody());
         assertThat(ok.path("result").isObject()).isTrue();
     }
+
+    @Autowired ai.intentoms.decision.runtime.DecisionService decisionService;
+
+    /** XP-05: decision_why gives an agent the customer-safe view: no location ids, learned rates, scores, costs or backlog. */
+    @Test
+    void decisionWhyIsCustomerSafeForASourcingDecision() {
+        TestAgent ops = registerAgent(3, List.of("decision_why"), new BigDecimal("0"), 600, List.of(), null);
+        List<Map<String, Object>> candidates = List.of(
+            Map.of("id", "DC-NJ", "type", "dc", "backlog_units", 120, "reject_rate", 0.0437, "staffing", 0.8, "minutes_to_cutoff", 95, "distance_km", 41.5, "cost_usd", 7.25, "on_time_rate", 0.9312),
+            Map.of("id", "ST-CHI-01", "type", "store", "backlog_units", 18, "reject_rate", 0.1121, "staffing", 0.6, "minutes_to_cutoff", 30, "distance_km", 1180.2, "cost_usd", 11.4, "on_time_rate", 0.7731));
+        var r = decisionService.decide("sourcing_node_score", Map.of("candidates", candidates, "order", Map.of("id", "ord_mcp_safe")),
+            ai.intentoms.decision.model.DecisionOptions.live("order", "ord_mcp_safe", ai.intentoms.platform.ledger.Actor.system("test")));
+        JsonNode view = structured(mcp(ops, toolCall(1, "decision_why", Map.of("recordId", r.recordId()))));
+        String json = view.toString();
+        assertThat(json).contains(r.recordId()).contains("summary");
+        assertThat(json).doesNotContain("DC-NJ").doesNotContain("ST-CHI-01").doesNotContain("0.9312").doesNotContain("0.0437")
+            .doesNotContainIgnoringCase("on_time_rate").doesNotContainIgnoringCase("reject_rate").doesNotContainIgnoringCase("backlog")
+            .doesNotContainIgnoringCase("staffing").doesNotContainIgnoringCase("distance").doesNotContainIgnoringCase("cost");
+    }
 }
