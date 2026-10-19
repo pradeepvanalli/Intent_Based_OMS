@@ -26,6 +26,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** UC-08: delivered order → RMA → return workflow (review task, carrier scan, receipt, inspection, refund). */
 class ReturnWorkflowIntegrationTest extends OrchestrationTestBase {
     @Autowired ReturnService returns;
+    @Autowired ai.intentoms.learning.store.EpisodeRepository episodes;
+    @Autowired ai.intentoms.learning.store.OutcomeRepository outcomes;
 
     private Order deliveredOrder(String ref) {
         Order o = capture(webOrder(ref, "tok_visa_ok"));
@@ -78,5 +80,15 @@ class ReturnWorkflowIntegrationTest extends OrchestrationTestBase {
         assertThat(refunds.get(0).returnId()).isEqualTo(rma.rmaId());
         assertThat(refunds.get(0).status()).isEqualTo(RefundStatus.SUCCEEDED);
         assertThat(w.vars()).containsEntry("orderId", o.id());
+
+        // OC-03 (audit defect 9): the refund and the disposition are outcomes for the order the return came from.
+        drainOutbox();
+        var orderEpisodes = episodes.forOrder(o.id());
+        assertThat(orderEpisodes).isNotEmpty();
+        assertThat(orderEpisodes).allSatisfy(ep -> assertThat(outcomes.forEpisode(ep.episodeId()))
+            .anySatisfy(out -> assertThat(out.payload()).isInstanceOfSatisfying(ai.intentoms.learning.model.OutcomeData.ReturnOutcome.class, r -> {
+                assertThat(r.fraudConfirmed()).isFalse();
+                assertThat(r.refundAmount()).isPositive();
+            })));
     }
 }

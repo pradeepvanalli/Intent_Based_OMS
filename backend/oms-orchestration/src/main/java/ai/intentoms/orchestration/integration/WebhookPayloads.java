@@ -50,15 +50,28 @@ public final class WebhookPayloads {
     }
 
     /** Normalised carrier event. */
-    public record CarrierEvent(String eventId, String type, String orderId, String tracking, String rmaId, String shipmentId) {
+    /** A carrier scan. {@code damaged}/{@code lost} come from the body ({@code damaged: true}, or {@code condition:
+     * "damaged"|"lost"}) and travel with the signal so the delivery outcome keeps them. */
+    public record CarrierEvent(String eventId, String type, String orderId, String tracking, String rmaId, String shipmentId, boolean damaged, boolean lost) {
+        public CarrierEvent(String eventId, String type, String orderId, String tracking, String rmaId, String shipmentId) {
+            this(eventId, type, orderId, tracking, rmaId, shipmentId, false, false);
+        }
+
         public String signal() { return CARRIER_SIGNALS.get(type); }
 
-        public Map<String, Object> signalPayload() {
+        public Map<String, Object> signalPayload() { return signalPayload(List.of()); }
+
+        /** {@code shipments}: the parcels of this order the scan resolved to ({@code shipmentId}, {@code fulfilmentGroupId}),
+         * already moved on by the webhook, so the workflow delivers exactly those and nothing else. */
+        public Map<String, Object> signalPayload(List<Map<String, Object>> shipments) {
             Map<String, Object> p = new LinkedHashMap<>();
             p.put("eventId", eventId);
             p.put("type", type);
             if (tracking != null) p.put("tracking", tracking);
             if (shipmentId != null) p.put("shipmentId", shipmentId);
+            if (shipments != null && !shipments.isEmpty()) p.put("shipments", shipments);
+            if (damaged) p.put("damaged", true);
+            if (lost) p.put("lost", true);
             return p;
         }
     }
@@ -82,7 +95,10 @@ public final class WebhookPayloads {
         String orderId = str(body.get("orderId"));
         if ("return_scan".equals(type) && (rmaId == null || rmaId.isBlank())) throw new ValidationException("rmaId is required for carrier event return_scan");
         if (!"return_scan".equals(type) && (tracking == null || tracking.isBlank()) && (orderId == null || orderId.isBlank())) throw new ValidationException("tracking or orderId is required");
-        return new CarrierEvent(eventId(body, "carrier"), type, orderId, tracking, rmaId, str(body.get("shipmentId")));
+        String condition = str(body.get("condition"));
+        boolean damaged = Boolean.TRUE.equals(body.get("damaged")) || "damaged".equalsIgnoreCase(condition);
+        boolean lost = Boolean.TRUE.equals(body.get("lost")) || "lost".equalsIgnoreCase(condition);
+        return new CarrierEvent(eventId(body, "carrier"), type, orderId, tracking, rmaId, str(body.get("shipmentId")), damaged, lost);
     }
 
     /** Inventory feed: {@code {eventId?, source?, asOf?, positions:[{sku, qty, nodeId?, supplyType?, demandType?, confidence?, asOf?}]}} or a bare list. */

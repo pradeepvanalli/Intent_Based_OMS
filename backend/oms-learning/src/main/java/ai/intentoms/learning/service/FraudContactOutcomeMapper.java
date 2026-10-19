@@ -10,7 +10,8 @@ import java.util.Map;
 /**
  * OC-03 outcomes from payments, refused deliveries and customer contacts:
  * <ul>
- *   <li>{@code payment.chargeback}: a payment outcome with the disputed amount (the reward's fraud-loss term);</li>
+ *   <li>{@code payment.chargeback}: a payment outcome with the disputed amount (the reward's fraud-loss term);
+ *       {@code payment.chargeback_won} cancels it;</li>
  *   <li>{@code order.returned_to_sender}: for cash on delivery a refused payment (FD-02's outcome), otherwise a failed
  *       delivery (not on time);</li>
  *   <li>{@code cs.complaint} / {@code cs.contact}: a contact, a complaint weighing more in the reward's contact term
@@ -22,7 +23,7 @@ public class FraudContactOutcomeMapper implements OutcomeMapper {
 
     @Override
     public List<String> eventTypes() {
-        return List.of("payment.chargeback", "order.returned_to_sender", "cs.complaint", "cs.contact");
+        return List.of("payment.chargeback", "payment.chargeback_won", "order.returned_to_sender", "cs.complaint", "cs.contact");
     }
 
     @Override
@@ -30,6 +31,8 @@ public class FraudContactOutcomeMapper implements OutcomeMapper {
         Map<String, Object> p = e.payload() == null ? Map.of() : e.payload();
         return switch (e.type()) {
             case "payment.chargeback" -> new OutcomeData.PaymentOutcome(true, false, num(p.get("amount")));
+            // Won dispute: the money came back, so the earlier loss is cancelled (negative amount).
+            case "payment.chargeback_won" -> new OutcomeData.PaymentOutcome(true, false, -Math.abs(num(p.get("amount"))));
             case "order.returned_to_sender" -> Boolean.TRUE.equals(p.get("cod"))
                 ? new OutcomeData.PaymentOutcome(false, true, num(p.get("amount")))
                 : new OutcomeData.DeliveryOutcome(false, 0, false, false);

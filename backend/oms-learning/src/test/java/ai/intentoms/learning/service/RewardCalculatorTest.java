@@ -54,4 +54,51 @@ class RewardCalculatorTest {
         assertThat(w.forTerm("fraud").toDays()).isEqualTo(120);
         assertThat(w.longest().toDays()).isEqualTo(120);
     }
+
+    private static OutcomeData.FulfillmentOutcome parcel(String group, String shipment, int groupUnits, int shipped, double groupCost) {
+        return new OutcomeData.FulfillmentOutcome(2, false, List.of("n"), false, groupUnits, shipped, groupCost, 100.0, group, shipment);
+    }
+
+    @Test void oneParcelIsNoSplitAndCountsOnce() {
+        Map<String, Double> c = RewardCalculator.components(List.of(out(parcel("fg1", "sh1", 3, 3, 12.0))));
+        assertThat(c.get("split")).isZero();
+        assertThat(c.get("fill")).isCloseTo(1.0, within(1e-9));
+        assertThat(c.get("cost")).isCloseTo(0.12, within(1e-9));
+    }
+
+    @Test void oneGroupInTwoParcelsCountsTheGroupOnce() {
+        // The audit's ord_4mh34mvhp4rc: 3/3 units in two parcels scored fill 0.5 and cost 0.254 before.
+        Map<String, Double> c = RewardCalculator.components(List.of(out(parcel("fg1", "sh1", 3, 2, 12.7)), out(parcel("fg1", "sh2", 3, 1, 12.7))));
+        assertThat(c.get("fill")).isCloseTo(1.0, within(1e-9));
+        assertThat(c.get("cost")).isCloseTo(0.127, within(1e-9));
+        assertThat(c.get("split")).isCloseTo(0.5, within(1e-9));
+    }
+
+    @Test void threeParcelsAcrossTwoGroups() {
+        Map<String, Double> c = RewardCalculator.components(List.of(
+            out(parcel("fg1", "sh1", 2, 2, 10.0)), out(parcel("fg2", "sh2", 2, 1, 8.0)), out(parcel("fg2", "sh3", 2, 1, 8.0))));
+        assertThat(c.get("fill")).isCloseTo(1.0, within(1e-9));       // 4 shipped of 2 + 2 ordered
+        assertThat(c.get("cost")).isCloseTo(0.18, within(1e-9));      // 10 + 8, each group once
+        assertThat(c.get("split")).isCloseTo(1.0, within(1e-9));      // three parcels
+    }
+
+    @Test void redeliveredParcelEventDoesNotAddAPackage() {
+        Map<String, Double> c = RewardCalculator.components(List.of(out(parcel("fg1", "sh1", 3, 3, 12.0)), out(parcel("fg1", "sh1", 3, 0, 12.0))));
+        assertThat(c.get("split")).isZero();
+    }
+
+    @Test void onTimeIsTheShareOfDeliveredGroupsOnTime() {
+        Map<String, Double> c = RewardCalculator.components(List.of(
+            out(new OutcomeData.DeliveryOutcome(true, 0, false, false)), out(new OutcomeData.DeliveryOutcome(false, 30, false, false))));
+        assertThat(c.get("otd")).isCloseTo(0.5, within(1e-9));
+    }
+
+    @Test void refusedCashOnDeliveryAndChargebacksAreLossesAndAWonChargebackCancels() {
+        var shipped = out(parcel("fg1", "sh1", 1, 1, 5.0));
+        assertThat(RewardCalculator.components(List.of(shipped, out(new OutcomeData.PaymentOutcome(false, true, 100.0)))).get("fraud")).isCloseTo(1.0, within(1e-9));
+        assertThat(RewardCalculator.components(List.of(shipped, out(new OutcomeData.PaymentOutcome(true, false, 50.0)))).get("fraud")).isCloseTo(0.5, within(1e-9));
+        assertThat(RewardCalculator.components(List.of(shipped, out(new OutcomeData.PaymentOutcome(true, false, 50.0)), out(new OutcomeData.PaymentOutcome(true, false, -50.0))))
+            .get("fraud")).isZero();
+        assertThat(RewardCalculator.components(List.of(shipped, out(new OutcomeData.ReturnOutcome("wrong_item", "restock", true, 40.0)))).get("fraud")).isCloseTo(0.4, within(1e-9));
+    }
 }

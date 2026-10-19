@@ -14,10 +14,19 @@ import java.util.Set;
  * - w_split*Splits - w_fraud*FraudLoss - w_cx*Contacts + w_inv*AgedStockRelief.
  *
  * <p>Every term is normalised to [0,1] before the weights apply, so a weight means the same thing for every tenant:
- * fill = units shipped / units ordered; otd = 1 when delivered on time and not lost; cost = fulfilment cost / order
- * value (capped at 1); split = extra packages, 0 for one package, 0.5 for two, 1 for three or more; fraud = confirmed
- * fraud loss / order value (1 when the order value is unknown); cx = contacts, a complaint counting 1 and a WISMO
- * 0.5, capped at 1; inv = 1 when the order sold aged stock, 0 when it left stock stranded.
+ * <ul>
+ *   <li>fill = units shipped / units ordered, where units ordered are counted once per fulfilment group (a group that
+ *       ships in two parcels does not double its denominator);</li>
+ *   <li>otd = share of delivered fulfilment groups that arrived on time and not lost;</li>
+ *   <li>cost = fulfilment cost / order value, cost counted once per group, capped at 1;</li>
+ *   <li>split = extra parcels: 0 for one parcel, 0.5 for two, 1 for three or more. Every parcel beyond the first counts;
+ *       whether a single shipment was feasible is not known at outcome time, so this over-penalises an order no single
+ *       node could have shipped (the sourcing decision's own split check carries that context);</li>
+ *   <li>fraud = loss / order value (1 when the order value is unknown): confirmed-fraud returns, chargebacks (a won
+ *       chargeback cancels its loss) and refused cash-on-delivery parcels;</li>
+ *   <li>cx = contacts, a complaint counting 1 and a WISMO 0.5, capped at 1;</li>
+ *   <li>inv = 1 when the order sold aged stock, 0 when it left stock stranded.</li>
+ * </ul>
  *
  * <p>A term with no evidence yet is reported in {@link #scoredTerms} as unscored and contributes 0, so a provisional
  * reward is never mistaken for a complete one; {@link RewardMaturityService} decides when a term's window has closed.
@@ -28,28 +37,36 @@ public final class RewardCalculator {
     public static final List<String> TERMS = List.of("fill", "otd", "cost", "split", "fraud", "cx", "inv");
 
     public static Map<String, Double> components(List<OutcomeRecord> outcomes) {
-        double units = 0, shipped = 0, cost = 0, orderValue = 0, fraudLoss = 0, contacts = 0;
-        int packages = 0;
-        Double onTime = null, invRelief = null;
+        double shipped = 0, orderValue = 0, fraudLoss = 0, contacts = 0;
+        Map<String, Integer> unitsByGroup = new LinkedHashMap<>();
+        Map<String, Double> costByGroup = new LinkedHashMap<>();
+        Set<String> parcels = new java.util.HashSet<>();
+        int legacyPackages = 0, deliveries = 0, onTimeDeliveries = 0, row = 0;
+        Double invRelief = null;
         for (OutcomeRecord o : outcomes) {
+            row++;
             switch (o.payload()) {
-                case OutcomeData.DeliveryOutcome d -> onTime = d.onTime() && !d.lost() ? 1.0 : 0.0;
+                case OutcomeData.DeliveryOutcome d -> { deliveries++; if (d.onTime() && !d.lost()) onTimeDeliveries++; }
                 case OutcomeData.FulfillmentOutcome f -> {
-                    packages += Math.max(1, f.packageCount());
-                    units += f.unitsOrdered();
+                    String group = f.fulfilmentGroupId() != null ? f.fulfilmentGroupId() : f.shipmentId() != null ? "order" : "row" + row;
+                    unitsByGroup.merge(group, f.unitsOrdered(), Math::max);
+                    costByGroup.merge(group, f.fulfillmentCost(), Math::max);
+                    if (f.shipmentId() != null) parcels.add(f.shipmentId()); else legacyPackages += Math.max(1, f.packageCount());
                     shipped += f.unitsShipped();
-                    cost += f.fulfillmentCost();
                     orderValue = Math.max(orderValue, f.orderValue());
                 }
                 case OutcomeData.ReturnOutcome r -> { if (r.fraudConfirmed()) fraudLoss += r.refundAmount(); }
-                case OutcomeData.PaymentOutcome p -> { if (p.chargeback()) fraudLoss += p.amount(); }
+                case OutcomeData.PaymentOutcome p -> { if (p.chargeback() || p.refused()) fraudLoss += p.amount(); }
                 case OutcomeData.ContactOutcome ct -> contacts += ct.complaint() ? 1.0 : 0.5;
                 case OutcomeData.InventoryOutcome inv -> { if (inv.stranded()) invRelief = 0.0; else if (inv.daysToSale() > 0) invRelief = 1.0; } // a backorder resolution is not aged-stock relief
             }
         }
+        double units = unitsByGroup.values().stream().mapToInt(Integer::intValue).sum();
+        double cost = costByGroup.values().stream().mapToDouble(Double::doubleValue).sum();
+        int packages = parcels.size() + legacyPackages;
         Map<String, Double> c = new LinkedHashMap<>();
         c.put("fill", units > 0 ? clamp(shipped / units) : 0.0);
-        c.put("otd", onTime == null ? 0.0 : onTime);
+        c.put("otd", deliveries == 0 ? 0.0 : (double) onTimeDeliveries / deliveries);
         c.put("cost", orderValue > 0 ? clamp(cost / orderValue) : 0.0);
         c.put("split", packages <= 1 ? 0.0 : clamp((packages - 1) / 2.0));
         c.put("fraud", fraudLoss <= 0 ? 0.0 : orderValue > 0 ? clamp(fraudLoss / orderValue) : 1.0);
@@ -70,7 +87,7 @@ public final class RewardCalculator {
                     if (f.orderValue() > 0) s.add("cost");
                 }
                 case OutcomeData.ReturnOutcome r -> { if (r.fraudConfirmed()) s.add("fraud"); }
-                case OutcomeData.PaymentOutcome p -> { if (p.chargeback()) s.add("fraud"); }
+                case OutcomeData.PaymentOutcome p -> { if (p.chargeback() || p.refused()) s.add("fraud"); }
                 case OutcomeData.ContactOutcome ct -> s.add("cx");
                 case OutcomeData.InventoryOutcome inv -> { if (inv.stranded() || inv.daysToSale() > 0) s.add("inv"); }
             }

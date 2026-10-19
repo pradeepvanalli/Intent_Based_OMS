@@ -195,7 +195,7 @@ public class BopisOrderWorkflow extends AbstractOrderWorkflow {
         Map<String, Object> resource;
         try { resource = planSummary(sourcing.resource(order.id(), nodeId, kind, OrderWorkflowSupport.ACTOR)); }
         catch (ConflictException e) { resource = Map.of("status", "NO_ACTIVE_GROUP", "error", String.valueOf(e.getMessage())); }
-        Map<String, Object> exc = s.raise("wms", kind, "Store " + nodeId + " could not fulfil the pickup order", order.id(), null, nodeId, Map.of("resourceStatus", resource.get("status")), null);
+        Map<String, Object> exc = s.raise("wms", kind, "Store " + nodeId + " could not fulfil the pickup order", order.id(), null, nodeId, Map.of("resourceStatus", resource.get("status")), null, ""); // workflow already re-sourced
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("transitions", moved);
         out.put("reservationsReleased", released);

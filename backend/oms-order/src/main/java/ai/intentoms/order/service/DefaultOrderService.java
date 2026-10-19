@@ -222,10 +222,10 @@ public class DefaultOrderService implements OrderService {
         MarginSnapshot margin = pricing.margin(priced.lines(), priced.totals(), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null);
 
         IntentProfile intent = explicitIntent(req.intentChoices());
-        Customer customer = req.customer() == null ? new Customer(req.customerRef(), null, null, null, null, false, Map.of())
-            : new Customer(req.customer().ref() != null ? req.customer().ref() : req.customerRef(), req.customer().name(), req.customer().email(), req.customer().phone(), req.customer().tier(),
+        Customer customer = req.customer() == null ? new Customer(safeRef(req.customerRef()), null, null, null, null, false, Map.of())
+            : new Customer(safeRef(req.customer().ref() != null ? req.customer().ref() : req.customerRef()), req.customer().name(), req.customer().email(), req.customer().phone(), req.customer().tier(),
                 Boolean.TRUE.equals(req.customer().ageVerified()), req.customer().history() == null ? Map.of() : req.customer().history());
-        String customerRef = req.customerRef() != null ? req.customerRef() : customer.ref() != null ? customer.ref() : customer.email();
+        String customerRef = req.customerRef() != null ? safeRef(req.customerRef()) : customer.ref() != null ? customer.ref() : tokenizer.email(customer.email());
         List<Tender> tenders = new ArrayList<>();
         for (CaptureRequest.TenderInput t : req.tenders()) tenders.add(new Tender(t.type(), t.token(), t.amount(), "pending", null, t.details() == null ? Map.of() : t.details()));
         List<Note> notes = new ArrayList<>();
@@ -342,6 +342,20 @@ public class DefaultOrderService implements OrderService {
     }
 
     // ---- reads --------------------------------------------------------------------------------------------------
+
+    /**
+     * NF-07: a customer reference is an identifier that spreads into learning tables, decision inputs and analytics, so
+     * it must never be raw PII. A reference that contains an email (no customerRef sent, or a marketplace ref built as
+     * {@code <marketplace>:<email>}) becomes the tenant-keyed email token, keeping any {@code <prefix>:} so the same
+     * shopper still maps to the same stable reference.
+     */
+    String safeRef(String ref) {
+        if (ref == null || ref.isBlank() || ref.indexOf('@') < 0) return ref;
+        int at = ref.indexOf('@');
+        int colon = ref.lastIndexOf(':', at);
+        String prefix = colon >= 0 ? ref.substring(0, colon + 1) : "";
+        return prefix + tokenizer.email(ref.substring(prefix.length()));
+    }
 
     @Override
     public Order get(String orderId) { return repo.get(orderId); }

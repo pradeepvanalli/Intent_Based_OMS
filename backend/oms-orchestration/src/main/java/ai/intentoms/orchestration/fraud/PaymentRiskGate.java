@@ -92,11 +92,12 @@ public class PaymentRiskGate {
         double discount = config.getDouble("fraud.rto.prepaid_discount_pct", 5.0);
         long hours = config.getInt("fraud.rto.confirmation_hold_hours", 12);
         String hold = ensureHold(order.id(), ADDRESS_HOLD, "rto_risk", "Waiting for the customer to confirm the delivery address (cash on delivery)", Duration.ofHours(hours));
-        String offer = notifier.notify(order.id(), "sms", "cod_prepaid_offer", "Pay now and save " + fmt(discount) + "%",
-            "Pay online now for order " + order.channelOrderId() + " and save " + fmt(discount) + "%. Your order ships as soon as payment is confirmed.",
+        // One message carrying both actions (confirm the address, or pay now for a discount): two SMS for one order
+        // read as spam and doubled the contact cost.
+        String message = notifier.notify(order.id(), "sms", "cod_confirm_or_prepay", "Confirm your delivery address",
+            "Please confirm the delivery address for order " + order.channelOrderId() + " so we can ship it, or pay online now and save "
+                + fmt(discount) + "% (your order ships as soon as payment is confirmed).",
             Map.of("discountPct", discount, "orderRef", String.valueOf(order.channelOrderId())));
-        String confirm = notifier.notify(order.id(), "sms", "address_confirm", "Please confirm your delivery address",
-            "Please confirm the delivery address for order " + order.channelOrderId() + " so we can ship it.", Map.of("orderRef", String.valueOf(order.channelOrderId())));
         Map<String, Object> evt = new LinkedHashMap<>();
         evt.put("orderId", order.id());
         evt.put("decisionRecordId", summary.get("recordId"));
@@ -107,7 +108,7 @@ public class PaymentRiskGate {
         s.appendOrderEvent(order.id(), "order.address_confirmation_requested", evt);
         summary.put("holdId", hold);
         summary.put("actions", List.of("prepaid_conversion_offer", "address_confirmation"));
-        summary.put("communications", List.of(String.valueOf(offer), String.valueOf(confirm)));
+        summary.put("communications", List.of(String.valueOf(message)));
         metrics.count("oms.fraud.rto_actions");
         return summary;
     }
