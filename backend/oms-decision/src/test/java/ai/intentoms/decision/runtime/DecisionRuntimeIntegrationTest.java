@@ -92,8 +92,38 @@ class DecisionRuntimeIntegrationTest extends DecisionTestBase {
         assertThat(first.requiresHuman()).isFalse();
         assertThat(first.layer()).isEqualTo(Layer.L1_SYSTEM_ONE);
         DecisionResult second = decisions.decide("exception_classify", input, DecisionOptions.live("exception", "exc_1", Actor.system("test")));
-        assertThat(second.recordId()).isEqualTo(first.recordId());
-        assertThat(second.details()).containsEntry("cached", true);
+        // OC-01: a cache hit is a decision too, logged as its own record pointing at the answer it reused.
+        assertThat(second.recordId()).isNotEqualTo(first.recordId());
+        assertThat(second.value()).isEqualTo(first.value());
+        assertThat(second.costUsd()).isZero();
+        assertThat(second.details()).containsEntry("cached", true).containsEntry("cachedFrom", first.recordId());
+        DecisionRecord logged = decisions.record(second.recordId());
+        assertThat(logged.mode()).isEqualTo(Mode.LIVE);
+        assertThat(logged.details()).containsEntry("cached", true).containsEntry("cachedFrom", first.recordId());
+        assertThat(logged.chosenArm()).isEqualTo("carrier_delay");
+        assertThat(logged.arms()).contains("carrier_delay").hasSizeGreaterThan(1);
+        assertThat(events("decision", second.recordId(), "decision.evaluated")).hasSize(1);
+    }
+
+    /** OC-01: every candidate is logged as an arm, and the arm is what was applied, not what the model said. */
+    @Test
+    void armsListEveryCandidateAndChosenArmIsTheAppliedValue() {
+        Map<String, Object> input = intentInput("Please ship everything together in one delivery", "ord_arms_1");
+        DecisionResult r = decisions.decide("fulfilment_intent", input, DecisionOptions.live("order", "ord_arms_1", Actor.user("tester")));
+        assertThat(r.action()).isEqualTo(DecisionResult.CONFIRM);
+        DecisionRecord rec = decisions.record(r.recordId());
+        // every choice option is an arm
+        assertThat(rec.arms()).contains("ship_complete", "ship_as_available").hasSizeGreaterThan(2);
+        // T1 confirm band with no L2: the caller applies the default, so that is the logged arm; the model's answer is kept
+        Object dflt = rec.details().get("confirmFallback") instanceof Map<?, ?> m ? m.get("defaultValue") : null;
+        if (dflt != null && !String.valueOf(dflt).equals(String.valueOf(rec.value()))) {
+            assertThat(rec.chosenArm()).isEqualTo(String.valueOf(dflt));
+            assertThat(rec.details()).containsEntry("modelAnswer", "ship_complete").containsEntry("chosenArmSource", "confirm_default");
+        } else {
+            assertThat(rec.chosenArm()).isEqualTo(String.valueOf(rec.value()));
+        }
+        assertThat(rec.arms()).contains(rec.chosenArm());
+        assertThat(rec.propensity()).isEqualTo(1.0);
     }
 
     @Test
