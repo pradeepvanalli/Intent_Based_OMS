@@ -146,11 +146,22 @@ public class ProposalRepository {
             .param("r", Json.write(report)).param("at", Timestamp.from(at)).param("kept", KEPT_SECTIONS).param("t", TenantContext.require()).param("id", id)
             .param("from", ProposalLifecycle.sourcesOf(ProposalStatus.EVALUATED)).update();
         if (n == 0) throw refused(id, "re-test");
+        if (publisher != null) publisher.publishEvent(new Evaluated(TenantContext.require(), id));
     }
 
+    /** XP-02: published whenever a proposal is (re-)evaluated, so the critic reviews it ({@code AutoCritic}). */
+    public record Evaluated(String tenantId, String proposalId) {}
+
+    private org.springframework.context.ApplicationEventPublisher publisher;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setPublisher(org.springframework.context.ApplicationEventPublisher publisher) { this.publisher = publisher; }
+
+    /** Stores the critic's review, stamped with when it was made. */
     public void setCriticReview(String id, Review review) {
+        Review stamped = review.reviewedAt() != null ? review : new Review(review.verdict(), review.risks(), review.source(), Instant.now());
         jdbc.sql("update proposal set critic_review = :r where tenant_id = :t and proposal_id = :id")
-            .param("r", Jsonb.of(review)).param("t", TenantContext.require()).param("id", id).update();
+            .param("r", Jsonb.of(stamped)).param("t", TenantContext.require()).param("id", id).update();
     }
 
     public void approve(String id, String by, Instant at) {

@@ -100,6 +100,12 @@ class TemplateAuthorCriticIntegrationTest extends NoLlmTestBase {
 
         // The rule-based critic reviews an evaluated proposal without a model.
         proposals.markEvaluated(p.proposalId(), Map.of("method", "replay", "liftEstimate", 0.04, "sampleSize", 12, "confidenceInterval", Map.of("lower", -0.01, "upper", 0.09)), Instant.now());
+        // XP-02: the evaluation alone brings a review; nobody had to ask the critic.
+        Review automatic = proposals.find(p.proposalId()).orElseThrow().criticReview();
+        assertThat(automatic).isNotNull();
+        assertThat(automatic.source()).isEqualTo(Review.RULES);
+        assertThat(automatic.verdict()).isEqualTo(Review.Verdict.NEEDS_CHANGES);
+        assertThat(automatic.reviewedAt()).isNotNull();
         Review review = critic.review(p.proposalId()).orElseThrow();
         assertThat(review.source()).isEqualTo(Review.RULES);
         assertThat(review.verdict()).isEqualTo(Review.Verdict.NEEDS_CHANGES);
