@@ -40,10 +40,13 @@ describe('Learning Console: north star, guardrails, critic and live-use domains'
     const dialog = await screen.findByRole('dialog', { name: 'Propose using a learned value live' });
     await within(dialog).findByRole('option', { name: /from Early delay warning/ }, { timeout: T });
     fireEvent.change(within(dialog).getByLabelText('Learned value'), { target: { value: 'warn_early|monitoring.warn_early_threshold' } });
-    expect(await within(dialog).findByTestId('live-domain', {}, { timeout: T })).toHaveTextContent('SLA breach risk score (0 none, 4 certain), from 0 to 4');
+    expect(await within(dialog).findByTestId('live-domain', {}, { timeout: T })).toHaveTextContent('SLA breach risk score (1 some risk, 4 certain), from 1 to 4');
     fireEvent.change(within(dialog).getByLabelText('Highest allowed'), { target: { value: '10' } });
     expect(within(dialog).getByTestId('live-range-problems')).toHaveTextContent('max 10 is outside the values monitoring.warn_early_threshold can take');
     expect(within(dialog).getByRole('button', { name: 'Draft proposal' })).toBeDisabled();
+    // B-1: a probability-scale minimum is refused, not just values above the top of the scale.
+    fireEvent.change(within(dialog).getByLabelText('Lowest allowed'), { target: { value: '0.3' } });
+    expect(within(dialog).getByTestId('live-range-problems')).toHaveTextContent('min 0.3 is outside the values monitoring.warn_early_threshold can take');
     fireEvent.change(within(dialog).getByLabelText('Highest allowed'), { target: { value: '3.5' } });
     fireEvent.change(within(dialog).getByLabelText('Lowest allowed'), { target: { value: '1.5' } });
     expect(within(dialog).queryByTestId('live-range-problems')).not.toBeInTheDocument();

@@ -158,6 +158,9 @@ const dom = (family: string, kind: LiveFamilyDomain['kind'], min: number | null,
   family, kind, min, max, maxStepLimit: kind === 'NUMBER' && min != null && max != null ? (max - min) / 2 : null, units,
   description: kind === 'NUMBER' ? `${units}, from ${min} to ${max}` : kind === 'SWITCH' ? `an on/off switch (${units})` : units, affectedDecisions,
 });
+/** An inventory number no decision reads: it names what it changes instead (B3-5). */
+const unread = (family: string, min: number, max: number, units: string, affects: string): LiveFamilyDomain =>
+  ({ ...dom(family, 'NUMBER', min, max, units, []), affects, note: `no decision reads it, it changes ${affects}` });
 const DOMAINS: LiveFamilyDomain[] = [
   dom('sourcing.node_reject_rate', 'NUMBER', 0, 1, 'share of orders a node rejects', ['sourcing_node_score']),
   dom('sourcing.node_on_time_rate', 'NUMBER', 0, 1, 'share of orders a node ships on time', ['sourcing_node_score']),
@@ -168,11 +171,11 @@ const DOMAINS: LiveFamilyDomain[] = [
   dom('promise.lane_transit_days', 'NUMBER', 0, 60, 'days in transit on a carrier lane', ['sla_breach_risk', 'sourcing_node_score']),
   dom('promise.lane_calibration', 'NUMBER', -1, 1, 'correction to a stated on-time probability', ['sla_breach_risk', 'sourcing_node_score']),
   dom('promise.buffer_days', 'NUMBER', 0, 30, 'days of padding on the delivery promise', ['sla_breach_risk']),
-  dom('monitoring.warn_early_threshold', 'NUMBER', 0, 4, 'SLA breach risk score (0 none, 4 certain)', ['sla_breach_risk']),
+  { ...dom('monitoring.warn_early_threshold', 'NUMBER', 1, 4, 'SLA breach risk score (1 some risk, 4 certain)', ['sla_breach_risk']), note: 'a threshold below 1 would warn every order that has any risk at all' },
   dom('cs.appeasement_level', 'NUMBER', 0, 1000, 'goodwill credit in the order currency', ['appeasement']),
-  dom('inventory.safety_stock', 'NUMBER', 0, 1000000, 'units of safety stock', ['sourcing_node_score']),
-  dom('inventory.reservation_ttl', 'NUMBER', 1, 10080, 'minutes a cart holds stock', ['sourcing_node_score']),
-  dom('inventory.inbound_reliability', 'NUMBER', 0, 1, 'share of announced inbound stock that arrives', ['sourcing_node_score']),
+  unread('inventory.safety_stock', 0, 1000000, 'units of safety stock', 'the stock available to promise at each node'),
+  unread('inventory.reservation_ttl', 1, 10080, 'minutes a cart holds stock', 'how long a cart holds stock before it is released'),
+  unread('inventory.inbound_reliability', 0, 1, 'share of announced inbound stock that arrives', 'how much announced inbound stock counts as available to promise'),
   dom('inventory.backorder_conversion', 'NUMBER', 0, 1, 'share of backorders customers wait for', ['backorder_next_action']),
   dom('customer.preferences', 'TABLE', null, null, "each customer's learned preferences (split tolerance, speed vs cost, pickup, channel)", ['fulfilment_intent']),
   dom('fraud.address_reuse_count', 'NUMBER', 0, 10000, 'number of customers sharing an address', ['payment_risk']),

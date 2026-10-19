@@ -278,6 +278,8 @@ export interface LiveParameter {
 export interface LiveFamilyDomain {
   family: string; kind: 'NUMBER' | 'SWITCH' | 'TABLE'; min: number | null; max: number | null; maxStepLimit: number | null;
   units: string; description: string; affectedDecisions: string[];
+  /** What the family changes when no decision reads it (inventory numbers). */
+  affects?: string; note?: string;
 }
 export interface LiveUseRequest { family: string; learnerKey: string; min?: number | null; max?: number | null; maxStep?: number | null; enabled?: boolean; reason?: string; }
 export type TypedValue =
