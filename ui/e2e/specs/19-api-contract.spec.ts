@@ -96,7 +96,7 @@ test.describe('Learning REST contract', () => {
     expect(evaluated.evaluationReport?.method).toBeTruthy();
     expect((await strategy.post(`${L}/proposals/${p.proposalId}/approve`, { data: {} })).status()).toBe(422);
     expect((await ok<Proposal>(admin.post(`${L}/proposals/${p.proposalId}/approve`, { data: {} }))).status).toBe('APPROVED');
-    expect((await ok<Proposal>(admin.post(`${L}/proposals/${p.proposalId}/promote`, { data: {} }))).status).toBe('PROMOTED');
+    expect((await ok<Proposal>(admin.post(`${L}/proposals/${p.proposalId}/promote`, { data: { overrideReason: 'live-use families cannot be replayed; e2e contract test' } }))).status).toBe('PROMOTED');
     const liveNow = await ok<Array<{ parameter: string; status: string }>>(admin.get(`${L}/live-parameters`));
     expect(liveNow.find((x) => x.parameter === 'monitoring.warn_early_threshold')?.status).toBe('LIVE');
     const rolled = await ok<Proposal>(admin.post(`${L}/promotions/${p.proposalId}/rollback`, { data: { reason: 'e2e contract rollback' } }));

@@ -57,8 +57,10 @@ export async function proposeLiveUse(api: APIRequestContext, body: { family: str
 /** Drafted by strategy, approved and promoted by admin: the full governed path to a live learned value. */
 export async function liveUseThroughTheGate(strategy: APIRequestContext, admin: APIRequestContext, family: string, learnerKey: string): Promise<Proposal> {
   const p = await proposeLiveUse(strategy, { family, learnerKey, min: 0, max: 10, maxStep: 1, reason: `e2e ${uid()}` });
+  // A draft is tested before approval; live use has no counterfactual replay, so promotion carries a waiver reason.
+  await ok(admin.post(`/api/v1/learning/proposals/${p.proposalId}/evaluate`));
   await ok(admin.post(`/api/v1/learning/proposals/${p.proposalId}/approve`, { data: {} }));
-  return ok<Proposal>(admin.post(`/api/v1/learning/proposals/${p.proposalId}/promote`, { data: {} }));
+  return ok<Proposal>(admin.post(`/api/v1/learning/proposals/${p.proposalId}/promote`, { data: { overrideReason: 'Live-use family: bounded by range and max step; e2e suite' } }));
 }
 
 export async function liveParameters(api: APIRequestContext): Promise<LiveParameter[]> {

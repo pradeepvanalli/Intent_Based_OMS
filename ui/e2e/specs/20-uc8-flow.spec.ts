@@ -74,7 +74,11 @@ test('uc8: outcomes reach the order\'s episodes, then a learned value goes live 
   await expect(toast(adminPage, 'Tested on past decisions')).toBeVisible();
   await drawer.getByRole('button', { name: 'Approve' }).click();
   await expect(toast(adminPage, 'Approved')).toBeVisible();
-  await drawer.getByRole('button', { name: 'Go live' }).click();
+  // Live use cannot be replayed, so going live means waiving full evidence with a written reason (EX-07).
+  await drawer.getByRole('button', { name: /^Go live/ }).click();
+  const waive = dialog(adminPage, 'Go live without full evidence?');
+  await waive.getByLabel('Why go live anyway?').fill('Shadow run not possible for a live-use family; e2e suite');
+  await waive.getByRole('button', { name: 'Go live anyway' }).click();
   await expect(toast(adminPage, 'Live now')).toBeVisible();
   await expect.poll(async () => (await liveParameters(admin)).find((p) => p.parameter === 'cs.appeasement_level')?.status).toBe('LIVE');
 

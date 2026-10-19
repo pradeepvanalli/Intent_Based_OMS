@@ -101,7 +101,11 @@ test.describe('Changes', () => {
     await drawer.getByRole('button', { name: 'Approve' }).click();
     await expect(toast(admin, 'Approved')).toBeVisible();
     await expect(drawer).toContainText('Approved, not live yet');
-    await drawer.getByRole('button', { name: 'Go live' }).click();
+    // Live use cannot be replayed, so going live means waiving full evidence with a written reason (EX-07).
+    await drawer.getByRole('button', { name: /^Go live/ }).click();
+    const waive = dialog(admin, 'Go live without full evidence?');
+    await waive.getByLabel('Why go live anyway?').fill('Shadow run not possible for a live-use family; e2e suite');
+    await waive.getByRole('button', { name: 'Go live anyway' }).click();
     await expect(toast(admin, 'Live now')).toBeVisible();
     await expect.poll(async () => (await liveParameters(adminApi)).find((p) => p.parameter === 'sourcing.reject_penalty')?.status).toBe('LIVE');
 
@@ -138,6 +142,7 @@ test.describe('Changes', () => {
     const adminApi = await apiAs('admin');
     const p = await proposeLiveUse(strategyApi, { family: 'sourcing.blocked_zip3', learnerKey: 'band_threshold', reason: `e2e postal ${uid()}` });
     try {
+      await ok(adminApi.post(`/api/v1/learning/proposals/${p.proposalId}/evaluate`)); // a draft is tested before approval
       expect((await (await apiAs('ops')).post(`/api/v1/learning/proposals/${p.proposalId}/approve`, { data: {} })).status()).toBe(403);
       const noCode = await adminApi.post(`/api/v1/learning/proposals/${p.proposalId}/approve`, { data: {} });
       expect(noCode.status()).toBe(422);

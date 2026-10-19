@@ -94,8 +94,22 @@ call GET "/api/v1/learning/facts?subjectType=NODE&subjectId=ST-LA-02" "" "$STRAT
 say "ST-LA-02 learned: $(field '", ".join("%s=%s (v%d, %d obs)" % (f["factKey"], f["value"].get("value", f["value"].get("values")), f["version"], f["sampleSize"]) for f in d)')"
 
 step "6) A learned value goes live only through a governed change"
-call POST /api/v1/learning/live-parameters/proposals '{"family":"sourcing.reject_penalty","learnerKey":"node_reliability","min":0.1,"max":2.0,"maxStep":0.5,"reason":"UC8: use the learned, decaying reject penalty per node"}' "$STRATEGY_TOKEN"; must 200 201
-PROP=$(field 'd["proposalId"]'); ok "strategy lead drafted $PROP ($(field 'd["status"]'))"
+# Try learned families in order. One that is already live, or was rolled back recently (a 30-day cooldown, so a
+# reverted change is not re-proposed on the same evidence), is skipped; that keeps this script safe to re-run.
+PROP=""
+for CANDIDATE in \
+  'sourcing.reject_penalty|node_reliability|0.1|2.0|0.5|use the learned, decaying reject penalty per node' \
+  'monitoring.warn_early_threshold|warn_early|0.3|0.9|0.1|warn customers about a likely delay at the learned risk level' \
+  'promise.buffer_days|promise_buffer|0|3|1|add the learned promise buffer per customer segment' \
+  'inventory.reservation_ttl|inventory_reservation_ttl|5|1440|60|hold carts for the learned time before releasing stock'; do
+  IFS='|' read -r FAMILY LEARNER LO HI STEP WHY <<< "$CANDIDATE"
+  call POST /api/v1/learning/live-parameters/proposals "{\"family\":\"$FAMILY\",\"learnerKey\":\"$LEARNER\",\"min\":$LO,\"max\":$HI,\"maxStep\":$STEP,\"reason\":\"UC8: $WHY\"}" "$STRATEGY_TOKEN"
+  if [ "$CODE" = 200 ] || [ "$CODE" = 201 ]; then PROP=$(field 'd["proposalId"]'); break; fi
+  if [ "$CODE" = 409 ]; then ok "$FAMILY was rolled back recently or is already live, so it cannot be re-proposed yet (409); trying the next one"; continue; fi
+  must 200 201
+done
+[ -n "$PROP" ] || { printf '\033[31m  ✗ every candidate family is cooling down or live; run on a fresh demo tenant\033[0m\n' >&2; exit 1; }
+ok "strategy lead drafted $PROP for $FAMILY ($(field 'd["status"]'))"
 call POST "/api/v1/learning/proposals/$PROP/evaluate" "" "$STRATEGY_TOKEN"; must 200
 say "replay: method $(field 'd["evaluationReport"].get("method")') · $(field '(d["evaluationReport"].get("reason") or d["evaluationReport"].get("note") or "")[:160]')"
 call POST "/api/v1/learning/proposals/$PROP/approve" '{}' "$STRATEGY_TOKEN"; must 400 409 422
@@ -104,7 +118,8 @@ call POST "/api/v1/learning/proposals/$PROP/approve" '{}' "$OPS_TOKEN"; must 403
 ok "an ops analyst cannot approve learning changes (403)"
 call POST "/api/v1/learning/proposals/$PROP/approve" '{}'; must 200
 ok "admin approved ($(field 'd["status"]'), by $(field 'd["approvedBy"]'))"
-call POST "/api/v1/learning/proposals/$PROP/promote" '{}'; must 200
+# A live-use family cannot be replayed, so promotion waives full evidence with a written reason (EX-07).
+call POST "/api/v1/learning/proposals/$PROP/promote" '{"overrideReason":"Live-use family: no counterfactual replay exists; bounded by range and max step"}'; must 200
 ok "promoted ($(field 'd["status"]'))"
 call GET /api/v1/learning/live-parameters "" "$STRATEGY_TOKEN"; must 200
 say "live families: $(field '", ".join("%s (%s, %s)" % (p["parameter"], p["status"], p["learnerKey"]) for p in d)')"
@@ -117,7 +132,7 @@ step "7) Roll it back: exactly what it replaced comes back"
 call POST "/api/v1/learning/promotions/$PROP/rollback" '{"reason":"UC8 demo: roll back after review"}'; must 200
 ok "rolled back ($(field 'd["status"]'))"
 call GET /api/v1/learning/live-parameters "" "$STRATEGY_TOKEN"; must 200
-say "sourcing.reject_penalty is now $(field 'next((p["status"] for p in d if p["parameter"]=="sourcing.reject_penalty"), "absent")')"
+say "$FAMILY is now $(FAMILY="$FAMILY" field 'next((p["status"] for p in d if p["parameter"]==__import__("os").environ["FAMILY"]), "absent")')"
 
 step "8) Why did the split order go where it went? (the facts a decision used are on its record)"
 REC=$(decision_for "$SPLIT" order sourcing_node_score)
