@@ -32,8 +32,9 @@ import java.util.Set;
  *   <li>{@code order.delivered} (once every group arrived) → {@code rto_risk}: not refused, a final label; and
  *       {@code payment_risk}: a <i>provisional</i> "not fraud" (a chargeback can still arrive and replace it within the
  *       chargeback window, and until then learners do not count it, see {@link FraudLabels});</li>
- *   <li>return dispositions → {@code return_risk}: fraud when the grading says so ({@code fraudConfirmed}, or the item
- *       came back as the {@code wrong_item}); not fraud when it came back {@code new} or {@code like_new};</li>
+ *   <li>return inspection and disposition → the {@code return_risk} decision of that RMA (subject {@code return}): fraud
+ *       when the grading says so ({@code fraudConfirmed}, or the item came back as the {@code wrong_item} or
+ *       {@code not_as_described}); not fraud when it came back {@code new} or {@code like_new};</li>
  *   <li>a person answering the escalation task of a fraud decision ({@code task.completed}, type
  *       {@code decision_escalation}) → that decision's records: "risky" is a confirmed fraud label, "not risky" a
  *       provisional "not fraud" (a reviewer can be fooled; a chargeback still overrides it).</li>
@@ -62,7 +63,7 @@ public class FraudLabelCapture implements EventSubscriber {
 
     @Override public List<String> eventTypePrefixes() {
         return List.of("payment.chargeback", "payment.chargeback_won", "order.returned_to_sender", "order.delivered", "event.delivered",
-            "return.dispositioned", "oms.returns.disposition", "task.completed");
+            "return.inspected", "return.dispositioned", "oms.returns.disposition", "task.completed");
     }
 
     @Override
@@ -72,6 +73,7 @@ public class FraudLabelCapture implements EventSubscriber {
         try {
             Map<String, Object> p = e.payload() == null ? Map.of() : e.payload();
             if ("task.completed".equals(e.type())) { onReview(e, p); return; }
+            if (e.type().startsWith("return.") || e.type().startsWith("oms.returns.")) { onReturnGraded(e, p); return; }
             String orderId = orderIdOf(e);
             if (orderId == null) return;
             switch (e.type()) {
@@ -84,10 +86,7 @@ public class FraudLabelCapture implements EventSubscriber {
                     label(orderId, "rto_risk", false, "delivered", null, e, false, false, false);
                     label(orderId, "payment_risk", false, "delivered_no_chargeback", null, e, false, false, true);
                 }
-                default -> {
-                    Boolean fraud = returnGrade(p);
-                    if (fraud != null) label(orderId, "return_risk", fraud, "return_grading", p.getOrDefault("reasonCode", p.get("condition")), e, false, false, false);
-                }
+                default -> { }
             }
         } catch (RuntimeException ex) {
             log.warn("Fraud label capture failed for event {} ({}): {}", e.id(), e.type(), ex.toString());
@@ -96,14 +95,38 @@ public class FraudLabelCapture implements EventSubscriber {
         }
     }
 
-    /** Return grading: fraud when inspection says so or the wrong item came back; not fraud when it came back as sold. */
+    /**
+     * FD-06: the grading of a return labels the {@code return_risk} decision made for that return (subject {@code return},
+     * the RMA id). Records written against the order (older data, imports) are labelled when the RMA has none.
+     */
+    private void onReturnGraded(Event e, Map<String, Object> p) {
+        Boolean fraud = returnGrade(p);
+        if (fraud == null) return;
+        Object reason = p.get("condition") != null ? p.get("condition") : p.get("reasonCode");
+        String rmaId = p.get("rmaId") != null ? String.valueOf(p.get("rmaId")) : "return".equals(e.aggregateType()) ? e.aggregateId() : null;
+        List<DecisionRecord> forReturn = rmaId == null ? List.of()
+            : decisionRecords.forSubject("return", rmaId).stream().filter(r -> "return_risk".equals(r.decision())).toList();
+        if (!forReturn.isEmpty()) {
+            for (DecisionRecord r : forReturn) labelRecord(r, fraud, "return_grading", reason, e, false, false, false);
+            return;
+        }
+        String orderId = orderIdOf(e);
+        if (orderId != null) label(orderId, "return_risk", fraud, "return_grading", reason, e, false, false, false);
+    }
+
+    /**
+     * Return grading: fraud when inspection says so, the wrong item came back or the item is not what the buyer described;
+     * not fraud when it came back as sold. Damaged or incomplete goods are not graded either way (wear, transit damage
+     * and parts harvesting look alike at the dock) unless the inspector flagged fraud.
+     */
     static Boolean returnGrade(Map<String, Object> p) {
         if (Boolean.TRUE.equals(p.get("fraudConfirmed"))) return true;
         String condition = p.get("condition") == null ? "" : String.valueOf(p.get("condition")).toLowerCase(Locale.ROOT);
         return switch (condition) {
-            case "wrong_item" -> true;
+            case "wrong_item", "not_as_described" -> true;
             case "new", "like_new" -> false;
-            default -> Boolean.FALSE.equals(p.get("fraudConfirmed")) ? Boolean.FALSE : null;
+            case "" -> Boolean.FALSE.equals(p.get("fraudConfirmed")) ? Boolean.FALSE : null;
+            default -> null;
         };
     }
 

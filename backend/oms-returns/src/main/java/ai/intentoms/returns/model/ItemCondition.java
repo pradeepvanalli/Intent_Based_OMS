@@ -13,7 +13,18 @@ public final class ItemCondition {
     public static final String DAMAGED = "damaged";
     public static final String MISSING_PARTS = "missing_parts";
     public static final String WRONG_ITEM = "wrong_item";
-    public static final List<String> ALL = List.of(NEW, LIKE_NEW, DAMAGED, MISSING_PARTS, WRONG_ITEM);
+    /** What came back is not what the buyer described (the claimed defect is absent, parts swapped, a counterfeit). */
+    public static final String NOT_AS_DESCRIBED = "not_as_described";
+    public static final List<String> ALL = List.of(NEW, LIKE_NEW, DAMAGED, MISSING_PARTS, WRONG_ITEM, NOT_AS_DESCRIBED);
+
+    /**
+     * FD-06 return grading: an inspection that found a different item than the one sold, or an item that is not what the
+     * buyer claimed, is confirmed return fraud. The buyer's own reason code ({@code not_as_described} as a complaint about
+     * the listing) is a claim, not a grading, and does not count.
+     */
+    public static boolean isFraud(String condition) {
+        return WRONG_ITEM.equals(condition) || NOT_AS_DESCRIBED.equals(condition);
+    }
 
     public static String normalise(String condition) {
         if (condition == null || condition.isBlank()) throw new ValidationException("condition is required: " + ALL);
