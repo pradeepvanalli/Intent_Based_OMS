@@ -9,7 +9,7 @@ import java.util.Map;
 
 /**
  * Outcomes from the order lifecycle events the core workflows already emit: delivery (on time, late by, damaged,
- * lost), shipment (packages, units, cost, order value), refunds, failed payments, return dispositions and WISMO
+ * lost, including a carrier exception that reports the parcel lost or damaged), shipment (packages, units, cost, order value), refunds, failed payments, return dispositions and WISMO
  * contacts. Payload fields come from the producers ({@code StandardShipOrderWorkflow}, returns, finance, CS); a
  * missing field falls back to a neutral value rather than a guess that would bias the reward.
  */
@@ -18,7 +18,7 @@ public class CoreOutcomeMapper implements OutcomeMapper {
 
     @Override
     public List<String> eventTypes() {
-        return List.of("order.delivered", "event.delivered", "order.shipped", "event.shipped",
+        return List.of("order.delivered", "event.delivered", "order.carrier_exception", "order.shipped", "event.shipped",
             "return.refunded", "return.dispositioned", "refund.issued", "oms.returns.refunded", "oms.returns.disposition", "cs.wismo");
     }
 
@@ -28,6 +28,10 @@ public class CoreOutcomeMapper implements OutcomeMapper {
         return switch (e.type()) {
             case "order.delivered", "event.delivered" -> new OutcomeData.DeliveryOutcome(
                 bool(p.get("onTime"), true), num(p.get("lateByHours")).longValue(), bool(p.get("damaged"), false), bool(p.get("lost"), false));
+            // A parcel the carrier reports lost or damaged is that parcel's delivery outcome: a lost one never gets a
+            // delivery scan (audit A6). Any other exception (a delay) is not an outcome; the delivery scan will be.
+            case "order.carrier_exception" -> bool(p.get("lost"), false) || bool(p.get("damaged"), false)
+                ? new OutcomeData.DeliveryOutcome(false, 0, bool(p.get("damaged"), false), bool(p.get("lost"), false)) : null;
             case "order.shipped", "event.shipped" -> new OutcomeData.FulfillmentOutcome(
                 Math.max(1, num(p.get("packageCount")).intValue()), bool(p.get("splitAvoided"), false), strings(p.get("nodeIds")),
                 bool(p.get("storeRejected"), false), num(p.get("unitsOrdered")).intValue(), num(p.get("unitsShipped")).intValue(),

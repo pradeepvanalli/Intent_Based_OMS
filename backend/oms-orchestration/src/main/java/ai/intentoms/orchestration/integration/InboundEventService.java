@@ -124,12 +124,20 @@ public class InboundEventService {
             out.put("shipments", touched);
             String signal = ev.signal();
             List<String> signalled = new ArrayList<>();
+            List<String> ignored = new ArrayList<>();
             if (signal != null) {
                 for (String orderId : orderIds) {
                     Order order;
                     try { order = orders.get(orderId); }
                     catch (NotFoundException e) { log.warn("Carrier event {} for unknown order {}", ev.type(), orderId); continue; }
-                    if (engine.signalIfPresent(orderWorkflows.workflowType(order), orderId, signal, ev.signalPayload(touchedDetail.stream().filter(d -> orderId.equals(d.get("orderId"))).toList()), ev.eventId() + ":" + orderId)) {
+                    List<Map<String, Object>> forOrder = touchedDetail.stream().filter(d -> orderId.equals(d.get("orderId"))).toList();
+                    if (namesParcel(ev) && forOrder.isEmpty() && !shipments.forOrder(orderId).isEmpty()) {
+                        log.warn("Carrier event {} {} for order {} names a parcel the order does not have (tracking {}, shipment {}); ignored",
+                            ev.type(), ev.eventId(), orderId, ev.tracking(), ev.shipmentId());
+                        ignored.add(orderId);
+                        continue;
+                    }
+                    if (engine.signalIfPresent(orderWorkflows.workflowType(order), orderId, signal, ev.signalPayload(forOrder), ev.eventId() + ":" + orderId)) {
                         signalled.add(orderId);
                     } else {
                         log.warn("Carrier event {} for order {} without a workflow", ev.type(), orderId);
@@ -138,6 +146,7 @@ public class InboundEventService {
             }
             out.put("signal", signal == null ? "" : signal);
             out.put("orders", signalled);
+            if (!ignored.isEmpty()) out.put("ignored", Map.of("orders", ignored, "reason", "no parcel of the order matches the scan"));
             return out;
         });
     }
@@ -147,7 +156,14 @@ public class InboundEventService {
         List<ShipmentRecord> byTracking = shipments.byTracking(ev.tracking());
         if (ev.orderId() != null) byTracking = byTracking.stream().filter(s -> s.orderId().equals(ev.orderId())).toList();
         if (!byTracking.isEmpty() || ev.orderId() == null) return byTracking;
+        // A scan that names a tracking number speaks for that parcel only; matching none of the order's parcels it
+        // moves nothing (audit A5). Only a scan that identifies no parcel at all means the whole order.
+        if (namesParcel(ev)) return List.of();
         return shipments.forOrder(ev.orderId()).stream().filter(s -> !"delivered".equals(s.status())).toList();
+    }
+
+    private static boolean namesParcel(WebhookPayloads.CarrierEvent ev) {
+        return ev.shipmentId() != null || (ev.tracking() != null && !ev.tracking().isBlank());
     }
 
     /** {@code POST /webhooks/inventory/{nodeId}}: positions feed plus {@code inventory_available} for backordered lines of the fed skus. */

@@ -335,12 +335,13 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
             case Signals.CARRIER_EXCEPTION, Signals.RETURNED_TO_SENDER -> {
                 Map<String, Object> result = ctx.activity(sig.name() + "#" + n, RETRY, () -> {
                     List<String> touched = new ArrayList<>();
-                    for (ShipmentRecord sh : shipmentsFor(order, payload)) { shipments.applyCarrierEvent(sh.id(), Signals.CARRIER_EXCEPTION.equals(sig.name()) ? "exception" : "returned_to_sender", OrderWorkflowSupport.ACTOR); touched.add(sh.id()); }
+                    List<ShipmentRecord> parcels = shipmentsFor(order, payload);
+                    for (ShipmentRecord sh : parcels) { shipments.applyCarrierEvent(sh.id(), Signals.CARRIER_EXCEPTION.equals(sig.name()) ? "exception" : "returned_to_sender", OrderWorkflowSupport.ACTOR); touched.add(sh.id()); }
                     Map<String, Object> details = new LinkedHashMap<>(payload);
                     details.put("shipments", touched);
                     Map<String, Object> exc = s.raise("carrier", sig.name(), Signals.CARRIER_EXCEPTION.equals(sig.name()) ? "Carrier reported an exception on " + payload.getOrDefault("tracking", "shipment") : "Parcel returned to sender",
                         order.id(), null, null, details, Signals.CARRIER_EXCEPTION.equals(sig.name()) ? "carrier_delay" : null);
-                    s.appendOrderEvent(order.id(), "order." + sig.name(), carrierFacts(order, touched));
+                    s.appendOrderEvent(order.id(), "order." + sig.name(), carrierFacts(order, parcels, payload));
                     return Map.of("shipments", touched, "exception", exc);
                 });
                 ctx.log("Carrier event " + sig.name() + "; exception raised, still waiting for delivery", result);
@@ -474,10 +475,8 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         String id = OrderWorkflowSupport.str(payload.get("shipmentId"));
         if (id != null) return shipments.find(id).map(List::of).orElse(List.of());
         String tracking = OrderWorkflowSupport.str(payload.get("tracking"));
-        if (tracking != null) {
-            List<ShipmentRecord> byTracking = shipments.byTracking(tracking).stream().filter(sh -> sh.orderId().equals(order.id())).toList();
-            if (!byTracking.isEmpty()) return byTracking;
-        }
+        // A scan naming a tracking number that matches none of the order's parcels delivers nothing (audit A5).
+        if (tracking != null && !tracking.isBlank()) return shipments.byTracking(tracking).stream().filter(sh -> sh.orderId().equals(order.id())).toList();
         return shipments.forOrder(order.id()).stream().filter(sh -> !"delivered".equals(sh.status())).toList();
     }
 
@@ -485,8 +484,10 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
      * {@code order.carrier_exception} / {@code order.returned_to_sender} (OC-03, FD-02): a refused or failed delivery is
      * an outcome for the order's decisions and, for cash on delivery, the refused-delivery label {@code rto_risk} learns
      * from. The address token and customer let later risk checks count prior refusals without storing the address.
+     * {@code lost} / {@code damaged} are the carrier's verdict on the parcels (a lost parcel never gets a delivery scan,
+     * so this is its delivery outcome: audit A6); the group, nodes and lines scope it to the parcels' own decisions.
      */
-    static Map<String, Object> carrierFacts(Order order, List<String> shipmentIds) {
+    static Map<String, Object> carrierFacts(Order order, List<ShipmentRecord> parcels, Map<String, Object> payload) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("orderId", order.id());
         if (order.customerRef() != null) m.put("customerRef", order.customerRef());
@@ -494,7 +495,17 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         if (token != null) m.put("addressToken", token);
         m.put("cod", ai.intentoms.orchestration.fraud.PaymentRiskFeatures.hasCod(order));
         m.put("amount", order.totals() == null || order.totals().grandTotal() == null ? 0.0 : order.totals().grandTotal().amount().doubleValue());
-        m.put("shipments", shipmentIds);
+        m.put("shipments", parcels.stream().map(ShipmentRecord::id).toList());
+        Set<String> groups = new LinkedHashSet<>();
+        for (ShipmentRecord sh : parcels) groups.add(sh.fulfilmentGroupId());
+        if (groups.size() == 1 && groups.iterator().next() != null) m.put("fulfilmentGroupId", groups.iterator().next());
+        if (!parcels.isEmpty()) {
+            m.put("nodeIds", parcels.stream().map(ShipmentRecord::nodeId).filter(java.util.Objects::nonNull).distinct().toList());
+            m.put("lineIds", parcels.stream().flatMap(sh -> sh.lines().stream()).map(ShipmentRecord.Line::lineId).distinct().toList());
+        }
+        if (payload.get("tracking") != null) m.put("tracking", String.valueOf(payload.get("tracking")));
+        m.put("lost", Boolean.TRUE.equals(payload.get("lost")));
+        m.put("damaged", Boolean.TRUE.equals(payload.get("damaged")));
         return m;
     }
 
@@ -503,8 +514,7 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         String id = OrderWorkflowSupport.str(payload.get("shipmentId"));
         if (id != null) return shipments.find(id).map(List::of).orElse(List.of());
         String tracking = OrderWorkflowSupport.str(payload.get("tracking"));
-        List<ShipmentRecord> byTracking = tracking == null ? List.of() : shipments.byTracking(tracking).stream().filter(sh -> sh.orderId().equals(order.id())).toList();
-        if (!byTracking.isEmpty()) return byTracking;
+        if (tracking != null && !tracking.isBlank()) return shipments.byTracking(tracking).stream().filter(sh -> sh.orderId().equals(order.id())).toList();
         return shipments.forOrder(order.id()).stream().filter(sh -> !"delivered".equals(sh.status())).toList();
     }
 
