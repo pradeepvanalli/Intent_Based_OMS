@@ -55,9 +55,31 @@ export async function proposeLiveUse(api: APIRequestContext, body: { family: str
   return ok<Proposal>(api.post('/api/v1/learning/live-parameters/proposals', { data: { enabled: true, ...body } }), 200, 201);
 }
 
-/** Drafted by strategy, approved and promoted by admin: the full governed path to a live learned value. */
+/** A learned family's value domain (GET /learning/live-parameters/domains, LiveFamilies on the server). */
+export type LiveDomain = {
+  family: string; kind: 'NUMBER' | 'SWITCH' | 'TABLE'; min: number | null; max: number | null; maxStepLimit: number | null; units: string; description: string;
+  affectedDecisions: string[];
+};
+
+export async function liveDomains(api: APIRequestContext): Promise<LiveDomain[]> {
+  return ok<LiveDomain[]>(api.get('/api/v1/learning/live-parameters/domains'));
+}
+
+/**
+ * A range the server accepts for the family (B-1): the middle half of a number family's domain with a max step of a
+ * quarter of it (the limit is half), and no range at all for an on/off switch or a table of values.
+ */
+export function validRange(d: LiveDomain | undefined): { min?: number; max?: number; maxStep?: number } {
+  if (!d || d.kind !== 'NUMBER' || d.min == null || d.max == null) return {};
+  const span = d.max - d.min;
+  const round = (v: number) => Math.round(v * 1e6) / 1e6;
+  return { min: round(d.min + span / 4), max: round(d.max - span / 4), maxStep: round(span / 4) };
+}
+
+/** Drafted by strategy, approved and promoted by admin: the full governed path to a live learned value, its range read from the family's domain. */
 export async function liveUseThroughTheGate(strategy: APIRequestContext, admin: APIRequestContext, family: string, learnerKey: string): Promise<Proposal> {
-  const p = await proposeLiveUse(strategy, { family, learnerKey, min: 0, max: 10, maxStep: 1, reason: `e2e ${uid()}` });
+  const domain = (await liveDomains(strategy)).find((d) => d.family === family);
+  const p = await proposeLiveUse(strategy, { family, learnerKey, ...validRange(domain), reason: `e2e ${uid()}` });
   // A draft is tested before approval; live use has no counterfactual replay, so promotion carries a waiver reason.
   await ok(admin.post(`/api/v1/learning/proposals/${p.proposalId}/evaluate`));
   await ok(admin.post(`/api/v1/learning/proposals/${p.proposalId}/approve`, { data: {} }));
@@ -91,14 +113,17 @@ export async function createOrder(api: APIRequestContext, opts: { ref?: string; 
   return order.id;
 }
 
-export type DecisionRecord = { id: string; decision: string; actor?: string; details?: Record<string, unknown> };
+export type DecisionRecord = { id: string; decision: string; mode?: string; actor?: string; details?: Record<string, unknown> };
 
-/** Waits (polling the API) until the order has a record for `decision`, and returns it. */
+/**
+ * Waits (polling the API) until the order has a live record for `decision`, and returns it. Read-only sourcing (the
+ * options view, re-promise) scores in SHADOW (E-1); those records are skipped.
+ */
 export async function waitForDecision(api: APIRequestContext, orderId: string, decision: string): Promise<DecisionRecord> {
   let found: DecisionRecord | undefined;
   await expect.poll(async () => {
     const rows = await ok<DecisionRecord[]>(api.get('/api/v1/decision-records', { params: { subjectType: 'order', subjectId: orderId } }));
-    found = rows.find((r) => r.decision === decision);
+    found = rows.find((r) => r.decision === decision && r.mode !== 'SHADOW');
     return !!found;
   }, { timeout: 60_000, message: `waiting for a ${decision} decision on ${orderId}` }).toBe(true);
   return found!;
