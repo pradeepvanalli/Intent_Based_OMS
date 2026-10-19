@@ -16,7 +16,8 @@ import java.util.Map;
  *   <li>a store reject: node; a split into packages from several nodes: stock (no single node had it all); several
  *       packages from one node: node;</li>
  *   <li>stranded stock or a cancelled backorder: stock;</li>
- *   <li>a chargeback, a refused cash-on-delivery parcel, or a confirmed-fraud return: customer.</li>
+ *   <li>a chargeback the merchant did not win, a refused cash-on-delivery parcel, or a confirmed-fraud return:
+ *       customer. A won chargeback (recorded as a negative amount that cancels the dispute) blames nobody (audit A-N2).</li>
  * </ul>
  * Each bad signal contributes its split; the result is normalised to sum to 1 and returned as {@code attr.stock},
  * {@code attr.node}, {@code attr.carrier}, {@code attr.customer} entries stored next to the reward components. Empty
@@ -41,6 +42,10 @@ public final class OutcomeAttribution {
         if (rejected) node += 1;
         if (planSplit) stock += 1;
         else if (parcels > 1) node += 1;
+        // Chargebacks net out: a dispute the merchant won cancels its chargeback, and then the customer is not to blame.
+        long disputes = outcomes.stream().filter(o -> o.payload() instanceof OutcomeData.PaymentOutcome p && p.chargeback() && p.amount() >= 0).count();
+        long won = outcomes.stream().filter(o -> o.payload() instanceof OutcomeData.PaymentOutcome p && p.chargeback() && p.amount() < 0).count();
+        if (disputes > won) customer += 1;
         for (OutcomeRecord o : outcomes) {
             switch (o.payload()) {
                 case OutcomeData.DeliveryOutcome d -> {
@@ -50,7 +55,7 @@ public final class OutcomeAttribution {
                 }
                 case OutcomeData.FulfillmentOutcome f -> { }
                 case OutcomeData.InventoryOutcome inv -> { if (inv.stranded() || inv.backorderCancelled()) stock += 1; }
-                case OutcomeData.PaymentOutcome p -> { if (p.chargeback() || p.refused()) customer += 1; }
+                case OutcomeData.PaymentOutcome p -> { if (p.refused()) customer += 1; }
                 case OutcomeData.ReturnOutcome r -> { if (r.fraudConfirmed()) customer += 1; }
                 case OutcomeData.ContactOutcome c -> { }
             }

@@ -1099,6 +1099,16 @@ public class ReturnService {
         p.putIfAbsent("disposition", rma.disposition());
         p.putIfAbsent("rmaId", rma.rmaId());
         p.put("fraudConfirmed", ItemCondition.isFraud(rma.condition()));
+        // §2 perfect-order rate: which lines came back, with each line's own reason and inspection grading.
+        List<Map<String, Object>> returned = new ArrayList<>();
+        for (ReturnLine l : rma.lines()) {
+            Map<String, Object> rl = new LinkedHashMap<>();
+            rl.put("lineId", l.lineId());
+            rl.put("reasonCode", l.reasonCode() != null ? l.reasonCode() : rma.reasonCode());
+            rl.put("condition", l.condition() != null ? l.condition() : rma.condition());
+            returned.add(rl);
+        }
+        p.putIfAbsent("returnLines", returned);
         p.putIfAbsent("refundAmount", refundValue(rma));
         return p;
     }

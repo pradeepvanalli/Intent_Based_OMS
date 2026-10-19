@@ -34,6 +34,14 @@ class OutcomeAttributionTest {
         assertThat(a.values().stream().mapToDouble(Double::doubleValue).sum()).isCloseTo(1.0, within(0.002));
     }
 
+    @Test void aWonChargebackBlamesNobody() {
+        // Audit A-N2: the dispute and the merchant's win cancel each other.
+        var outs = List.of(out(new OutcomeData.PaymentOutcome(true, false, 120)), out(new OutcomeData.PaymentOutcome(true, false, -120)));
+        assertThat(OutcomeAttribution.attribute(outs)).isEmpty();
+        var lost = List.of(out(new OutcomeData.PaymentOutcome(true, false, 120)), out(new OutcomeData.PaymentOutcome(true, false, 80)), out(new OutcomeData.PaymentOutcome(true, false, -120)));
+        assertThat(OutcomeAttribution.primary(OutcomeAttribution.attribute(lost))).as("one of two disputes won").isEqualTo("customer");
+    }
+
     @Test void chargebackAndRefusalAreTheCustomer() {
         assertThat(OutcomeAttribution.primary(OutcomeAttribution.attribute(List.of(out(new OutcomeData.PaymentOutcome(true, false, 120))))) ).isEqualTo("customer");
         assertThat(OutcomeAttribution.primary(OutcomeAttribution.attribute(List.of(out(new OutcomeData.PaymentOutcome(false, true, 80))))) ).isEqualTo("customer");

@@ -38,6 +38,32 @@ class NorthStarAndGuardrailReportIntegrationTest extends DecisionFabricTestBase 
         }
     }
 
+    /** Order episodes judged per line: {@code lines} lines each, {@code perfectLines} of them perfect on the first {@code n} orders. */
+    private void lineOrders(String arm, int n, int lines, int perfectLines, int alternate) {
+        Instant at = Instant.now().minusSeconds(7200);
+        for (int i = 0; i < n; i++) {
+            DecisionRecord r = insertRecord("fulfilment_intent", 1, at.plusSeconds(i), "ship_complete", 0.9, 40, Map.of("experiment", Map.of("arm", arm)), null, "system:test");
+            int good = i % 2 == 0 ? perfectLines : alternate;
+            rewardEpisode(r, 0.5, Map.of("otd", 1.0, "perfect", good == lines ? 1.0 : 0.0, "perfect_lines", (double) good / lines, "lines", (double) lines));
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void theHeadlineIsTheShareOfPerfectLinesNotOfPerfectOrders() {
+        // Audit A-N3: §2 defines the north star on lines. Holdout: 2-line orders with 1 or 2 perfect lines (75% of lines,
+        // 50% of orders); with learning: 4-line orders with 3 or 4 perfect lines (87.5% of lines, 50% of orders).
+        lineOrders("holdout", 40, 2, 1, 2);
+        lineOrders("treatment", 40, 4, 3, 4);
+        Map<String, Object> headline = (Map<String, Object>) api.lift(90).get("headline");
+        assertThat(headline).containsEntry("metric", "perfect_order_rate").containsEntry("unit", "share of lines")
+            .containsEntry("treatedMean", 0.875).containsEntry("holdoutMean", 0.75).containsEntry("lift", 0.125)
+            .containsEntry("linesTreated", 160L).containsEntry("linesHoldout", 80L).containsEntry("significant", true);
+        assertThat((String) headline.get("definition")).contains("lines").contains("fulfilment reason").contains("contacts and chargebacks do not count");
+        assertThat((Map<String, Object>) headline.get("orderLevel")).as("the share of all-perfect orders is the same on both sides")
+            .containsEntry("treatedMean", 0.5).containsEntry("holdoutMean", 0.5).containsEntry("significant", false);
+    }
+
     @Test
     @SuppressWarnings("unchecked")
     void perfectOrderRateLeadsTheLiftReportAndTheGuardrailReportJudgesEachMetric() {

@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.within;
 
 /**
  * §7 fill through the real workflow: an order-level episode's fill counts every unit ordered, so a backordered line
- * counts against it, and {@code fill_first_attempt} counts only what the order's first sourcing shipped.
+ * counts against it, and {@code fill} counts only what the order's first sourcing shipped.
  */
 class FillRateIntegrationTest extends OrchestrationTestBase {
     private static final String TYPE = StandardShipOrderWorkflow.TYPE;
@@ -69,7 +69,7 @@ class FillRateIntegrationTest extends OrchestrationTestBase {
 
         Episode ep = scoredSourcingEpisode(o);
         assertThat(ep.rewardComponents().get("fill")).as("2 of the 3 units ordered shipped").isCloseTo(2.0 / 3.0, within(1e-9));
-        assertThat(ep.rewardComponents().get("fill_first_attempt")).isCloseTo(2.0 / 3.0, within(1e-9));
+        assertThat(ep.rewardComponents().get("fill_all_attempts")).isCloseTo(2.0 / 3.0, within(1e-9));
     }
 
     @Test
@@ -89,7 +89,8 @@ class FillRateIntegrationTest extends OrchestrationTestBase {
         assertThat(events(o.id(), "order.shipped")).isNotEmpty().allSatisfy(e -> assertThat(e).containsEntry("firstAttempt", false));
 
         Episode ep = scoredSourcingEpisode(o);
-        assertThat(ep.rewardComponents().get("fill")).isCloseTo(1.0, within(1e-9));
-        assertThat(ep.rewardComponents().get("fill_first_attempt")).as("everything shipped from the second sourcing").isZero();
+        // §2 FillRate is the first attempt: the weighted fill term is 0 although every unit shipped from the second sourcing.
+        assertThat(ep.rewardComponents().get("fill")).as("everything shipped from the second sourcing").isZero();
+        assertThat(ep.rewardComponents().get("fill_all_attempts")).as("every attempt, unweighted").isCloseTo(1.0, within(1e-9));
     }
 }

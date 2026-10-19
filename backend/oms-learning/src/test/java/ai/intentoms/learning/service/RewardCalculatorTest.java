@@ -95,7 +95,8 @@ class RewardCalculatorTest {
 
     @Test void refusedCashOnDeliveryAndChargebacksAreLossesAndAWonChargebackCancels() {
         var shipped = out(parcel("fg1", "sh1", 1, 1, 5.0));
-        assertThat(RewardCalculator.components(List.of(shipped, out(new OutcomeData.PaymentOutcome(false, true, 100.0)))).get("fraud")).isCloseTo(1.0, within(1e-9));
+        // A refused cash-on-delivery parcel comes back: its loss is the return leg (the outbound cost again, 5 on a 100 order).
+        assertThat(RewardCalculator.components(List.of(shipped, out(new OutcomeData.PaymentOutcome(false, true, 100.0)))).get("fraud")).isCloseTo(0.05, within(1e-9));
         assertThat(RewardCalculator.components(List.of(shipped, out(new OutcomeData.PaymentOutcome(true, false, 50.0)))).get("fraud")).isCloseTo(0.5, within(1e-9));
         assertThat(RewardCalculator.components(List.of(shipped, out(new OutcomeData.PaymentOutcome(true, false, 50.0)), out(new OutcomeData.PaymentOutcome(true, false, -50.0))))
             .get("fraud")).isZero();
@@ -143,14 +144,16 @@ class RewardCalculatorTest {
         assertThat(RewardCalculator.components(List.of(legacy), new RewardCalculator.Scope(0, true)).get("fill")).isEqualTo(1.0);
     }
 
-    @Test void firstAttemptFillCountsOnlyUnitsFromTheFirstSourcing() {
+    @Test void theWeightedFillIsTheFirstAttemptAndEveryAttemptIsAnUnweightedSideComponent() {
         var first = out(new OutcomeData.FulfillmentOutcome(2, false, List.of("a"), true, 2, 2, 5.0, 100.0, "fg1", "sh1", 4, true));
         var resourced = out(new OutcomeData.FulfillmentOutcome(2, false, List.of("b"), true, 2, 2, 5.0, 100.0, "fg2", "sh2", 4, false));
         Map<String, Double> c = RewardCalculator.components(List.of(first, resourced), new RewardCalculator.Scope(0, true));
-        assertThat(c.get("fill")).isEqualTo(1.0);
-        assertThat(c.get(RewardCalculator.FILL_FIRST_ATTEMPT)).isCloseTo(0.5, within(1e-9));
-        assertThat(RewardCalculator.components(List.of(out(new OutcomeData.ContactOutcome("cs", "wismo", false))))).doesNotContainKey(RewardCalculator.FILL_FIRST_ATTEMPT);
-        assertThat(RewardCalculator.weight(ObjectiveWeights.preset("balanced"), RewardCalculator.FILL_FIRST_ATTEMPT)).as("not weighted").isZero();
+        assertThat(c.get("fill")).as("§2: units shipped on the first attempt / units ordered").isCloseTo(0.5, within(1e-9));
+        assertThat(c.get(RewardCalculator.FILL_ALL_ATTEMPTS)).isEqualTo(1.0);
+        assertThat(RewardCalculator.components(List.of(out(new OutcomeData.ContactOutcome("cs", "wismo", false))))).doesNotContainKey(RewardCalculator.FILL_ALL_ATTEMPTS);
+        assertThat(RewardCalculator.weight(ObjectiveWeights.preset("balanced"), RewardCalculator.FILL_ALL_ATTEMPTS)).as("not weighted").isZero();
+        ObjectiveWeights fillOnly = new ObjectiveWeights(1, 0, 0, 0, 0, 0, 0);
+        assertThat(RewardCalculator.compute(c, fillOnly)).as("the reward uses the first-attempt fill").isCloseTo(0.5, within(1e-9));
     }
 
     private static final RewardCalculator.Scope ORDER = new RewardCalculator.Scope(0, true);
@@ -166,14 +169,20 @@ class RewardCalculatorTest {
         assertThat(RewardCalculator.components(List.of(shippedAll(), arrived(false)), ORDER)).as("late").containsEntry(RewardCalculator.PERFECT, 0.0);
         assertThat(RewardCalculator.components(List.of(shippedAll(), out(new OutcomeData.DeliveryOutcome(true, 0, true, false, true))), ORDER)).as("damaged")
             .containsEntry(RewardCalculator.PERFECT, 0.0);
-        assertThat(RewardCalculator.components(List.of(shippedAll(), arrived(true), out(new OutcomeData.ContactOutcome("cs", "wismo", false))), ORDER)).as("a contact")
-            .containsEntry(RewardCalculator.PERFECT, 0.0);
-        assertThat(RewardCalculator.components(List.of(shippedAll(), arrived(true), out(new OutcomeData.ReturnOutcome("defective", "refurbish", false, 20.0, "rma_1", true))), ORDER))
-            .as("a defect return").containsEntry(RewardCalculator.PERFECT, 0.0);
+        assertThat(RewardCalculator.components(List.of(shippedAll(), arrived(true), out(new OutcomeData.ContactOutcome("cs", "wismo", false))), ORDER)).as("a contact is cx, not the north star")
+            .containsEntry(RewardCalculator.PERFECT, 1.0);
+        assertThat(RewardCalculator.components(List.of(shippedAll(), arrived(true), out(new OutcomeData.ReturnOutcome("defective", "refurbish", false, 20.0, "rma_1", true, "damaged", null))), ORDER))
+            .as("a return graded damaged").containsEntry(RewardCalculator.PERFECT, 0.0);
+        assertThat(RewardCalculator.components(List.of(shippedAll(), arrived(true), out(new OutcomeData.ReturnOutcome("arrived_late", "restock", false, 20.0, "rma_1", true))), ORDER))
+            .as("returned because it came late").containsEntry(RewardCalculator.PERFECT, 0.0);
         assertThat(RewardCalculator.components(List.of(shippedAll(), arrived(true), out(new OutcomeData.ReturnOutcome("wrong_size", "restock", false, 20.0, "rma_1", true))), ORDER))
             .as("a size exchange is not a failure").containsEntry(RewardCalculator.PERFECT, 1.0);
-        assertThat(RewardCalculator.components(List.of(shippedAll(), arrived(true), out(new OutcomeData.PaymentOutcome(true, false, 100.0))), ORDER)).as("a chargeback")
-            .containsEntry(RewardCalculator.PERFECT, 0.0);
+        assertThat(RewardCalculator.components(List.of(shippedAll(), arrived(true), out(new OutcomeData.PaymentOutcome(true, false, 100.0))), ORDER)).as("a chargeback is fraud, not the north star")
+            .containsEntry(RewardCalculator.PERFECT, 1.0);
+        assertThat(RewardCalculator.components(List.of(shippedAll(), arrived(true), out(new OutcomeData.ReturnOutcome("changed_mind", "restock", false, 20.0, "rma_1", true, "damaged", null))), ORDER))
+            .as("a change of mind is never a fulfilment failure").containsEntry(RewardCalculator.PERFECT, 1.0);
+        assertThat(RewardCalculator.components(List.of(shippedAll(), arrived(true), out(new OutcomeData.ReturnOutcome("wrong_item", "destroy", true, 20.0, "rma_1", true, "wrong_item", null))), ORDER))
+            .as("a wrong-item claim graded as abuse is not the fulfilment's fault").containsEntry(RewardCalculator.PERFECT, 1.0);
         var shortShip = out(new OutcomeData.FulfillmentOutcome(1, false, List.of("n"), false, 2, 2, 5.0, 100.0, "fg1", "sh1", 3, true));
         assertThat(RewardCalculator.components(List.of(shortShip, arrived(true)), ORDER)).as("incomplete").containsEntry(RewardCalculator.PERFECT, 0.0);
         var resourced = out(new OutcomeData.FulfillmentOutcome(1, false, List.of("n"), true, 3, 3, 5.0, 100.0, "fg2", "sh1", 3, false));
@@ -199,7 +208,7 @@ class RewardCalculatorTest {
         ObjectiveWeights w = ObjectiveWeights.preset("balanced");
         assertThat(RewardCalculator.compute(c, w)).isEqualTo(RewardCalculator.compute(without, w));
         assertThat(RewardCalculator.weight(w, RewardCalculator.PERFECT)).isZero();
-        assertThat(RewardCalculator.TERMS).doesNotContain(RewardCalculator.PERFECT, RewardCalculator.FILL_FIRST_ATTEMPT);
+        assertThat(RewardCalculator.TERMS).doesNotContain(RewardCalculator.PERFECT, RewardCalculator.PERFECT_LINES, RewardCalculator.FILL_ALL_ATTEMPTS);
     }
 
     @Test void penaltyTermsAreScaledAgainstTheTenantBaselineAndKeepTheirRawValue() {
@@ -208,7 +217,54 @@ class RewardCalculatorTest {
         assertThat(n.get("cost")).isCloseTo(0.5, within(1e-9));
         assertThat(n.get("cost_raw")).isEqualTo(0.06);
         assertThat(n.get("split")).isEqualTo(1.0); // capped at 1
-        assertThat(n.get("fill")).isEqualTo(1.0);  // rate terms are not scaled
-        assertThat(RewardCalculator.normalise(c, Map.of())).isSameAs(c);
+        assertThat(n.get("fill")).isEqualTo(1.0);  // rate terms use the identity
+        assertThat(RewardCalculator.normalise(c, Map.of())).as("defaults are each term's natural range").isEqualTo(c);
+    }
+
+    @Test void normalisationIsNeverOffAgedStockReliefIsScaledInDays() {
+        Map<String, Double> c = RewardCalculator.components(List.of(out(new OutcomeData.InventoryOutcome(false, false, 45))));
+        assertThat(c.get("inv")).as("measured as the age of the aged stock sold").isEqualTo(45.0);
+        Map<String, Double> withDefaults = RewardCalculator.normalise(c, Map.of());
+        assertThat(withDefaults.get("inv")).as("default scale: 30 days, any aged sale is full relief").isEqualTo(1.0);
+        assertThat(withDefaults.get("inv_raw")).isEqualTo(45.0);
+        Map<String, Double> scaled = RewardCalculator.normalise(c, Map.of("inv", 90.0));
+        assertThat(scaled.get("inv")).as("against a baseline where aged stock typically sells at 90 days").isCloseTo(0.5, within(1e-9));
+        assertThat(RewardCalculator.DEFAULT_SCALES).containsOnlyKeys(RewardCalculator.TERMS);
+    }
+
+    private static OutcomeData.FulfillmentOutcome lineParcel(String shipment, Map<String, Integer> lineUnits, boolean firstAttempt) {
+        int units = lineUnits.values().stream().mapToInt(Integer::intValue).sum();
+        return new OutcomeData.FulfillmentOutcome(2, false, List.of("n"), false, units, units, 5.0, 100.0, "fg-" + shipment, shipment, 4, firstAttempt,
+            lineUnits, Map.of("L1", 2, "L2", 1, "L3", 1));
+    }
+
+    private static OutcomeRecord deliveredParcel(String shipment, List<String> lines, boolean onTime, boolean damaged, boolean all) {
+        return out(new OutcomeData.DeliveryOutcome(onTime, onTime ? 0 : 30, damaged, false, all, lines, List.of(shipment)));
+    }
+
+    @Test void thePerfectOrderRateIsJudgedPerLine() {
+        var a = out(lineParcel("sh1", Map.of("L1", 2, "L2", 1), true));
+        var b = out(lineParcel("sh2", Map.of("L3", 1), true));
+        assertThat(RewardCalculator.components(List.of(a, b, deliveredParcel("sh1", List.of("L1", "L2"), true, false, false)), ORDER)).as("one parcel still on its way")
+            .doesNotContainKey(RewardCalculator.PERFECT_LINES);
+        Map<String, Double> all = RewardCalculator.components(List.of(a, b, deliveredParcel("sh1", List.of("L1", "L2"), true, false, false),
+            deliveredParcel("sh2", List.of("L3"), true, false, true)), ORDER);
+        assertThat(all).containsEntry(RewardCalculator.PERFECT_LINES, 1.0).containsEntry(RewardCalculator.LINES, 3.0).containsEntry(RewardCalculator.PERFECT, 1.0);
+
+        Map<String, Double> damaged = RewardCalculator.components(List.of(a, b, deliveredParcel("sh1", List.of("L1", "L2"), true, false, false),
+            deliveredParcel("sh2", List.of("L3"), true, true, true)), ORDER);
+        assertThat(damaged.get(RewardCalculator.PERFECT_LINES)).as("the damaged parcel's line only").isCloseTo(2.0 / 3.0, within(1e-9));
+        assertThat(damaged).containsEntry(RewardCalculator.PERFECT, 0.0);
+
+        var lineReturn = out(new OutcomeData.ReturnOutcome("defective", "refurbish", false, 20.0, "rma_1", true, "damaged",
+            List.of(new OutcomeData.ReturnedLine("L2", "defective", "damaged"))));
+        Map<String, Double> returned = RewardCalculator.components(List.of(a, b, deliveredParcel("sh1", List.of("L1", "L2"), true, false, false),
+            deliveredParcel("sh2", List.of("L3"), true, false, true), lineReturn), ORDER);
+        assertThat(returned.get(RewardCalculator.PERFECT_LINES)).as("only the returned line").isCloseTo(2.0 / 3.0, within(1e-9));
+
+        var resourced = out(lineParcel("sh2", Map.of("L3", 1), false));
+        Map<String, Double> late = RewardCalculator.components(List.of(a, resourced, deliveredParcel("sh1", List.of("L1", "L2"), true, false, false),
+            deliveredParcel("sh2", List.of("L3"), true, false, true)), ORDER);
+        assertThat(late.get(RewardCalculator.PERFECT_LINES)).as("a line shipped by a re-sourcing is not complete on the first attempt").isCloseTo(2.0 / 3.0, within(1e-9));
     }
 }

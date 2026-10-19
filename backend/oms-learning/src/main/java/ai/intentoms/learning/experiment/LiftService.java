@@ -112,12 +112,21 @@ public class LiftService {
         return m;
     }
 
-    /** The north-star reward term (§12 AC-2) on order episodes: 1 for a perfect order, else 0. */
+    /** The north-star reward terms (§12 AC-2) on order episodes: whole order perfect (1/0), share of perfect lines, lines judged. */
     public static final String PERFECT = "perfect";
+    public static final String PERFECT_LINES = "perfect_lines";
+    public static final String LINES = "lines";
 
     /**
-     * §12 AC-2: the perfect-order rate, the share of orders whose order episode carries {@code perfect = 1}, with
-     * learning versus in the holdout and a 95% interval on the difference. One value per order (its latest order episode).
+     * §12 AC-2 on the §2 definition: the perfect-order rate is the share of order <em>lines</em> delivered complete on the
+     * first attempt, on time and undamaged, and not returned for a fulfilment reason (contacts and chargebacks do not
+     * count), with learning versus in the holdout. One value per order (its latest order episode carrying the north-star
+     * terms): its perfect lines and its lines; an older episode without line counts is one line, perfect or not.
+     *
+     * <p>The rate of an arm is a ratio, perfect lines over lines, and orders are the independent units (the lines of one
+     * order share its parcels), so the 95% interval on the difference uses the ratio estimator's delta-method variance:
+     * {@code var(R) = sum((x_i - R m_i)^2) / ((n - 1) n mbar^2)}, which equals the Welch interval when every order has
+     * one line. The share of orders with every line perfect is reported beside it as {@code orderLevel}.
      */
     static Map<String, Object> perfectOrderRate(List<ExperimentMetricsRepository.LiftRow> rows, int minPerArm) {
         Map<String, ExperimentMetricsRepository.LiftRow> perOrder = new LinkedHashMap<>();
@@ -129,15 +138,79 @@ public class LiftService {
             if (prev == null || (r.createdAt() != null && prev.createdAt() != null && r.createdAt().isAfter(prev.createdAt()))) perOrder.put(key, r);
         }
         List<ExperimentMetricsRepository.LiftRow> orders = new ArrayList<>(perOrder.values());
-        Map<String, Object> m = metric("perfect_order_rate", orders.stream().filter(r -> !"holdout".equals(r.arm())).toList(),
-            orders.stream().filter(r -> "holdout".equals(r.arm())).toList(), r -> r.components().get(PERFECT) >= 1 ? 1.0 : 0.0, minPerArm);
+        List<ExperimentMetricsRepository.LiftRow> treated = orders.stream().filter(r -> !"holdout".equals(r.arm())).toList();
+        List<ExperimentMetricsRepository.LiftRow> held = orders.stream().filter(r -> "holdout".equals(r.arm())).toList();
+        Map<String, Object> m = lineRate(treated, held, minPerArm);
         m.put("label", "Perfect-order rate");
-        m.put("definition", "share of orders delivered in full and on time with nothing going wrong afterwards");
-        m.put("unit", "share");
-        if (orders.isEmpty()) m.put("reason", "no order has a perfect-order outcome yet; it is recorded when an order's episode matures");
+        m.put("definition", "share of order lines delivered complete on the first attempt, on time and undamaged, and not returned for a fulfilment reason "
+            + "(damaged, wrong item, missing parts, late or never arrived); customer contacts and chargebacks do not count");
+        m.put("unit", "share of lines");
+        Map<String, Object> orderLevel = metric("perfect_order_share", treated, held, r -> r.components().get(PERFECT) >= 1 ? 1.0 : 0.0, minPerArm);
+        orderLevel.put("definition", "share of orders whose every line is perfect");
+        m.put("orderLevel", orderLevel);
+        if (orders.isEmpty()) m.put("reason", "no order has a perfect-order outcome yet; it is recorded when an order is delivered");
         return m;
     }
 
+    /** Lines judged on one order episode (1 for older episodes that only carry the whole-order verdict). */
+    static double lines(ExperimentMetricsRepository.LiftRow r) {
+        Double n = r.components().get(LINES);
+        return n == null || n < 1 ? 1.0 : n;
+    }
+
+    /** Perfect lines of one order episode. */
+    static double perfectLines(ExperimentMetricsRepository.LiftRow r) {
+        Double share = r.components().get(PERFECT_LINES);
+        double s = share != null ? share : r.components().get(PERFECT) >= 1 ? 1.0 : 0.0;
+        return Math.round(s * lines(r) * 1e6) / 1e6;
+    }
+
+    static Map<String, Object> lineRate(List<ExperimentMetricsRepository.LiftRow> treated, List<ExperimentMetricsRepository.LiftRow> held, int minPerArm) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("metric", "perfect_order_rate");
+        m.put("betterWhen", "higher");
+        m.put("nTreated", treated.size());
+        m.put("nHoldout", held.size());
+        double linesT = treated.stream().mapToDouble(LiftService::lines).sum(), linesH = held.stream().mapToDouble(LiftService::lines).sum();
+        m.put("linesTreated", (long) linesT);
+        m.put("linesHoldout", (long) linesH);
+        if (treated.size() < 2 || held.size() < 2) {
+            m.put("lift", null);
+            m.put("significant", false);
+            m.put("enoughData", false);
+            m.put("reason", "need at least " + minPerArm + " orders with a perfect-order outcome on each side (" + treated.size() + " with learning, " + held.size() + " in the holdout)");
+            return m;
+        }
+        double[] t = ratio(treated), h = ratio(held);
+        double diff = t[0] - h[0];
+        double se = Math.sqrt(t[1] + h[1]);
+        m.put("treatedMean", round(t[0]));
+        m.put("holdoutMean", round(h[0]));
+        m.put("lift", round(diff));
+        m.put("ciLower", round(diff - 1.96 * se));
+        m.put("ciUpper", round(diff + 1.96 * se));
+        boolean enough = treated.size() >= minPerArm && held.size() >= minPerArm;
+        boolean varies = t[1] > 0 && h[1] > 0;
+        m.put("enoughData", enough && varies);
+        if (!enough) m.put("reason", "need at least " + minPerArm + " orders with a perfect-order outcome on each side (" + treated.size() + " with learning, " + held.size() + " in the holdout)");
+        else if (!varies) m.put("reason", "every order " + (t[1] > 0 ? "in the holdout" : h[1] > 0 ? "with learning" : "on both sides") + " has the same share of perfect lines, so the difference cannot be judged yet");
+        boolean excludesZero = enough && varies && (diff - 1.96 * se > 0 || diff + 1.96 * se < 0);
+        m.put("significant", excludesZero);
+        m.put("improvement", excludesZero && diff > 0);
+        return m;
+    }
+
+    /** [perfect lines / lines, delta-method variance of that ratio] over one arm's orders. */
+    private static double[] ratio(List<ExperimentMetricsRepository.LiftRow> orders) {
+        int n = orders.size();
+        double x = 0, lines = 0;
+        for (ExperimentMetricsRepository.LiftRow r : orders) { x += perfectLines(r); lines += lines(r); }
+        double rate = lines > 0 ? x / lines : 0;
+        double mbar = lines / n, ss = 0;
+        for (ExperimentMetricsRepository.LiftRow r : orders) { double e = perfectLines(r) - rate * lines(r); ss += e * e; }
+        double var = n > 1 && mbar > 0 ? ss / ((n - 1.0) * n * mbar * mbar) : 0;
+        return new double[]{rate, var};
+    }
     private static double mean(double[] xs) { double s = 0; for (double x : xs) s += x; return s / xs.length; }
     private static double var(double[] xs, double m) { double s = 0; for (double x : xs) s += (x - m) * (x - m); return s / (xs.length - 1); }
     private static double round(double v) { return Math.round(v * 10_000d) / 10_000d; }

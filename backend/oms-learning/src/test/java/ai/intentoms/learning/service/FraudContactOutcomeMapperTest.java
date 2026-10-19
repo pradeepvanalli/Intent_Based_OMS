@@ -25,6 +25,8 @@ class FraudContactOutcomeMapperTest {
             .isEqualTo(new OutcomeData.PaymentOutcome(true, false, 120.5));
         assertThat(mapper.map(event("order.returned_to_sender", "order", Map.of("cod", true, "amount", 80))))
             .isEqualTo(new OutcomeData.PaymentOutcome(false, true, 80));
+        assertThat(mapper.map(event("order.returned_to_sender", "order", Map.of("cod", true, "amount", 80, "rtoCost", 9.5, "fraudConfirmed", true))))
+            .as("the carrier's return charge and a fraud verdict are kept").isEqualTo(new OutcomeData.PaymentOutcome(false, true, 80, true, 9.5));
         assertThat(mapper.map(event("order.returned_to_sender", "order", Map.of("cod", false))))
             .isEqualTo(new OutcomeData.DeliveryOutcome(false, 0, false, false, false));
         assertThat(mapper.map(event("cs.complaint", "order", Map.of("channel", "phone"))))
