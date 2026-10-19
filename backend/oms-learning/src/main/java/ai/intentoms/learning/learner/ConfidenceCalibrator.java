@@ -116,20 +116,40 @@ public class ConfidenceCalibrator implements GovernedLearner {
 
     /**
      * People's resolutions as observations: the model's raw confidence (before any calibration was applied) and whether
-     * the value the person settled on is the model's answer. Only model-answered records (L1/L2) count; rules and
-     * defaults state no model confidence.
+     * the value the person settled on is the model's answer. Only records the model answered count; rules and defaults
+     * state no model confidence. That includes escalated records (C-N2): a decision a person resolved was handed to them
+     * because of its confidence, so it is stored as L3_HUMAN, but the record keeps the model's answer ({@code value},
+     * also {@code details.modelAnswer}) and its confidence ({@code details.rawConfidence} when a curve had moved it), and
+     * those are exactly the observations calibration needs. An escalation because the model chose the escape option
+     * ("unclear") is not a confident answer and is left out, as is anything a person did not resolve (E3-N1).
      */
     List<Calibration.Observation> resolved(String name, int version) {
         Instant now = Instant.now();
         List<Calibration.Observation> out = new ArrayList<>();
         for (DecisionRecord r : decisionRecords.labelledBetween(name, version, now.minus(java.time.Duration.ofDays(windowDays)), now)) {
-            if (r.layer() != Layer.L1_SYSTEM_ONE && r.layer() != Layer.L2_LLM) continue;
+            if (!modelAnswered(r)) continue;
             Optional<String> human = HumanResolution.value(r);
-            if (human.isEmpty() || r.value() == null) continue;
+            Object model = modelAnswer(r);
+            if (human.isEmpty() || model == null) continue;
             double raw = r.details() != null && r.details().get("rawConfidence") instanceof Number n ? n.doubleValue() : r.confidence();
-            out.add(new Calibration.Observation(raw, Calibration.valueEquals(human.get(), r.value()))); // numbers at rubric granularity
+            out.add(new Calibration.Observation(raw, Calibration.valueEquals(human.get(), model))); // numbers at rubric granularity
         }
         return out;
+    }
+
+    /** L1/L2 answers, and L3 escalations of a model answer (not of the escape option). */
+    static boolean modelAnswered(DecisionRecord r) {
+        if (r.layer() == Layer.L1_SYSTEM_ONE || r.layer() == Layer.L2_LLM) return true;
+        if (r.layer() != Layer.L3_HUMAN) return false;
+        Object reason = r.details() == null ? null : r.details().get("escalationReason");
+        if ("escape_option".equals(reason) || (r.reasonCodes() != null && r.reasonCodes().contains("escape_option"))) return false;
+        return r.provider() != null;
+    }
+
+    /** The model's own answer: kept in {@code details.modelAnswer} when the applied value differs (an escalation, an explored arm). */
+    static Object modelAnswer(DecisionRecord r) {
+        Object m = r.details() == null ? null : r.details().get("modelAnswer");
+        return m != null && !String.valueOf(m).isBlank() ? m : r.value();
     }
 
     /** Adds observations to the golden-set bins (same ten bins), keeping each bin's count, mean confidence and accuracy. */

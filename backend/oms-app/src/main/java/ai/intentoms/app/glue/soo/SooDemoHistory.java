@@ -509,9 +509,8 @@ public class SooDemoHistory {
             for (int k = 0; k < 4; k++) {
                 Instant at = now.minus(Duration.ofDays(6 + g * 9L + k * 2L));
                 String rma = "rma-demo-golden-" + g + "-" + k;
-                insert(recordId("return_risk", rma), "return_risk", version, "return", rma, null, Layer.L1_SYSTEM_ONE, Band.CONFIRM, value, 0.72, input, List.of(), List.of(),
-                    details("T2", Map.of()), Map.of("human_resolution", resolution(value, value, "confirmed_recommendation", "user:risk")),
-                    at, SCORES, String.valueOf(value), 1.0);
+                insertEscalated(recordId("return_risk", rma), "return_risk", version, "return", rma, Band.CONFIRM, "confirm_band", value, 0.72, input,
+                    details("T2", Map.of()), Map.of("human_resolution", resolution(value, value, "confirmed_recommendation", "user:risk")), at, SCORES);
                 labelledResolutions++;
             }
         }
@@ -521,9 +520,8 @@ public class SooDemoHistory {
         for (int k = 0; k < 21; k++) {
             Instant at = now.minus(Duration.ofDays(62 + k));
             String rma = "rma-demo-override-" + k;
-            insert(recordId("return_risk", rma), "return_risk", version, "return", rma, null, Layer.L1_SYSTEM_ONE, Band.CONFIRM, 2, 0.66, repeat, List.of(), List.of(),
-                details("T2", Map.of()), Map.of("human_resolution", resolution(1, 2, "receipt_present_low_value", k % 2 == 0 ? "user:risk" : "user:cs")),
-                at, SCORES, "2", 1.0);
+            insertEscalated(recordId("return_risk", rma), "return_risk", version, "return", rma, Band.CONFIRM, "confirm_band", 2, 0.66, repeat,
+                details("T2", Map.of()), Map.of("human_resolution", resolution(1, 2, "receipt_present_low_value", k % 2 == 0 ? "user:risk" : "user:cs")), at, SCORES);
             labelledResolutions++;
         }
     }
@@ -545,14 +543,16 @@ public class SooDemoHistory {
     }
 
     /**
-     * DF-02: breach-risk scores a person was asked to confirm over the last 60 days, each a different order, labelled
-     * with the score the person chose. People agreed with about half of the barely-confident ones and most of the
-     * confident ones, so the calibration curve has three bins with enough cases (20 or more) to correct. Every input
-     * differs, so no golden-case or rule candidate forms from them.
+     * DF-02: breach-risk scores handed to a person over the last 60 days, each a different order, labelled with the score
+     * the person chose. sla_breach_risk is T1, so only an answer below its confirm threshold (0.5) goes to a person: these
+     * sit in the escalate band, stored the way the live path stores them (L3_HUMAN, the model's answer and confidence
+     * kept, C-N2). People agreed with about half of the least confident ones and most of the less unsure ones, so the
+     * calibration curve has three bins with enough cases (20 or more) to correct. Every input differs, so no golden-case
+     * or rule candidate forms from them.
      */
     private void breachEscalations(int version, Instant now) {
         Random rnd = new Random(20261023L);
-        double[][] bins = {{0.50, 0.50}, {0.60, 0.62}, {0.70, 0.86}}; // {bin start, share of people who agreed}
+        double[][] bins = {{0.20, 0.50}, {0.30, 0.62}, {0.40, 0.86}}; // {bin start, share of people who agreed}
         for (int b = 0; b < bins.length; b++) {
             for (int k = 0; k < 24; k++) {
                 String subject = String.format(Locale.ROOT, "demo-esc-%d%02d", b, k + 1);
@@ -566,9 +566,8 @@ public class SooDemoHistory {
                     "node", Map.of("backlog_units", 60 + rnd.nextInt(500), "reject_rate", round2(0.02 + rnd.nextDouble() * 0.1), "minutes_to_cutoff", 20 + rnd.nextInt(300)),
                     "carrier", Map.of("on_time_rate_7d", round2(0.82 + rnd.nextDouble() * 0.12)));
                 String reason = agreed ? "confirmed_recommendation" : chosen > recommended ? "carrier_backlog_known" : "promise_still_reachable";
-                insert(recordId("sla_breach_risk", subject), "sla_breach_risk", version, "order", subject, subject, Layer.L1_SYSTEM_ONE, Band.CONFIRM, recommended, conf,
-                    input, List.of(), List.of(), details("T1", Map.of()), Map.of("human_resolution", resolution(chosen, recommended, reason, k % 3 == 0 ? "user:ops" : "user:admin")),
-                    at, SCORES, String.valueOf(recommended), 1.0);
+                insertEscalated(recordId("sla_breach_risk", subject), "sla_breach_risk", version, "order", subject, Band.ESCALATE, "low_confidence", recommended, conf,
+                    input, details("T1", Map.of()), Map.of("human_resolution", resolution(chosen, recommended, reason, k % 3 == 0 ? "user:ops" : "user:admin")), at, SCORES);
                 labelledResolutions++;
             }
         }
@@ -763,6 +762,22 @@ public class SooDemoHistory {
         records.insert(new DecisionRecord(id, decision, version, Mode.LIVE, subjectType, subjectId, correlationId, layer, band, action, value, Map.of(), confidence,
             layer == Layer.L0_RULE ? null : "heuristic", layer == Layer.L0_RULE ? null : "demo-history", Json.sha256(input), input, input, rulesFired, reasonCodes,
             0, 0.0, 0, false, null, ACTOR, details, null, null, null, null, labels, at, input, arms, chosenArm, propensity, version));
+        recordCount.merge(decision, 1, Integer::sum);
+    }
+
+    /**
+     * A decision handed to a person, stored the way the live runtime stores an escalation (C-N2): layer L3_HUMAN, action
+     * escalate, requiresHuman, the model's answer kept as the value (and {@code details.modelAnswer}) with its confidence,
+     * and the reason it escalated.
+     */
+    private void insertEscalated(String id, String decision, int version, String subjectType, String subjectId, Band band, String reason, Object modelValue,
+                                 double confidence, Map<String, Object> input, Map<String, Object> details, Map<String, Object> labels, Instant at, List<String> arms) {
+        Map<String, Object> d = new LinkedHashMap<>(details);
+        d.put("escalationReason", reason);
+        d.put("modelAnswer", modelValue);
+        records.insert(new DecisionRecord(id, decision, version, Mode.LIVE, subjectType, subjectId, subjectId, Layer.L3_HUMAN, band, "escalate", modelValue, Map.of(), confidence,
+            "heuristic", "demo-history", Json.sha256(input), input, input, List.of(), List.of(reason), 0, 0.0, 0, true, null, ACTOR, d, null, null, null, null, labels, at,
+            input, arms, String.valueOf(modelValue), 1.0, version));
         recordCount.merge(decision, 1, Integer::sum);
     }
 

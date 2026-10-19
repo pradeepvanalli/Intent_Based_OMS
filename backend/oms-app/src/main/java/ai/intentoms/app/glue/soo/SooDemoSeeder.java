@@ -376,6 +376,8 @@ public class SooDemoSeeder {
             {"prop_demo_live_buffer", "promise.buffer_days", "promise_buffer", 0.0, 3.0, 1.0, "Add the learned promise buffer per customer segment"},
             {"prop_demo_live_fraud_signals", "fraud.signal_risk", "fraud_signals", 0.0, 1.0, 0.2, "Give the payment-risk check the learned fraud rate of each signal level"},
             {"prop_demo_live_backorder", "inventory.backorder_conversion", "inventory_backorder", 0.0, 1.0, 0.2, "Give the backorder decision each option's learned conversion rate"},
+            // DF-02: decisions whose learned curve has a well-filled bin (return_risk, sla_breach_risk) use it live.
+            {"prop_demo_live_calibration", "decision.calibration", "confidence_calibrator", null, null, null, "Use each decision's learned confidence curve, so a 60%-sure answer is treated as right as often as such answers really are"},
         };
         List<String> promoted = new ArrayList<>();
         for (Object[] m : families) {
