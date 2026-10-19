@@ -53,6 +53,9 @@ class FulfilmentLearnerQualityIntegrationTest extends PostgresTestBase {
     @Autowired DecisionRecordRepository decisionRecords;
     @Autowired ParameterResolver parameters;
     @Autowired TenantConfigStore config;
+    @Autowired PromiseConversionRepository conversions;
+    @Autowired WarnEarlyThresholdLearner warnEarly;
+    @Autowired ai.intentoms.learning.store.OutcomeRepository outcomes;
 
     String tenant;
 
@@ -137,6 +140,59 @@ class FulfilmentLearnerQualityIntegrationTest extends PostgresTestBase {
         var c = bandit.log("ord-" + Ids.shortId(), d, d.applied(), null, "system:test");
         assertThat(c.propensity()).isEqualTo(d.sampledPropensity());
         assertThat(decisionRecords.find(c.decisionRecordId()).orElseThrow().details()).doesNotContainKey("overridden");
+    }
+
+    /** CX-02 / defect 25: a buffer is judged against the date the shopper was shown, so it gets credit for the lateness it absorbs. */
+    @Test
+    void bufferAccuracyIsMeasuredAgainstThePromiseShown() {
+        Instant shown = LocalDate.now(ZoneOffset.UTC).minusDays(10).atTime(10, 0).toInstant(ZoneOffset.UTC);
+        for (int i = 0; i < 25; i++) {
+            String order = "ord-" + Ids.shortId();
+            // Plan ETA was day 3; the shopper was shown day 5 (two days of buffer); the parcel came on day 4.
+            nodeLearner.on(event("order.sourced", order, Map.of("packages", List.of(Map.of("nodeId", "N1", "eta", LocalDate.ofInstant(shown, ZoneOffset.UTC).plusDays(3).toString())),
+                "destinationZip3", "100", "shipMethod", "ground"), shown));
+            nodeLearner.on(event("order.delivered", order, Map.of(), shown.plus(java.time.Duration.ofDays(4))));
+            conversions.record("imp-" + order, "channel:web", order, 5, 2, true, shown);
+        }
+        var stats = conversions.stats(shown.minus(java.time.Duration.ofDays(1)));
+        var row = stats.stream().filter(s -> s.bufferDays() == 2).findFirst().orElseThrow();
+        assertThat(row.delivered()).isEqualTo(25);
+        assertThat(row.onTime()).isEqualTo(25);   // late against the plan ETA, on time against what the shopper was promised
+    }
+
+    /** CX-03: the threshold that warns early enough to head off contacts wins over one that only fires once the promise is missed. */
+    @Test
+    void warnEarlyLearnsTheEarliestThresholdThatAvoidsContacts() {
+        LocalDate day = LocalDate.now(ZoneOffset.UTC).minusDays(20);
+        for (int i = 0; i < 40; i++) {
+            String order = "ord-" + Ids.shortId();
+            boolean late = i < 12;
+            LocalDate promised = day.plusDays(4);
+            nodeLearner.on(event("order.sourced", order, Map.of("packages", List.of(Map.of("nodeId", "N1", "eta", promised.toString())), "destinationZip3", "100"),
+                day.atTime(9, 0).toInstant(ZoneOffset.UTC)));
+            Instant early = day.plusDays(1).atTime(9, 0).toInstant(ZoneOffset.UTC);           // three days before the promise
+            Instant tooLate = promised.plusDays(1).atTime(9, 0).toInstant(ZoneOffset.UTC);    // after the promise was missed
+            DecisionRecord first = breachRecord(order, late ? 2 : (i < 15 ? 2 : 1), early);
+            if (late) breachRecord(order, 3, tooLate);
+            String epi = Ids.prefixed("epi");
+            episodes.upsertDecisionPoint(Episode.open(epi, first.id(), WarnEarlyThresholdLearner.DECISION, order, null, null, 1, "order", order, early));
+            String epId = episodes.findByDecisionId(first.id()).orElseThrow().episodeId();
+            outcomes.insert(ai.intentoms.learning.model.OutcomeRecord.of(Ids.prefixed("out"), epId,
+                new ai.intentoms.learning.model.OutcomeData.DeliveryOutcome(!late, late ? 30 : 0, false, false), tooLate, Ids.id(), Instant.now()));
+            if (late && i < 8) outcomes.insert(ai.intentoms.learning.model.OutcomeRecord.of(Ids.prefixed("out"), epId,
+                new ai.intentoms.learning.model.OutcomeData.ContactOutcome("cs", "wismo", false), tooLate, Ids.id(), Instant.now()));
+        }
+        assertThat(warnEarly.sweepOnce()).isEqualTo(1);
+        assertThat(number(SubjectType.DECISION, WarnEarlyThresholdLearner.DECISION, FactKey.WARN_EARLY_THRESHOLD)).isEqualTo(2.0);
+    }
+
+    private DecisionRecord breachRecord(String order, int score, Instant at) {
+        DecisionRecord r = new DecisionRecord(Ids.prefixed("dr"), WarnEarlyThresholdLearner.DECISION, 1, ai.intentoms.decision.model.Mode.LIVE, "order", order, order,
+            ai.intentoms.decision.model.Layer.L1_SYSTEM_ONE, ai.intentoms.decision.model.Band.ACT, "act", score, Map.of(), 0.9, "test", "v1", Ids.id(), Map.of(), Map.of(),
+            List.of(), List.of(), 1, 0, 0, false, null, "system:test", Map.of(), null, null, null, null, Map.of(), at, Map.of(), List.of(String.valueOf(score)),
+            String.valueOf(score), 1.0, 1);
+        decisionRecords.insert(r);
+        return r;
     }
 
     /** CX-01: offset against the base probability, residual against what the orders were told, so calibration does not chase itself. */

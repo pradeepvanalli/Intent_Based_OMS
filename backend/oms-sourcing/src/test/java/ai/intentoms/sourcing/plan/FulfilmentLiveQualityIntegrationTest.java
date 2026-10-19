@@ -57,6 +57,7 @@ class FulfilmentLiveQualityIntegrationTest extends SourcingTestBase {
     @Autowired ParameterResolver parameters;
     @Autowired DecisionRecordRepository decisionRecords;
     @Autowired LaneKnowledge lanes;
+    @Autowired ai.intentoms.sourcing.api.PromiseCalibrationController calibration;
     final Actor actor = Actor.user("tester");
 
     /** FS-03 / defect 16: a thin lane that looks slower never moves a promise later; enough evidence of a faster lane moves it earlier. */
@@ -124,6 +125,42 @@ class FulfilmentLiveQualityIntegrationTest extends SourcingTestBase {
         @SuppressWarnings("unchecked") Map<String, Object> pkg = ((List<Map<String, Object>>) events("order", after.id(), DefaultSourcingService.EVT_SOURCED).get(0).get("packages")).get(0);
         assertThat(((Number) pkg.get("onTimeBase")).doubleValue()).isCloseTo(staticOnTime, within(0.001));
         assertThat(pkg).containsKeys("shipBy", "dayPart");
+    }
+
+    /** CX-01, measured: the residual after calibration per lane, against the 3-point target, worst first. */
+    @Test
+    void calibrationResidualIsReportedPerLaneAgainstTheTarget() {
+        facts.number(SubjectType.LANE, LaneDeliveryLearner.laneKey("UPS", "ground", "DC-NJ", "100"), FactKey.LANE_CALIBRATION_ERROR, -0.02, 40, LaneDeliveryLearner.KEY, 0.001);
+        facts.number(SubjectType.LANE, LaneDeliveryLearner.laneKey("UPS", "ground", "DC-TX", "787"), FactKey.LANE_CALIBRATION_ERROR, -0.08, 30, LaneDeliveryLearner.KEY, 0.001);
+        facts.number(SubjectType.LANE, LaneDeliveryLearner.laneKey("UPS", "ground", "DC-TX", "787"), FactKey.LANE_CALIBRATION_OFFSET, -0.15, 30, LaneDeliveryLearner.KEY, 0.001);
+        facts.number(SubjectType.LANE, LaneDeliveryLearner.laneKey("FDX", "ground", "DC-TX", "787"), FactKey.LANE_CALIBRATION_ERROR, -0.30, 4, LaneDeliveryLearner.KEY, 0.001);
+        Map<String, Object> r = calibration.calibration(10);
+        assertThat(r).containsEntry("targetPoints", 3.0).containsEntry("lanesMeasured", 2).containsEntry("lanesWithinTarget", 1);
+        @SuppressWarnings("unchecked") List<Map<String, Object>> lanes = (List<Map<String, Object>>) r.get("lanes");
+        assertThat(lanes.get(0)).containsEntry("lane", "UPS|ground|DC-TX|787").containsEntry("residualPoints", -8.0).containsEntry("withinTarget", false)
+            .containsEntry("learnedOffsetPoints", -15.0);
+        assertThat(lanes.get(1)).containsEntry("residualPoints", -2.0).containsEntry("withinTarget", true);
+    }
+
+    /** CX-02: while the learned buffer is live, a small bounded share of promises try one day more or less, and say so. */
+    @Test
+    void promiseBufferExplorationIsSmallBoundedAndReported() {
+        stock("TEE-BLK-M", "DC-NJ", 50);
+        facts.number(SubjectType.SEGMENT, ai.intentoms.learning.learner.PromiseBufferLearner.segment("web"), FactKey.PROMISE_BUFFER_DAYS, 2, 100,
+            ai.intentoms.learning.learner.PromiseBufferLearner.KEY, 0.5);
+        config.set(ai.intentoms.learning.learner.PromiseBufferLearner.EXPLORATION_KEY, 0.5);   // asks for 50%, gets the 10% cap
+        factCache.invalidateAll();
+        PromiseRequest req = new PromiseRequest(List.of(new PromiseRequest.PromiseLine("TEE-BLK-M", 1)), "10001", "NY", "web", "ground");
+        for (int i = 0; i < 50; i++) { promiseImpl.invalidateAll(); assertThat(promise.promise(req).bufferExplored()).isFalse(); } // not live: never explores
+
+        parameters.promote(ai.intentoms.learning.learner.PromiseBufferLearner.PARAMETER, ai.intentoms.learning.learner.PromiseBufferLearner.KEY, 0.0, 5.0, null, null, "test");
+        int explored = 0;
+        for (int i = 0; i < 400; i++) {
+            promiseImpl.invalidateAll();
+            Promise p = promise.promise(req);
+            if (p.bufferExplored()) { explored++; assertThat(p.bufferDays()).isIn(1, 3); } else assertThat(p.bufferDays()).isEqualTo(2);
+        }
+        assertThat(explored).isBetween(10, 80);   // about 10% of 400
     }
 
     /** FS-05: a node whose learned curve says a breach is likely at its backlog loses the load before the breach. */

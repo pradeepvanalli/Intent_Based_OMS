@@ -173,7 +173,8 @@ public class DefaultPromiseService implements PromiseService {
             LocalDate date = Transit.eta(today, settings.backorderLeadDays(), settings.businessDaysOnly());
             return new Promise(date, 0.5, null, r.shipMethod(), false, 0, List.of());
         }
-        int buffer = pickup ? 0 : bufferDays(r.channel());
+        BufferChoice bufferChoice = pickup ? new BufferChoice(0, false) : bufferChoice(r.channel());
+        int buffer = bufferChoice.days();
         List<Promise.PromiseOption> alternatives = new ArrayList<>();
         if (!pickup) {
             for (String service : card.services()) {
@@ -184,7 +185,24 @@ public class DefaultPromiseService implements PromiseService {
             }
             alternatives.sort((a, b) -> a.date().compareTo(b.date()));
         }
-        return new Promise(buffered(chosen.eta(), buffer), chosen.onTime(), chosen.node().id(), r.shipMethod(), false, 0, alternatives);
+        return new Promise(buffered(chosen.eta(), buffer), chosen.onTime(), chosen.node().id(), r.shipMethod(), false, 0, alternatives, buffer, bufferChoice.explored());
+    }
+
+    record BufferChoice(int days, boolean explored) {}
+
+    /**
+     * CX-02: the buffer for this promise. While the learned buffer is live, a small share of promises
+     * ({@code learning.promise_buffer.exploration}, default 5%, capped at 10%) try one day more or less so the learner
+     * keeps evidence on the neighbouring buffers; the storefront reports the buffer it showed with each conversion.
+     */
+    BufferChoice bufferChoice(String channel) {
+        int served = bufferDays(channel);
+        if (!parameters.isLive(PromiseBufferLearner.PARAMETER)) return new BufferChoice(served, false);
+        double share = Math.max(0.0, Math.min(0.10, config.getDouble(PromiseBufferLearner.EXPLORATION_KEY, 0.05)));
+        java.util.concurrent.ThreadLocalRandom rnd = java.util.concurrent.ThreadLocalRandom.current();
+        if (share <= 0 || rnd.nextDouble() >= share) return new BufferChoice(served, false);
+        int explored = rnd.nextBoolean() || served == 0 ? served + 1 : served - 1;
+        return new BufferChoice(Math.max(0, Math.min(30, explored)), true);
     }
 
     /** CX-02: whole days of padding for this channel's promise. */

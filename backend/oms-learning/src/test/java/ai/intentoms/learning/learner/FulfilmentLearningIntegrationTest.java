@@ -209,7 +209,9 @@ class FulfilmentLearningIntegrationTest extends PostgresTestBase {
             outcomes.insert(OutcomeRecord.of(Ids.prefixed("out"), epId, new OutcomeData.DeliveryOutcome(!late, late ? 30 : 0, false, false), Instant.now(), Ids.id(), Instant.now()));
         }
         assertThat(warnEarly.sweepOnce()).isEqualTo(1);
-        assertThat(number(SubjectType.DECISION, "sla_breach_risk", FactKey.WARN_EARLY_THRESHOLD)).isEqualTo(2.0);
+        // No promise dates or contact history here: every warning gets half earliness credit and the prior contact
+        // rates, so the threshold that warns the late orders with no false alarm (3) wins over 2 (four false alarms).
+        assertThat(number(SubjectType.DECISION, "sla_breach_risk", FactKey.WARN_EARLY_THRESHOLD)).isEqualTo(3.0);
     }
 
     @Test
