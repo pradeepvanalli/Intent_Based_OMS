@@ -56,6 +56,7 @@ import java.util.function.Predicate;
  */
 @Service
 public class ProposalEvaluationService {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ProposalEvaluationService.class);
     private static final Duration LOOKBACK = Duration.ofDays(90);
     private static final int MAX_RECORDS = 5000;
     /** The arm of a decision that did not act (confirm or escalate to a person): its own arm, on both the logged and proposed side. */
@@ -148,6 +149,9 @@ public class ProposalEvaluationService {
             r.put("simulation", "proposed act threshold applied to the logged confidence");
             r.put("decisionsChanged", flips);
             r.put("rewards", rewardMix(paired));
+            Double act = newAct;
+            addFraudLabels(r, decision, rec -> FraudLabelEvaluation.risky(rec.value())
+                && (rec.layer() == ai.intentoms.decision.model.Layer.L0_RULE || (act == null ? rec.band() == Band.ACT : rec.confidence() >= act)));
             return r;
         }
         DecisionDefinition base = definitions.find(decision, baseVersion).or(() -> definitions.byStatus(decision, "live").stream().findFirst())
@@ -172,8 +176,32 @@ public class ProposalEvaluationService {
         r.put("decisionsChanged", flips);
         r.put("baseVersion", base.version());
         r.put("rewards", rewardMix(replayed));
+        // FD-04: the labelled orders re-run through the candidate (up to the same cap; beyond it the logged answer stands).
+        int[] simulated = {0};
+        addFraudLabels(r, decision, rec -> {
+            if (simulated[0]++ >= maxResimulated) return FraudLabelEvaluation.loggedBlocks(rec);
+            DecisionResult sim = runtime.evaluate(candidate, rec.input(), new DecisionOptions(rec.subjectType(), rec.subjectId(),
+                rec.correlationId(), Mode.SIMULATION, base.version(), Actor.system("proposal-replay"), Map.of()));
+            return FraudLabelEvaluation.risky(sim.value()) && (sim.band() == Band.ACT || candidate.tier() == Tier.T0);
+        });
         return r;
     }
+
+    /** FD-04: a fraud decision's change is also scored on its labelled fraud history. */
+    private void addFraudLabels(Map<String, Object> report, String decision, Predicate<DecisionRecord> proposedBlocks) {
+        if (fraudLabels == null || !FraudLabelEvaluation.FRAUD_DECISIONS.contains(decision)) return;
+        try {
+            report.put("fraudLabels", fraudLabels.evaluate(decision, proposedBlocks));
+        } catch (RuntimeException e) {
+            log.warn("Labelled-history evaluation of {} failed: {}", decision, e.toString());
+            report.put("fraudLabels", Map.of("method", "fraud_label_replay", "sufficient", false, "reason", "could not be computed: " + e.getMessage()));
+        }
+    }
+
+    private FraudLabelEvaluation fraudLabels;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setFraudLabels(FraudLabelEvaluation fraudLabels) { this.fraudLabels = fraudLabels; }
 
     /** {@code mature} episodes have a final reward; {@code provisional} ones may still change as late outcomes land (OC-04). */
     record Paired(DecisionRecord record, LoggedRecord logged, boolean mature) {}

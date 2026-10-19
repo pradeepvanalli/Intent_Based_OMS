@@ -16,7 +16,8 @@ import java.util.Map;
  * reviewer, from fixed checks on the changeset and its evaluation report. Its review is stored with source
  * {@value Review#RULES}; like the model's, it never approves, rejects or blocks on its own.
  * <ul>
- *   <li>RISKY: the replay estimates the change makes things worse; an autonomous allow-list would gain refund or cancel;
+ *   <li>RISKY: the replay estimates the change makes things worse; labelled fraud history shows a higher expected cost
+ *       (FD-04); an autonomous allow-list would gain refund or cancel;
  *       a new rule blocks orders on a T2 or T3 decision.</li>
  *   <li>NEEDS_CHANGES: no counterfactual estimate; a confidence interval that includes no effect; fewer than
  *       {@value #MIN_SAMPLE} cases behind the estimate; a threshold moving more than {@value #MAX_STEP}; a rule that
@@ -46,6 +47,13 @@ public class TemplateCritic {
             if (lower != null && lower <= 0 && lift >= 0) needsChanges.add(String.format(Locale.ROOT, "The confidence interval includes no effect (lower bound %.3f)", lower));
         }
         if (sample != null && sample < MIN_SAMPLE) needsChanges.add(String.format(Locale.ROOT, "Only %.0f cases behind the estimate (fewer than %d)", sample, MIN_SAMPLE));
+        // FD-04: a fraud change is also judged on its labelled fraud history.
+        if (report.get("fraudLabels") instanceof Map<?, ?> fl && Boolean.TRUE.equals(fl.get("sufficient"))) {
+            Double costChange = number(fl.get("expectedCostChange"));
+            Double fpChange = number(fl.get("falsePositiveRateChange"));
+            if (costChange != null && costChange > 0) risky.add(String.format(Locale.ROOT, "On labelled fraud history the change raises the expected cost by %.2f", costChange));
+            if (fpChange != null && fpChange > 0.02) needsChanges.add(String.format(Locale.ROOT, "On labelled fraud history it blocks %.1f%% more good orders", fpChange * 100));
+        }
 
         for (PolicyChange c : p.changeset().changes()) {
             switch (c) {
