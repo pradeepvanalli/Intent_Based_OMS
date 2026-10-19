@@ -229,13 +229,16 @@ class FulfilmentLiveQualityIntegrationTest extends SourcingTestBase {
         assertThat(r.plan().explain()).containsKey("loadShift");
     }
 
+    @org.springframework.beans.factory.annotation.Autowired ai.intentoms.learning.store.CustomerSubjects customerSubjects;
+
     /** FS-01: a ship-to order is never offered store pickup; the context carries segment and load; exploration is the tenant's, capped at 10%. */
     @Test
     void banditContextArmsAndExplorationFollowTheRequirement() {
         stock("TEE-BLK-M", "DC-TX", 50);
         stock("TEE-BLK-M", "ST-AUS-03", 50);
         String customer = "cust-1";
-        factRepo.insert(new ai.intentoms.learning.model.LearnedFact(Ids.prefixed("fact"), SubjectType.CUSTOMER, customer, FactKey.SEGMENT_MEMBERSHIP,
+        // NF-07: customer facts are keyed by the vault token of the reference, as the segment learner writes them.
+        factRepo.insert(new ai.intentoms.learning.model.LearnedFact(Ids.prefixed("fact"), SubjectType.CUSTOMER, customerSubjects.key(customer), FactKey.SEGMENT_MEMBERSHIP,
             new TypedValue.TextValue("seg-bargain"), 0.9, 40, "ci_segment_discovery", 1, java.time.Instant.now(), null, java.time.Instant.now()));
         config.set(SourcingPolicyBandit.EXPLORATION_KEY, 0.5);
         factCache.invalidateAll();

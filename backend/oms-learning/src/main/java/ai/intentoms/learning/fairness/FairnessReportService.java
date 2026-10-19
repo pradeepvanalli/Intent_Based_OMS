@@ -148,8 +148,8 @@ public class FairnessReportService {
             select count(*) as n, avg(e.reward) as mean_reward, avg((e.reward_components->>'otd')::double precision) as on_time
             from episode e
             where e.tenant_id = :t and e.decision_name = :d and e.reward is not null and e.created_at >= :since
-              and e.order_id in (select o.id from orders o where o.tenant_id = e.tenant_id and o.customer_ref in (:ids))
-            """).param("t", TenantContext.require()).param("d", decision).param("since", Timestamp.from(since)).param("ids", customers).query().singleRow();
+              and e.order_id in (%s)
+            """.formatted(ordersOf("e"))).param("t", TenantContext.require()).param("d", decision).param("since", Timestamp.from(since)).param("ids", customers).query().singleRow();
         long n = ((Number) row.get("n")).longValue();
         Double mean = row.get("mean_reward") instanceof Number m ? Math.round(m.doubleValue() * 1000) / 1000.0 : null;
         Double onTime = row.get("on_time") instanceof Number m ? Math.round(m.doubleValue() * 1000) / 1000.0 : null;
@@ -159,16 +159,28 @@ public class FairnessReportService {
     /** {total, act, overridden} LIVE records of the decision since {@code since} concerning these customers. */
     private long[] counts(String decision, List<String> customers, Instant since, boolean ordersTable) {
         if (customers.isEmpty()) return new long[]{0, 0, 0};
-        String orderClause = ordersTable
-            ? " or (d.subject_type = 'order' and d.subject_id in (select o.id from orders o where o.tenant_id = d.tenant_id and o.customer_ref in (:ids)))" : "";
+        String orderClause = ordersTable ? " or (d.subject_type = 'order' and d.subject_id in (" + ordersOf("d") + "))" : "";
+        // A decision about a customer names the raw reference; the members are tokens, so the reference comes from their orders.
+        String customerRefs = ordersTable ? " or d.subject_id in (select o.customer_ref from orders o join customer_order_ref r on r.tenant_id = o.tenant_id"
+            + " and r.order_id = o.id where o.tenant_id = d.tenant_id and r.customer_ref in (:ids))" : "";
         var row = jdbc.sql("""
             select count(*) as total, count(*) filter (where d.band = 'ACT') as act, count(*) filter (where d.overridden_at is not null) as overridden
             from decision_record d
             where d.tenant_id = :t and d.decision = :d and d.mode = 'LIVE' and d.created_at >= :since
-              and ((d.subject_type = 'customer' and d.subject_id in (:ids))""" + orderClause + ")")
+              and ((d.subject_type = 'customer' and (d.subject_id in (:ids)""" + customerRefs + "))" + orderClause + ")")
             .param("t", TenantContext.require()).param("d", decision).param("since", Timestamp.from(since)).param("ids", customers)
             .query().singleRow();
         return new long[]{((Number) row.get("total")).longValue(), ((Number) row.get("act")).longValue(), ((Number) row.get("overridden")).longValue()};
+    }
+
+    /**
+     * NF-07: group members are customer learning subjects (vault tokens), so their orders are found through the order
+     * attribution learning keeps by token ({@code customer_order_ref}), and through {@code orders.customer_ref} for an
+     * erased customer's pseudonymised orders (the pseudonym is the token).
+     */
+    private static String ordersOf(String alias) {
+        return "select r.order_id from customer_order_ref r where r.tenant_id = " + alias + ".tenant_id and r.customer_ref in (:ids)"
+            + " union select o.id from orders o where o.tenant_id = " + alias + ".tenant_id and o.customer_ref in (:ids)";
     }
 
     private static double pct(List<Double> sorted, double p) {
