@@ -254,11 +254,11 @@ export interface LearnerView {
 }
 /** @deprecated the learner list returns {@link LearnerView}. */
 export type LearnerState = LearnerView;
-/** GV-03 at every level. globalSource: "property" (forced at startup), "runtime" (set by a platform admin) or null when off. */
+/** GV-03 at every level. globalSource: "property" (forced at startup), "runtime" (set by a platform engineer) or null when off. */
 export interface KillSwitchState {
   globalKillSwitch: boolean; globalSource?: 'property' | 'runtime' | null; globalSetBy?: string | null; globalSetAt?: string | null;
   tenantPaused: boolean; pausedLearners: string[];
-  /** True for a platform administrator, who alone can stop learning for every tenant. */
+  /** True for a platform engineer (role platform_engineer), who alone can stop learning for every tenant; a tenant admin is not one. */
   canSetGlobal?: boolean;
 }
 /** GV-02: either field may be omitted to keep its value; clearMaxStep removes the learner's own limit (the 0.05 default for 0..1 values applies). */

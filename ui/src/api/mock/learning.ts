@@ -236,7 +236,7 @@ export function registerLearningRoutes({ on, problem }: { on: On; problem: Probl
   const ks = (): KillSwitchState => ({
     globalKillSwitch: !!globalOff, globalSource: globalOff ? 'runtime' : null, globalSetBy: globalOff?.by ?? null, globalSetAt: globalOff?.at ?? null,
     tenantPaused, pausedLearners: learners.filter((l) => !l.enabled || l.paused).map((l) => l.learnerKey),
-    canSetGlobal: (getSession().principal?.permissions ?? []).includes('*'),
+    canSetGlobal: (getSession().principal?.roles ?? []).includes('platform_engineer'),
   });
   const refuse = (p: Proposal, action: string): never => problem(409, 'conflict', `Cannot ${action} this change: it is ${STATUS_PHRASE[p.status]}. ${NEXT_STEP[p.status]}`, { proposalId: p.proposalId, status: p.status, action });
 
@@ -254,7 +254,7 @@ export function registerLearningRoutes({ on, problem }: { on: On; problem: Probl
   on('POST', '/api/v1/learning/kill-switch', ({ body }) => {
     const key = body.learnerKey as string | undefined;
     if (body.scope === 'global') {
-      if (!ks().canSetGlobal) return problem(403, 'forbidden', 'Only a platform administrator can switch learning off or on for every tenant');
+      if (!ks().canSetGlobal) return problem(403, 'forbidden', 'Only a platform engineer can switch learning off or on for every tenant; a tenant administrator can pause this tenant’s learning instead');
       globalOff = body.enabled ? null : { by: me(), at: now() };
     } else if (!key || key === '*') tenantPaused = !body.enabled; else findLearner(key).enabled = Boolean(body.enabled);
     regate(); return ks();

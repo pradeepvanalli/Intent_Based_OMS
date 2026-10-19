@@ -21,7 +21,7 @@ export const learningApi = {
   /** Pause (enabled=false) or resume all learning for this tenant. */
   setAllLearning: (enabled: boolean) => api.post<KillSwitchState>(`${L}/kill-switch`, { learnerKey: '*', enabled }),
   killSwitch: () => api.get<KillSwitchState>(`${L}/kill-switch`, { silent: true }),
-  /** Stop (enabled=false) or restart learning for every tenant; platform administrators only. */
+  /** Stop (enabled=false) or restart learning for every tenant; platform engineers only (the platform_engineer role). */
   setGlobalLearning: (enabled: boolean) => api.post<KillSwitchState>(`${L}/kill-switch`, { scope: 'global', enabled }),
   /** GV-02: how far one promotion may move a number and how often one target may be promoted per week. */
   setBudget: (learnerKey: string, body: BudgetUpdate) => api.put<LearnerView>(`${L}/learners/${enc(learnerKey)}/budget`, body),

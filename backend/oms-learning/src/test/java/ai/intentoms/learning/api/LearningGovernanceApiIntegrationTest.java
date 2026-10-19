@@ -32,13 +32,17 @@ class LearningGovernanceApiIntegrationTest extends PostgresTestBase {
     @Autowired LearningController learning;
     @Autowired LearnedFactRepository facts;
 
-    private void as(String user, Set<String> permissions) {
-        SecurityContextHolder.getContext().setAuthentication(new PrincipalAuthentication(new Principal(Principal.Type.USER, user, TENANT, Set.of("admin"), permissions, 3)));
+    private void as(String user, Set<String> permissions) { as(user, Set.of("admin"), permissions); }
+
+    private void as(String user, Set<String> roles, Set<String> permissions) {
+        SecurityContextHolder.getContext().setAuthentication(new PrincipalAuthentication(new Principal(Principal.Type.USER, user, TENANT, roles, permissions, 3)));
     }
 
-    private void asPlatformAdmin() { as("root", Set.of("*")); }
+    /** N3: a platform engineer is known by role; holding "*" is not enough, since the built-in tenant admin role holds it too. */
+    private void asPlatformAdmin() { as("root", Set.of("platform_engineer"), Set.of("*")); }
 
-    private void asTenantAdmin() { as("tenant-admin", Set.of("learning.read", "learning.admin", "config.admin")); }
+    /** The demo tenant admin: role admin, every permission ("*"). */
+    private void asTenantAdmin() { as("tenant-admin", Set.of("admin"), Set.of("*")); }
 
     @AfterEach void clear() { SecurityContextHolder.clearContext(); }
 

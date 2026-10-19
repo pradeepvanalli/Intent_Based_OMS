@@ -31,9 +31,9 @@ function page<T>(items: T[], q: URLSearchParams): Page<T> {
   return { items: items.slice(offset, offset + limit), total: items.length, offset, limit };
 }
 const actor = () => { const s = getSession(); return s.principal ? `user:${s.principal.id}` : 'user:anonymous'; };
-const DEMO_USERS: Record<string, string[]> = { admin: ['admin'], ops: ['ops_analyst'], cs: ['cs_rep'], risk: ['risk_analyst'], finance: ['finance_controller'], strategy: ['strategy_lead'] };
+const DEMO_USERS: Record<string, string[]> = { admin: ['admin'], ops: ['ops_analyst'], cs: ['cs_rep'], risk: ['risk_analyst'], finance: ['finance_controller'], strategy: ['strategy_lead'], platform: ['platform_engineer'] };
 const ROLE_PERMS: Record<string, string[]> = {
-  admin: ['*'], strategy_lead: ['order.read', 'decision.*', 'statemodel.*', 'analytics.read', 'simulation.run', 'task.read', 'exception.read', 'config.admin', 'margin.approve', 'learning.*'],
+  admin: ['*'], platform_engineer: ['*'], strategy_lead: ['order.read', 'decision.*', 'statemodel.*', 'analytics.read', 'simulation.run', 'task.read', 'exception.read', 'config.admin', 'margin.approve', 'learning.*'],
   ops_analyst: ['order.read', 'order.modify', 'order.hold', 'order.release', 'order.bulk', 'task.*', 'exception.*', 'inventory.read', 'decision.read', 'decision.override', 'analytics.read'],
   cs_rep: ['order.read', 'order.modify', 'order.cancel', 'return.create', 'refund.issue', 'appeasement.issue', 'task.read', 'task.work', 'decision.read'],
   risk_analyst: ['order.read', 'return.decide', 'decision.read', 'decision.approve', 'decision.override', 'task.*', 'exception.read', 'agent.admin'],

@@ -147,14 +147,15 @@ describe('Learning Console', () => {
     expect(await within(await screen.findByTestId('budget-node_reliability')).findByText(/Moves at most 0.02 · 2 changes a week per target/, {}, { timeout: T })).toBeInTheDocument();
   }, T);
 
-  it('lets only a platform administrator stop learning for every tenant', async () => {
-    setSession('test-token', { type: 'USER', id: 'ops', tenantId: 'demo', roles: ['admin'], permissions: ['learning.read', 'learning.admin', 'config.admin'], trustTier: 3 });
+  it('lets only a platform engineer stop learning for every tenant', async () => {
+    // N3: the tenant admin holds every permission, yet only the platform engineer role may stop every tenant.
+    loginAsAdmin();
     const view = renderWithProviders(<LearningConsole />, { route: '/?tab=learners' });
     await screen.findByRole('button', { name: 'Pause all learning' }, { timeout: T });
     expect(screen.queryByRole('button', { name: 'Stop learning for every tenant' })).not.toBeInTheDocument();
     view.unmount();
 
-    loginAsAdmin();
+    setSession('test-token', { type: 'USER', id: 'platform', tenantId: 'demo', roles: ['platform_engineer'], permissions: ['*'], trustTier: 3 });
     renderWithProviders(<LearningConsole />, { route: '/?tab=learners' });
     fireEvent.click(await screen.findByRole('button', { name: 'Stop learning for every tenant' }, { timeout: T }));
     const dialog = await screen.findByRole('dialog', { name: 'Stop learning for every tenant?' });
