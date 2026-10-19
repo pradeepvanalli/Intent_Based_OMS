@@ -45,6 +45,6 @@ test('a holdout customer gets the standard values, and the Why drawer says so in
   const items = learning.getByRole('list', { name: 'Learned values read' }).getByRole('listitem');
   await expect(items).toHaveCount(held.facts.length);
   await expect(items.filter({ hasText: 'not used: this customer is in the comparison group that keeps the standard values' })).toHaveCount(heldBack.length);
-  await expect(learning).toContainText('Part of an experiment: this customer is in the Holdout group');
+  await expect(learning).toContainText('Part of an experiment: this customer is in the holdout group');
   await expect(learning).not.toContainText('EX-04');
 });
