@@ -98,6 +98,27 @@ class LiveUseFlowIntegrationTest extends PostgresTestBase {
         assertThat(liveUse.propose(new LiveUseController.LiveUseRequest(family, "node_reliability", 0.0, 0.4, 0.1, true, null)).status()).isEqualTo(ProposalStatus.DRAFT);
     }
 
+    /** B-1: a live-use proposal stored without the endpoint's check (an older seeder, a direct insert) is checked again at promotion. */
+    @Test
+    void promotionRechecksTheRangeAgainstTheFamilyDomain() {
+        String family = NodeReliabilityFeatures.REJECT_RATE;
+        resolver.revoke(family, "test-setup");
+        var cs = new ai.intentoms.learning.model.PolicyChangeset(new ai.intentoms.learning.model.ArtifactRef("parameter", "live:" + family), 0,
+            java.util.List.of(new ai.intentoms.learning.model.PolicyChange.ParameterChange("live:" + family, java.util.Map.of("enabled", false),
+                java.util.Map.of("enabled", true, "learner", "node_reliability", "min", 0.0, "max", 5.0, "maxStep", 0.1))),
+            "reject rates read as a 0-5 score", ai.intentoms.learning.model.PolicyChangeset.RiskTier.T1);
+        var p = new ai.intentoms.learning.model.Proposal(ai.intentoms.platform.ids.Ids.prefixed("prop"), cs, null, cs.tier(), ProposalStatus.DRAFT,
+            null, null, "user:alice", java.time.Instant.now(), java.time.Instant.now(), null, null, null, null, null, null, null, null);
+        proposals.insert(p);
+        proposals.markEvaluated(p.proposalId(), java.util.Map.of("method", "no_counterfactual", "sampleSize", 0), java.time.Instant.now());
+        proposals.approve(p.proposalId(), "user:bob", java.time.Instant.now());
+
+        assertThatThrownBy(() -> promotion.promote(p.proposalId(), Actor.parse("user:bob"), "pilot agreed"))
+            .isInstanceOf(ConflictException.class).hasMessageContaining("cannot switch on " + family).hasMessageContaining("max 5");
+        assertThat(resolver.isLive(family)).isFalse();
+        assertThat(proposals.get(p.proposalId()).status()).isEqualTo(ProposalStatus.APPROVED);
+    }
+
     /**
      * B-1 as the audit reproduced it: warn-early is a 0-4 SLA breach risk score, and a range read as a probability
      * (0.3-0.9) served every "unlikely to breach" order a delay e-mail while reporting the value as plainly LEARNED.

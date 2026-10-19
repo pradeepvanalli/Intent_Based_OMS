@@ -159,6 +159,13 @@ class ProposalReplayIntegrationTest extends PostgresTestBase {
             .isInstanceOf(ai.intentoms.platform.error.ConflictException.class).hasMessageContaining("it is live");
     }
 
+    private void learnedSomething(String learner) {
+        jdbc.sql("""
+            insert into learned_fact(fact_id, tenant_id, subject_type, subject_id, fact_key, value, confidence, sample_size, learner, version, valid_from, created_at)
+            values (:id, :t, 'SEGMENT', :s, 'PROMISE_BUFFER_DAYS', '{"type":"NumberValue","value":1.0}'::jsonb, 0.6, 40, :l, 1, now(), now())
+            """).param("id", ai.intentoms.platform.ids.Ids.prefixed("fact")).param("t", TENANT).param("s", "test:" + learner).param("l", learner).update();
+    }
+
     @Test
     void configAndParameterTargetsWithoutACounterfactualSaySoInsteadOfInventingLift() {
         String name = installWithHistory(5);
@@ -168,6 +175,8 @@ class ProposalReplayIntegrationTest extends PostgresTestBase {
         assertThat(r1.get("method")).isEqualTo("no_counterfactual");
         assertThat(r1).doesNotContainKey("liftEstimate");
 
+        // The learners behind these families have learned something, so each reason names the next thing missing.
+        for (String learner : List.of("node_reliability", "promise_buffer", "confidence_calibrator")) learnedSomething(learner);
         Proposal live = draft(new ArtifactRef("parameter", "live:sourcing.node_reject_rate"), 0,
             new PolicyChange.ParameterChange("sourcing.node_reject_rate", Map.of("enabled", false), Map.of("enabled", true)));
         Map<String, Object> r2 = evaluations.evaluate(live.proposalId(), "user:tester").evaluationReport();

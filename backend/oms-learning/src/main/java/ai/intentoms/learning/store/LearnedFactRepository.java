@@ -80,6 +80,13 @@ public class LearnedFactRepository {
             .param("at", Timestamp.from(at)).param("t", TenantContext.require()).param("st", subjectType.name()).param("sid", subjectId).param("key", key.name()).update();
     }
 
+    /** Current (not superseded) facts written by any of these learners, in this tenant. */
+    public long countCurrentByLearners(java.util.Collection<String> learnerKeys) {
+        if (learnerKeys == null || learnerKeys.isEmpty()) return 0;
+        return jdbc.sql("select count(*) from learned_fact where tenant_id = :t and learner in (:keys) and valid_to is null")
+            .param("t", TenantContext.require()).param("keys", learnerKeys).query(Long.class).single();
+    }
+
     public Optional<LearnedFact> active(SubjectType subjectType, String subjectId, FactKey key) {
         String t = TenantContext.require();
         return jdbc.sql("select " + COLS + " from learned_fact where tenant_id = :t and subject_type = :st and subject_id = :sid and fact_key = :key and valid_to is null order by version desc limit 1")

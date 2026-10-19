@@ -312,6 +312,9 @@ public class PromotionService {
         String by = "proposal:" + p.proposalId();
         if (Boolean.FALSE.equals(to.get("enabled"))) parameters.revoke(family, by);
         else {
+            // B-1: checked again here, not only when drafted, so a proposal stored any other way cannot go live in the wrong units.
+            List<String> problems = ai.intentoms.learning.governance.LiveFamilies.validate(family, num(to.get("min")), num(to.get("max")), num(to.get("maxStep")));
+            if (!problems.isEmpty()) throw new ConflictException("Proposal " + p.proposalId() + " cannot switch on " + family + ": " + String.join("; ", problems));
             String learner = to.get("learner") != null ? String.valueOf(to.get("learner")) : governingLearner(p);
             parameters.promote(family, learner, num(to.get("min")), num(to.get("max")), num(to.get("maxStep")), p.proposalId(), by);
         }

@@ -72,6 +72,10 @@ public class ProposalEvaluationService {
     private final LearningEvents events;
     private final ai.intentoms.learning.promotion.HardConstraints hardConstraints;
     private final ai.intentoms.learning.promotion.ProposalOwnership ownership;
+    private ai.intentoms.learning.store.LearnedFactRepository facts;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setFacts(ai.intentoms.learning.store.LearnedFactRepository facts) { this.facts = facts; }
 
     @Value("${oms.learning.replay.max-resimulated:300}") private int maxResimulated;
     @Value("${oms.learning.replay.min-cohort:20}") private int minCohort;
@@ -249,6 +253,10 @@ public class ProposalEvaluationService {
             // N6: say what is actually missing: a learner, a decision to compare on, or rewarded decisions on each side.
             List<String> feeders = registry.descriptors().stream().filter(d -> d.liveParameters().contains(family)).map(LearnerDescriptor::key).toList();
             if (feeders.isEmpty()) return noCounterfactual(0, "no learner learns " + family + ", so there is no learned value to serve");
+            if (facts != null && enables(proposal) && facts.countCurrentByLearners(feeders) == 0) {
+                return noCounterfactual(0, String.join(", ", feeders) + " has not learned any value for " + family
+                    + " yet, so live decisions would keep the static value until it does");
+            }
             List<String> decisions = ownership.watchedDecisions(proposal);
             if (decisions.isEmpty()) {
                 return noCounterfactual(0, String.join(", ", feeders) + " learns " + family + ", but no decision that reads it records outcomes, so served and static values cannot be compared");
@@ -271,6 +279,11 @@ public class ProposalEvaluationService {
         if (decisions.isEmpty()) return noCounterfactual(0, "no learner owns " + target + " and no decision is known to read it, so there is nothing to replay it on");
         return noCounterfactual(sample, target + " has only ever run at its current value, so the " + sample + " logged " + String.join(", ", decisions)
             + " decisions cannot show what the new value would do");
+    }
+
+    /** Whether a live-use proposal switches the family on (a revocation needs no learned value). */
+    private static boolean enables(Proposal p) {
+        return !(p.changeset().changes().get(0) instanceof PolicyChange.ParameterChange pc && pc.to() instanceof Map<?, ?> to && Boolean.FALSE.equals(to.get("enabled")));
     }
 
     private Map<String, Object> cohorts(String decision, Predicate<DecisionRecord> treated, String treatedLabel, String controlLabel) {
