@@ -33,7 +33,9 @@ import java.util.Objects;
 /**
  * CX-03: the earliest confident breach-risk score at which to warn a customer, chosen to minimise "where is my order"
  * contacts. For every order with an {@code sla_breach_risk} episode and a delivery outcome the learner keeps the score
- * trajectory, the promised date, whether it arrived late, whether the customer contacted support and whether a delay
+ * trajectory (each record's {@link #effectiveScore effective score}, the one the scorer stored and the warning gate
+ * compared with the threshold, not an unconfident model answer the system did not act on), the promised date, whether
+ * it arrived late, whether the customer contacted support and whether a delay
  * warning was sent. From those it measures contact rates: late orders not warned vs warned, and on-time orders not
  * warned vs warned (a false alarm can itself prompt a contact), each smoothed toward a prior when there is little
  * history ({@code cx.warn_early.contact_reduction}, default: a warning halves contacts on late orders).
@@ -184,10 +186,29 @@ public class WarnEarlyThresholdLearner implements GovernedLearner {
         return null;
     }
 
-    private static int score(DecisionRecord r) {
-        Object v = r.value();
-        if (v instanceof Number n) return (int) Math.round(n.doubleValue());
-        try { return v == null ? -1 : (int) Math.round(Double.parseDouble(String.valueOf(v))); } catch (NumberFormatException e) { return -1; }
+    /** The score this record made the system act on (B3-6): what the breach-risk scorer stored and the warning gate read. */
+    static int score(DecisionRecord r) {
+        Object answer = r.answers() == null ? null : r.answers().get("breach_risk");
+        Double a = answer instanceof ai.intentoms.decision.model.Answer ans ? ans.asDouble() : null;
+        return effectiveScore("act".equalsIgnoreCase(r.action()) && !r.requiresHuman(), r.value(), r.details(), a);
+    }
+
+    /**
+     * CX-03 (audit B3-6): the 0-4 breach-risk score the system acts on, one rule for the scorer that stores it (and whose
+     * warning gate compares it with the threshold) and for this learner. A confident answer (act band) is used as is.
+     * When the decision only recommends and the runtime supplied its deterministic default ({@code confirmFallback}, the
+     * confirm band on T1), the default is the score; the model's unconfident answer is not. Otherwise the value, else the
+     * {@code breach_risk} answer, else 1. Rounded and kept within 0-4.
+     */
+    public static int effectiveScore(boolean acts, Object value, java.util.Map<String, Object> details, Double breachRiskAnswer) {
+        double v = Double.NaN;
+        Object fallback = details == null ? null : details.get("confirmFallback");
+        if (!acts && fallback instanceof java.util.Map<?, ?> fb && fb.get("defaultValue") instanceof Number d) v = d.doubleValue();
+        else if (value instanceof Number n) v = n.doubleValue();
+        else if (value instanceof String s) { try { v = Double.parseDouble(s); } catch (NumberFormatException ignored) { } }
+        if (Double.isNaN(v) && breachRiskAnswer != null) v = breachRiskAnswer;
+        if (Double.isNaN(v)) v = 1;
+        return (int) Math.max(0, Math.min(4, Math.round(v)));
     }
 
     @Override public boolean runnable() { return true; }

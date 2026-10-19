@@ -1,18 +1,44 @@
 # SLA breach risk (PRD section 9, FR-MON-02). Score 0-4 per open order, tier T1; feeds proactive re-promise.
+# v3 (CX-03, audit B3-6): deterministic L0 rules for the clear cases, so a late order reaches the warn-early threshold
+# without a model: the promise date has passed and the order is not delivered (4); a carrier exception on one of its
+# parcels (3); not shipped, under a day of promise left and stuck in its state for a day or more (3); not shipped from a
+# node whose learned backlog-to-breach probability is 70% or more (3). Everything else goes to the model as before.
 decision: sla_breach_risk
-version: 2
+version: 3
 owner: control-tower
 tier: T1
 provider: jev
 fallbackProvider: heuristic
 timeoutMs: 800
 default: 1
+rules:
+  - id: promise_passed
+    when: "has(input.order.promise_hours_remaining) && input.order.promise_hours_remaining < 0.0"
+    then: 4
+    reason: promise_passed_not_delivered
+    priority: 10
+  - id: carrier_exception
+    when: "has(input.order.carrier_exception) && input.order.carrier_exception == true"
+    then: 3
+    reason: carrier_exception_reported
+    priority: 20
+  - id: unshipped_stuck_promise_due
+    when: "input.order.state in ['created', 'validated', 'sourcing', 'released', 'on_hold'] && has(input.order.promise_hours_remaining) && input.order.promise_hours_remaining < 24.0 && input.order.hours_in_state >= 24.0"
+    then: 3
+    reason: unshipped_promise_due_within_a_day
+    priority: 30
+  - id: node_breach_likely
+    when: "input.order.state in ['created', 'validated', 'sourcing', 'released', 'on_hold'] && has(input.node.breach_probability) && input.node.breach_probability >= 0.7"
+    then: 3
+    reason: node_backlog_breach_likely
+    priority: 40
 state:
   include:
     - order.state
     - order.hours_in_state
     - order.promise_hours_remaining
     - order.ship_method
+    - order.carrier_exception
     - node.backlog_units
     - node.reject_rate
     - node.minutes_to_cutoff
