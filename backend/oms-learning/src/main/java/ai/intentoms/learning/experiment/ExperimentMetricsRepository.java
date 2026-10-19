@@ -129,22 +129,58 @@ public class ExperimentMetricsRepository {
             fraudLabelled == 0 ? 0 : num(r.get("false_positives")) / (double) fraudLabelled, episodes, episodes == 0 ? 0 : num(r.get("contacted")) / (double) episodes);
     }
 
-    public record LiftRow(String decision, String arm, Double reward, Map<String, Double> components) {}
+    /** One rewarded episode: its anchor decision, experiment arm, reward and terms, and the order it belongs to (if any). */
+    public record LiftRow(String decision, String arm, Double reward, Map<String, Double> components, String orderId, Instant createdAt) {
+        public LiftRow(String decision, String arm, Double reward, Map<String, Double> components) { this(decision, arm, reward, components, null, null); }
+    }
 
     /** XP-01: matured or provisional episodes since a point in time, with the experiment arm of their anchor decision. */
     public List<LiftRow> liftRows(Instant since) {
         List<LiftRow> out = new ArrayList<>();
         jdbc.sql("""
-            select e.decision_name, d.details->'experiment'->>'arm' as arm, e.reward, e.reward_components::text as components
+            select e.decision_name, d.details->'experiment'->>'arm' as arm, e.reward, e.reward_components::text as components, e.order_id, e.created_at
             from episode e join decision_record d on d.tenant_id = e.tenant_id and d.id = e.decision_id
             where e.tenant_id = :t and e.reward is not null and e.created_at >= :since
             """).param("t", TenantContext.require()).param("since", Timestamp.from(since)).query().listOfRows().forEach(r -> {
                 Map<String, Object> raw = Json.readMap((String) r.get("components"));
                 Map<String, Double> comps = new LinkedHashMap<>();
                 raw.forEach((k, v) -> { if (v instanceof Number n) comps.put(k, n.doubleValue()); });
-                out.add(new LiftRow((String) r.get("decision_name"), (String) r.get("arm"), (Double) r.get("reward"), comps));
+                Timestamp at = (Timestamp) r.get("created_at");
+                out.add(new LiftRow((String) r.get("decision_name"), (String) r.get("arm"), (Double) r.get("reward"), comps, (String) r.get("order_id"),
+                    at == null ? null : at.toInstant()));
             });
         return out;
+    }
+
+    /**
+     * §12 AC-3: the guardrail measures of one arm over a window across every decision, excluding seeded rows.
+     * {@code arm} is "holdout" (customers in the persistent holdout), "treated" (everyone else) or null (all traffic).
+     * Perfect orders count order episodes carrying the {@code perfect} reward term.
+     */
+    public record ArmGuardrails(long decisions, long overridden, double latencyP95, long fraudLabelled, long falsePositives, long episodes, long contacted,
+                                long perfectKnown, long perfect) {}
+
+    public ArmGuardrails armGuardrails(String arm, Instant from, Instant to) {
+        var r = jdbc.sql("""
+            select count(*) as n,
+                   count(*) filter (where d.overridden_at is not null) as overridden,
+                   coalesce(percentile_cont(0.95) within group (order by d.latency_ms), 0) as p95,
+                   count(*) filter (where jsonb_exists(d.labels, 'fraud_outcome')) as fraud_labelled,
+                   count(*) filter (where jsonb_exists(d.labels, 'fraud_outcome') and (d.labels->'fraud_outcome'->>'confirmed')::boolean is false
+                                    and (d.requires_human or d.action = 'blocked' or lower(d.value #>> '{}') in ('block', 'decline', 'review', 'hold', 'cancel'))) as false_positives,
+                   count(e.episode_id) as episodes,
+                   count(e.episode_id) filter (where coalesce((e.reward_components->>'cx')::double precision, 0) > 0) as contacted,
+                   count(e.episode_id) filter (where jsonb_exists(e.reward_components, 'perfect')) as perfect_known,
+                   count(e.episode_id) filter (where coalesce((e.reward_components->>'perfect')::double precision, 0) >= 1) as perfect
+            from decision_record d
+            left join episode e on e.tenant_id = d.tenant_id and e.decision_id = d.id
+            where d.tenant_id = :t and d.mode = 'LIVE' and d.created_at >= :from and d.created_at < :to and coalesce(d.actor, '') <> :seed
+              and (cast(:arm as text) is null
+                   or (case when d.details->'experiment'->>'arm' = 'holdout' then 'holdout' else 'treated' end) = cast(:arm as text))
+            """).param("t", TenantContext.require()).param("from", Timestamp.from(from)).param("to", Timestamp.from(to)).param("arm", arm)
+            .param("seed", DEMO_SEED_ACTOR).query().singleRow();
+        return new ArmGuardrails(num(r.get("n")), num(r.get("overridden")), ((Number) r.get("p95")).doubleValue(), num(r.get("fraud_labelled")),
+            num(r.get("false_positives")), num(r.get("episodes")), num(r.get("contacted")), num(r.get("perfect_known")), num(r.get("perfect")));
     }
 
     private static long num(Object o) { return o == null ? 0 : ((Number) o).longValue(); }

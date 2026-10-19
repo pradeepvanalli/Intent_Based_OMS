@@ -56,6 +56,7 @@ public class LiftService {
         out.put("baselines", baselines.all());
         List<ExperimentMetricsRepository.LiftRow> held = rows.stream().filter(r -> "holdout".equals(r.arm())).toList();
         List<ExperimentMetricsRepository.LiftRow> treated = rows.stream().filter(r -> !"holdout".equals(r.arm())).toList();
+        out.put("headline", perfectOrderRate(rows, minPerArm));
         List<Map<String, Object>> metricsOut = new ArrayList<>();
         metricsOut.add(metric("reward", treated, held, ExperimentMetricsRepository.LiftRow::reward, minPerArm));
         for (String term : TERMS) metricsOut.add(metric(term, treated, held, r -> r.components().get(term), minPerArm));
@@ -108,6 +109,32 @@ public class LiftService {
         boolean excludesZero = enough && varies && (diff - 1.96 * se > 0 || diff + 1.96 * se < 0);
         m.put("significant", excludesZero);
         m.put("improvement", excludesZero && (LOWER_IS_BETTER.contains(name) ? diff < 0 : diff > 0));
+        return m;
+    }
+
+    /** The north-star reward term (§12 AC-2) on order episodes: 1 for a perfect order, else 0. */
+    public static final String PERFECT = "perfect";
+
+    /**
+     * §12 AC-2: the perfect-order rate, the share of orders whose order episode carries {@code perfect = 1}, with
+     * learning versus in the holdout and a 95% interval on the difference. One value per order (its latest order episode).
+     */
+    static Map<String, Object> perfectOrderRate(List<ExperimentMetricsRepository.LiftRow> rows, int minPerArm) {
+        Map<String, ExperimentMetricsRepository.LiftRow> perOrder = new LinkedHashMap<>();
+        int i = 0;
+        for (ExperimentMetricsRepository.LiftRow r : rows) {
+            if (r.components() == null || r.components().get(PERFECT) == null) continue;
+            String key = r.orderId() != null ? r.orderId() : "row-" + i++;
+            ExperimentMetricsRepository.LiftRow prev = perOrder.get(key);
+            if (prev == null || (r.createdAt() != null && prev.createdAt() != null && r.createdAt().isAfter(prev.createdAt()))) perOrder.put(key, r);
+        }
+        List<ExperimentMetricsRepository.LiftRow> orders = new ArrayList<>(perOrder.values());
+        Map<String, Object> m = metric("perfect_order_rate", orders.stream().filter(r -> !"holdout".equals(r.arm())).toList(),
+            orders.stream().filter(r -> "holdout".equals(r.arm())).toList(), r -> r.components().get(PERFECT) >= 1 ? 1.0 : 0.0, minPerArm);
+        m.put("label", "Perfect-order rate");
+        m.put("definition", "share of orders delivered in full and on time with nothing going wrong afterwards");
+        m.put("unit", "share");
+        if (orders.isEmpty()) m.put("reason", "no order has a perfect-order outcome yet; it is recorded when an order's episode matures");
         return m;
     }
 
