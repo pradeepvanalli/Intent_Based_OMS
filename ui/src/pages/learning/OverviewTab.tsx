@@ -9,7 +9,7 @@ import { ApiError } from '../../api/client';
 import { fmtDate, fmtNum, fmtPct, humanize, relTime } from '../../lib/format';
 import { toast } from '../../lib/toast';
 import { DemoBadge, InfoTip, Meter, Technical } from './Bits';
-import { decisionLabel, liftVerdict, metricName, relativeChange, targetName } from './copy';
+import { OUTCOME_SCORE_NOTE, decisionLabel, liftVerdict, metricName, relativeChange, targetName } from './copy';
 
 const REFRESH = 30000;
 const COVERAGE_FLOOR = 0.8;
@@ -210,7 +210,7 @@ function LiftRow({ m }: { m: LiftMetric }) {
   const v = liftVerdict(m);
   return (
     <tr>
-      <td>{metricName(m.metric)}<Technical><div className="xs muted mono">{m.metric} · n {m.nTreated} vs {m.nHoldout}{m.ciLower !== undefined ? ` · CI [${fmtNum(m.ciLower, 3)}, ${fmtNum(m.ciUpper, 3)}]` : ''}</div></Technical></td>
+      <td>{metricName(m.metric)}{m.metric === 'reward' && <InfoTip text={OUTCOME_SCORE_NOTE} />}<Technical><div className="xs muted mono">{m.metric} · n {m.nTreated} vs {m.nHoldout}{m.ciLower !== undefined ? ` · CI [${fmtNum(m.ciLower, 3)}, ${fmtNum(m.ciUpper, 3)}]` : ''}</div></Technical></td>
       <td className="num">{m.treatedMean === undefined ? '—' : fmtNum(m.treatedMean, 3)}</td>
       <td className="num">{m.holdoutMean === undefined ? '—' : fmtNum(m.holdoutMean, 3)}</td>
       <td><Badge tone={v.tone} title={m.reason ?? undefined}>{v.text}</Badge></td>
@@ -247,7 +247,7 @@ function DigestCard({ digest, missing, isLoading, canAdmin, names }: { digest?: 
           </div>
           {rewards.length > 0 && (
             <div className="small">
-              <div className="section-title">Outcome score by decision</div>
+              <div className="section-title">Outcome score by decision <InfoTip text={OUTCOME_SCORE_NOTE} /></div>
               <div className="subtle-list">{rewards.map((r) => (
                 <div key={r.decision} className="row-between"><span>{decisionLabel(r.decision)}</span>
                   <span className="num">{fmtNum(r.meanReward, 3)}{r.change != null && <span style={{ color: r.change >= 0 ? 'var(--ok-fg)' : 'var(--danger-fg)', marginLeft: 8 }}>{r.change >= 0 ? '▲' : '▼'} {fmtNum(Math.abs(r.change), 3)}</span>}
