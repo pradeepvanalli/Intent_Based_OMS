@@ -53,5 +53,6 @@ export function registerLaunchRoutes({ on }: { on: On }) {
   });
   on('GET', '/api/v1/decisions/providers', () => { const off = !!config['ai.kill_switch']; return { heuristic: true, jev: !off && !config['provider.kill_switch.jev'], 'llm.anthropic': !off && !config['provider.kill_switch.llm.anthropic'], 'llm.openai': false }; });
   on('GET', '/api/v1/admin/tenants', () => [{ tenant_id: 'demo', name: 'Demo Retail', status: 'active', created_at: '2026-10-01T09:00:00Z' }]);
+  on('GET', '/api/v1/admin/tenants/current', () => ({ tenant_id: 'demo', name: 'Demo Retail', status: 'active', created_at: '2026-10-01T09:00:00Z' }));
   on('GET', '/actuator/info', () => ({ app: { name: 'intent-oms', version: '0.1.0-mock' }, git: { commit: { id: 'mock0000' } } }));
 }

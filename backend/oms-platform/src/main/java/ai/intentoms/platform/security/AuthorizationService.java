@@ -24,5 +24,12 @@ public class AuthorizationService {
     }
 
     /** Actor reference for ledger events: "user:alice", "agent:shopbot-7", "system:sweeper", "decision:<id>". */
+    /** Platform role (not a tenant permission): may act across tenants. A tenant admin's "*" permission does not count. */
+    public static final String PLATFORM_ROLE = "platform_engineer";
+
+    public boolean isPlatformOperator() {
+        return currentPrincipal().map(p -> p.type() == Principal.Type.SYSTEM || (p.roles() != null && p.roles().contains(PLATFORM_ROLE))).orElse(false);
+    }
+
     public String actorRef() { return currentPrincipal().map(Principal::actorRef).orElse("system:anonymous"); }
 }

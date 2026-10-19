@@ -106,7 +106,7 @@ AUSER=${ADMIN%%:*}; APASS=${ADMIN#*:}
 TOKEN=$(login "$AUSER" "$APASS")
 if [ -z "$TOKEN" ] && [ "$CREATE_LOGIN" = 1 ]; then
   # Preferred path: the platform-admin API (any principal holding the wildcard permission, e.g. the demo admin).
-  PA_USER=${PLATFORM_ADMIN_USER:-admin}; PA_PASS=${PLATFORM_ADMIN_PASSWORD:-admin}; PA_TENANT=${PLATFORM_ADMIN_TENANT:-demo}
+  PA_USER=${PLATFORM_ADMIN_USER:-platform}; PA_PASS=${PLATFORM_ADMIN_PASSWORD:-platform}; PA_TENANT=${PLATFORM_ADMIN_TENANT:-demo}
   PA_TOKEN=$(curl -sf -X POST "$BASE/api/v1/auth/login" -H 'Content-Type: application/json' -d "{\"tenantId\":\"$PA_TENANT\",\"userId\":\"$PA_USER\",\"password\":\"$PA_PASS\"}" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("token",""))' 2>/dev/null || true)
   if [ -n "$PA_TOKEN" ]; then
     warn "login failed; creating tenant '$TENANT' and admin '$AUSER' through POST /api/v1/admin/tenants as $PA_TENANT/$PA_USER"

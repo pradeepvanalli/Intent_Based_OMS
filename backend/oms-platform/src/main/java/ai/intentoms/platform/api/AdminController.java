@@ -47,7 +47,7 @@ public class AdminController {
     @PostMapping("/tenants")
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> createTenant(@Valid @RequestBody CreateTenantRequest req) {
-        if (!authz.requirePrincipal().permissions().contains("*")) throw new ai.intentoms.platform.error.ForbiddenException("Creating tenants requires a platform administrator");
+        if (!authz.isPlatformOperator()) throw new ai.intentoms.platform.error.ForbiddenException("Creating tenants requires a platform operator (role platform_engineer); a tenant admin cannot create other tenants");
         String id = req.tenantId().trim().toLowerCase();
         if (!id.matches("[a-z0-9][a-z0-9_-]{1,62}")) throw new ai.intentoms.platform.error.ValidationException("tenantId must be 2-63 chars of a-z, 0-9, '-' or '_'");
         int created = jdbc.sql("insert into tenant(tenant_id, name) values (:id, :n) on conflict do nothing").param("id", id).param("n", req.name() == null || req.name().isBlank() ? id : req.name()).update();
@@ -68,8 +68,15 @@ public class AdminController {
 
     @GetMapping("/tenants")
     public List<Map<String, Object>> tenants() {
-        if (!authz.requirePrincipal().permissions().contains("*")) throw new ai.intentoms.platform.error.ForbiddenException("Listing tenants requires a platform administrator");
+        if (!authz.isPlatformOperator()) throw new ai.intentoms.platform.error.ForbiddenException("Listing tenants requires a platform operator (role platform_engineer)");
         return jdbc.sql("select tenant_id, name, status, created_at from tenant order by created_at").query().listOfRows();
+    }
+
+    /** The caller's own tenant (name, status), for any signed-in user: the UI shows the display name without listing others. */
+    @GetMapping("/tenants/current")
+    public Map<String, Object> currentTenant() {
+        String tenant = authz.requirePrincipal().tenantId();
+        return jdbc.sql("select tenant_id, name, status, created_at from tenant where tenant_id = :t").param("t", tenant).query().singleRow();
     }
 
     @GetMapping("/config")

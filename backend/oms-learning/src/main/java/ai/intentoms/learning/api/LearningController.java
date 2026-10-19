@@ -205,7 +205,7 @@ public class LearningController {
      * role holds "*" too, and one tenant's administrator must not stop learning for all the others.
      */
     private boolean platformAdmin() {
-        return authz.currentPrincipal().map(p -> p.roles() != null && p.roles().contains(PLATFORM_ROLE)).orElse(false);
+        return authz.isPlatformOperator();
     }
 
     @GetMapping("/live-parameters")
