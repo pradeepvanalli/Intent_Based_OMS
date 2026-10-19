@@ -43,6 +43,11 @@ import java.util.function.DoubleUnaryOperator;
  * the highest act-band accuracy (ties: the lower threshold, more automation). Without a budget it picks the lowest
  * threshold from which every bin clears the accuracy bar. The move is capped at the learner's max step (GV-02) and
  * written as a proposal; it never edits or publishes the decision itself.
+ *
+ * <p>Escalations per day are counted the way each tier actually hands work to people (see the runtime's band rules):
+ * T0 never escalates low confidence (it acts with the escape value) but sends its confirm band to a person; T1 sends
+ * only its escalate band (below confirm) to a person, its confirm band applies the deterministic default; T2 sends
+ * everything below the act threshold; T3 everything. Rule-decided (L0) cases never count.
  */
 @Component
 public class BandThresholdLearner implements GovernedLearner {
@@ -113,7 +118,8 @@ public class BandThresholdLearner implements GovernedLearner {
         List<Double> confidences = decisionRecords.recentLive(name, def.version(), Instant.now().minus(TRAFFIC_WINDOW), 5000).stream()
             .filter(r -> r.layer() != ai.intentoms.decision.model.Layer.L0_RULE).map(DecisionRecord::confidence).toList();
         double days = TRAFFIC_WINDOW.toDays();
-        DoubleUnaryOperator escalationsPerDay = t -> confidences.stream().filter(c -> c < t).count() / days;
+        double confirm = def.effectiveBands().confirmGte();
+        DoubleUnaryOperator escalationsPerDay = t -> humanTasks(def.tier(), confirm, t, confidences) / days;
 
         Optional<Candidate> pick = choose(report.bins(), minAccuracy, escalationsPerDay, budget, MIN_BIN_SAMPLE);
         if (pick.isEmpty()) {
@@ -162,6 +168,17 @@ public class BandThresholdLearner implements GovernedLearner {
             if (best == null || acc > best.actAccuracy() + 1e-9) best = c;
         }
         return Optional.ofNullable(best);
+    }
+
+    /** How many of these confidences would go to a person at act threshold {@code act}, by tier (class comment). */
+    public static long humanTasks(Tier tier, double confirm, double act, List<Double> confidences) {
+        double k = Math.min(confirm, act); // an act threshold below confirm leaves no confirm band
+        return switch (tier) {
+            case T0 -> confidences.stream().filter(c -> c >= k && c < act).count();
+            case T1 -> confidences.stream().filter(c -> c < k).count();
+            case T2 -> confidences.stream().filter(c -> c < act).count();
+            case T3 -> confidences.size();
+        };
     }
 
     /** GV-02: cap movement per proposal to the learner's max step, moving toward the candidate either direction. */

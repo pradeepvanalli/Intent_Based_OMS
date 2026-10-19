@@ -64,7 +64,7 @@ public class OrderRiskRepository {
      */
     public List<Map<String, Object>> openOrdersForScoring(List<String> terminalStatuses, String onlyOrderId, int limit) {
         String sql = """
-            select o.id, o.status, o.order_type, o.channel, o.ship_method, o.primary_node_id, o.placed_at, o.grand_total,
+            select o.id, o.status, o.order_type, o.channel, o.ship_method, o.primary_node_id, o.placed_at, o.grand_total, o.customer_ref,
                    coalesce(es.state, o.status) as state, coalesce(q.since, es.updated_at, o.placed_at) as since,
                    (select min(g.promise_date) from fulfilment_group g where g.tenant_id = o.tenant_id and g.order_id = o.id) as promise_date,
                    r.level as prev_level, r.scored_at, r.input_signature as prev_signature, r.score as prev_score,

@@ -184,6 +184,11 @@ public class ProposalEvaluationService {
 
     private Map<String, Object> evaluateNonDecision(Proposal proposal, ArtifactRef target) {
         String ref = target.name();
+        // FS-04: a sourcing-weight proposal arrives with a plan-rescoring replay (recorded plans re-scored under the
+        // new weights, with a 95% interval). That is real counterfactual evidence; keep it rather than replacing it
+        // with an observational fallback.
+        Map<String, Object> existing = proposal.evaluationReport();
+        if (existing != null && "plan_rescoring_replay".equals(existing.get("method"))) return new java.util.LinkedHashMap<>(existing);
         if ("config".equals(target.type()) && ref.startsWith(PromotedProviderRouter.KEY_PREFIX) && proposal.changeset().changes().get(0) instanceof PolicyChange.ParameterChange pc) {
             String decision = ref.substring(PromotedProviderRouter.KEY_PREFIX.length());
             String routed = String.valueOf(pc.to());

@@ -24,14 +24,17 @@ import java.util.Map;
  * CX-02: the promise buffer that maximises conversion x on-time per segment. A longer buffer makes the promise easier
  * to keep but loses shoppers; a shorter one converts better and misses more. From storefront impressions
  * ({@code POST /api/v1/promise/conversion}) joined to delivery outcomes, each buffer's conversion rate and on-time rate
- * are smoothed (Beta(1,1)), multiplied, and the best buffer with enough impressions becomes {@code PROMISE_BUFFER_DAYS}
- * for the segment ({@code channel:<channel>}) and for all traffic ({@code default}). Promises use it through
- * {@code ParameterResolver} ({@code promise.buffer_days}) once promoted for live use.
+ * (delivered by the date the shopper was shown, buffer included) are smoothed (Beta(1,1)), multiplied, and the best
+ * buffer with enough impressions becomes {@code PROMISE_BUFFER_DAYS} for the segment ({@code channel:<channel>}) and
+ * for all traffic ({@code default}). Promises use it through {@code ParameterResolver} ({@code promise.buffer_days})
+ * once promoted for live use; while it is live a small share of promises ({@code learning.promise_buffer.exploration},
+ * default 5%, at most 10%) try one day more or less, so neighbouring buffers keep getting evidence.
  */
 @Component
 public class PromiseBufferLearner implements GovernedLearner {
     public static final String KEY = "promise_buffer";
     public static final String PARAMETER = "promise.buffer_days";
+    public static final String EXPLORATION_KEY = "learning.promise_buffer.exploration";
     private static final Logger log = LoggerFactory.getLogger(PromiseBufferLearner.class);
 
     private final PromiseConversionRepository conversions;

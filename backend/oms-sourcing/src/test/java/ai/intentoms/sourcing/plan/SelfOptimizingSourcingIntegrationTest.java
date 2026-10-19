@@ -44,6 +44,7 @@ class SelfOptimizingSourcingIntegrationTest extends SourcingTestBase {
     @Autowired FulfilmentFacts facts;
     @Autowired LearnedFactCache factCache;
     @Autowired ParameterResolver parameters;
+    @Autowired ai.intentoms.learning.experiment.ExperimentManager experiments;
     @Autowired DecisionRecordRepository decisionRecords;
     final Actor actor = Actor.user("tester");
 
@@ -112,7 +113,7 @@ class SelfOptimizingSourcingIntegrationTest extends SourcingTestBase {
     void promiseUsesLearnedLaneTransitCalibrationAndBufferOnlyWhenPromoted() {
         stock("TEE-BLK-M", "DC-NJ", 50);
         config.set("sourcing.service_carriers", Map.of("ground", "UPS"));
-        String lane = LaneDeliveryLearner.laneKey("UPS", "DC-NJ", "100");
+        String lane = LaneDeliveryLearner.laneKey("UPS", "ground", "DC-NJ", "100");
         facts.number(SubjectType.LANE, lane, FactKey.LANE_TRANSIT_DAYS_P50, 3.0, 40, LaneDeliveryLearner.KEY, 0.01);
         facts.number(SubjectType.LANE, lane, FactKey.LANE_CALIBRATION_OFFSET, -0.2, 40, LaneDeliveryLearner.KEY, 0.001);
         facts.number(SubjectType.SEGMENT, PromiseBufferLearner.segment("web"), FactKey.PROMISE_BUFFER_DAYS, 2, 100, PromiseBufferLearner.KEY, 0.5);
@@ -132,5 +133,46 @@ class SelfOptimizingSourcingIntegrationTest extends SourcingTestBase {
         parameters.promote(PromiseBufferLearner.PARAMETER, PromiseBufferLearner.KEY, 0.0, 5.0, null, null, "test");
         promiseImpl.invalidateAll();
         assertThat(promise.promise(req).date()).isEqualTo(LocalDate.of(2026, 10, 11));  // plus the web segment's two-day buffer
+    }
+
+    /** EX-04: a customer in the persistent holdout keeps the static reject penalty; a treated customer gets the learned one. */
+    @Test
+    void holdoutCustomersKeepTheStaticRejectPenaltyWhileOthersGetTheLearnedOne() {
+        var holdout = experiments.ensureHoldout(0.2, "test");
+        try {
+            String held = null, treated = null;
+            for (int i = 0; i < 1000 && (held == null || treated == null); i++) {
+                String ref = "cust-holdout-" + i;
+                if (parameters.inHoldout("customer:" + ref)) { if (held == null) held = ref; } else if (treated == null) treated = ref;
+            }
+            assertThat(held).as("a customer in the 20% holdout").isNotNull();
+            stock("TEE-BLK-M", "DC-NJ", 50); stock("TEE-BLK-M", "DC-TX", 50);
+            stock("HOOD-GRY-M", "DC-NJ", 50); stock("HOOD-GRY-M", "DC-TX", 50);
+            facts.number(SubjectType.NODE, "DC-NJ", FactKey.NODE_REJECT_PENALTY, 0.55, 40, NodeReliabilityLearner.KEY, 0.001);
+            factCache.invalidateAll();
+            parameters.promote(NodeReliabilityLearner.REJECT_PENALTY_PARAMETER, NodeReliabilityLearner.KEY, 0.05, 0.9, null, null, "test");
+
+            Order heldOrder = orders.insert(withCustomer(order("marketplace", null, NEW_YORK, line("L1", "TEE-BLK-M", 1, 28, 7.5)), held));
+            sourcing.source(heldOrder.id(), actor);
+            sourcing.resource(heldOrder.id(), "short_pick", actor);
+            assertThat(((Number) events("order", heldOrder.id(), DefaultSourcingService.EVT_RESOURCED).get(0).get("penaltyDelta")).doubleValue())
+                .as("holdout customer: static penalty").isCloseTo(0.3, within(1e-9));
+
+            Order treatedOrder = orders.insert(withCustomer(order("marketplace", null, NEW_YORK, line("L1", "HOOD-GRY-M", 1, 68, 21)), treated));
+            sourcing.source(treatedOrder.id(), actor);
+            sourcing.resource(treatedOrder.id(), "short_pick", actor);
+            assertThat(((Number) events("order", treatedOrder.id(), DefaultSourcingService.EVT_RESOURCED).get(0).get("penaltyDelta")).doubleValue())
+                .as("treated customer: learned penalty").isCloseTo(0.55, within(1e-9));
+        } finally {
+            experiments.stop(holdout.experimentId(), ai.intentoms.learning.model.ExperimentStatus.STOPPED, java.util.Map.of(), ai.intentoms.platform.ledger.Actor.system("test"));
+            parameters.revoke(NodeReliabilityLearner.REJECT_PENALTY_PARAMETER, "test");
+        }
+    }
+
+    /** The same order for another customer (a fresh id, so the original insert is left untouched). */
+    private static Order withCustomer(Order o, String customerRef) {
+        return new Order(ai.intentoms.platform.ids.Ids.prefixed("ord"), o.channel(), ai.intentoms.platform.ids.Ids.shortId(), o.orderType(), customerRef, o.customer(), o.lines(),
+            o.addresses(), o.charges(), o.tenders(), o.notes(), o.fulfilmentGroups(), o.intent(), o.provenance(), o.totals(), o.margin(), o.stateModelId(), o.stateModelVersion(),
+            o.status(), o.shipMethod(), o.currency(), o.extensions(), o.placedAt(), o.capturedAt(), o.updatedAt(), o.version());
     }
 }

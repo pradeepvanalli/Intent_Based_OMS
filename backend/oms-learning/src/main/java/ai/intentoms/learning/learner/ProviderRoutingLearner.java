@@ -34,15 +34,22 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
- * DF-05: learns, per decision, which already-configured provider (primary vs. fallback) hits comparable accuracy
- * at lower cost, and proposes routing to it. Scoped to providers already in real use for this decision — finding
- * the globally best provider among ones never tried needs controlled exposure (shadow/canary), which is the
- * experiment-manager build's job; this learner analyses what {@code ai_spend} and labelled {@code decision_record}
- * rows already show about the primary/fallback pair. Accuracy is proxied by the human-resolution non-override
- * rate among labelled records answered by each provider — a real but indirect signal, noted here rather than
- * overstated as ground truth.
+ * DF-05: learns, per decision, which provider and model hits the target accuracy at the lowest cost and latency, and
+ * proposes routing to it. Every provider that answered the decision in the window is compared (the primary, the
+ * fallback, and any provider an experiment or an earlier route sent traffic to), not just the primary/fallback pair:
+ * <ul>
+ *   <li><b>accuracy</b>: the share of its labelled answers people kept (a {@code human_resolution} that did not
+ *       override it), from at least {@code oms.learning.df05.min-labelled-sample} (default 20) labelled cases;</li>
+ *   <li><b>cost</b>: spend per call from {@code ai_spend}, else the mean recorded cost of its answers;</li>
+ *   <li><b>latency</b>: the 95th percentile of its answers' {@code latency_ms}.</li>
+ * </ul>
+ * A provider qualifies when its accuracy reaches the target: the decision's {@code minAccuracyInActBand} when set,
+ * never more than {@code oms.learning.df05.accuracy-tolerance} (default 0.02) below the primary's. The cheapest
+ * qualifying provider wins; providers within 10% of that cost are separated by latency. Each provider's cost, latency
+ * and accuracy are published as facts; a winner other than the primary becomes a routing proposal.
  */
 @Component
 public class ProviderRoutingLearner implements GovernedLearner {
@@ -95,44 +102,92 @@ public class ProviderRoutingLearner implements GovernedLearner {
         return n;
     }
 
+    /** What one provider showed for one decision in the window. */
+    public record ProviderStats(String provider, int answers, int labelled, double accuracy, Double costPerCall, Long p95LatencyMs) {}
+
     private boolean sweepDecision(String name) {
         var live = definitions.byStatus(name, "live");
         if (live.isEmpty()) return false;
         DecisionDefinition def = live.get(0).definition();
-        if (def.provider() == null || def.fallbackProvider() == null || def.provider().equals(def.fallbackProvider())) return false;
-
-        LocalDate from = Instant.now().minus(Duration.ofDays(windowDays)).atZone(ZoneOffset.UTC).toLocalDate();
+        if (def.provider() == null) return false;
+        Instant since = Instant.now().minus(Duration.ofDays(windowDays));
+        LocalDate from = since.atZone(ZoneOffset.UTC).toLocalDate();
         LocalDate to = Instant.now().atZone(ZoneOffset.UTC).toLocalDate();
-        Map<String, Double> costPerCall = costPerCallByProvider(spend.byDecision(from, to), name);
-        Double primaryCost = costPerCall.get(def.provider());
-        Double fallbackCost = costPerCall.get(def.fallbackProvider());
-        if (primaryCost != null) writeFact(name, def.provider(), primaryCost);
-        if (fallbackCost != null) writeFact(name, def.fallbackProvider(), fallbackCost);
-        if (primaryCost == null || fallbackCost == null || fallbackCost >= primaryCost) return false;
-
-        List<DecisionRecord> labelled = decisionRecords.labelledBetween(name, def.version(), Instant.now().minus(Duration.ofDays(windowDays)), Instant.now()).stream()
+        Map<String, Double> spendPerCall = costPerCallByProvider(spend.byDecision(from, to), name);
+        List<DecisionRecord> answered = decisionRecords.recentLive(name, def.version(), since, 20_000).stream()
+            .filter(r -> r.provider() != null && r.layer() != ai.intentoms.decision.model.Layer.L0_RULE && r.layer() != ai.intentoms.decision.model.Layer.DEFAULT).toList();
+        List<DecisionRecord> labelled = decisionRecords.labelledBetween(name, def.version(), since, Instant.now()).stream()
             .filter(r -> r.labels() != null && r.labels().containsKey(HUMAN_RESOLUTION_LABEL)).toList();
-        double primaryAcc = accuracy(labelled, def.provider());
-        double fallbackAcc = accuracy(labelled, def.fallbackProvider());
-        long fallbackSample = labelled.stream().filter(r -> def.fallbackProvider().equals(r.provider())).count();
-        if (fallbackSample < minSample || fallbackAcc < primaryAcc - accuracyTolerance) return false;
-
+        List<ProviderStats> stats = stats(answered, labelled, spendPerCall);
+        for (ProviderStats st : stats) {
+            if (st.costPerCall() != null) writeFact(name, st.provider(), FactKey.PROVIDER_COST_PER_CALL, st.costPerCall(), st.answers());
+            if (st.p95LatencyMs() != null) writeFact(name, st.provider(), FactKey.PROVIDER_LATENCY_MS, st.p95LatencyMs(), st.answers());
+            if (st.labelled() > 0) writeFact(name, st.provider(), FactKey.PROVIDER_ACCURACY, round(st.accuracy()), st.labelled());
+        }
+        ProviderStats primary = stats.stream().filter(st -> st.provider().equals(def.provider())).findFirst().orElse(null);
+        Double floor = def.evaluation() == null ? null : def.evaluation().minAccuracyInActBand();
+        Optional<ProviderStats> best = choose(stats, primary, floor, minSample, accuracyTolerance);
+        if (best.isEmpty() || best.get().provider().equals(def.provider())) return false;
         if (hasPendingProposal(name)) return false;
+
+        ProviderStats b = best.get();
+        String compared = stats.stream().map(st -> String.format(java.util.Locale.ROOT, "%s: accuracy %s on %d, $%s/call, p95 %s ms", st.provider(),
+            st.labelled() == 0 ? "n/a" : String.format(java.util.Locale.ROOT, "%.3f", st.accuracy()), st.labelled(),
+            st.costPerCall() == null ? "n/a" : String.format(java.util.Locale.ROOT, "%.5f", st.costPerCall()), st.p95LatencyMs() == null ? "n/a" : st.p95LatencyMs()))
+            .collect(java.util.stream.Collectors.joining("; "));
         // Promoted as a routing overlay (config:learning.provider_route.<decision>) read by PromotedProviderRouter: the
         // decision keeps its own provider chain behind the routed one, and rollback or a paused learner restores it.
         String routeKey = ai.intentoms.learning.hooks.PromotedProviderRouter.KEY_PREFIX + name;
-        PolicyChange change = new PolicyChange.ParameterChange(routeKey, def.provider(), def.fallbackProvider());
+        PolicyChange change = new PolicyChange.ParameterChange(routeKey, def.provider(), b.provider());
         PolicyChangeset changeset = new PolicyChangeset(new ArtifactRef("config", routeKey), def.version(), List.of(change),
-            String.format(java.util.Locale.ROOT, "%s answers %s as accurately (%.3f vs %.3f on %d labelled cases) at $%.5f vs $%.5f per call",
-                def.fallbackProvider(), name, fallbackAcc, primaryAcc, fallbackSample, fallbackCost, primaryCost),
+            String.format(java.util.Locale.ROOT, "%s reaches the accuracy target for %s at the lowest cost and latency. Compared: %s", b.provider(), name, compared),
             PolicyChangeset.RiskTier.valueOf(def.tier().name()));
         Proposal p = new Proposal(Ids.prefixed("prop"), changeset, null, PolicyChangeset.RiskTier.valueOf(def.tier().name()), ProposalStatus.DRAFT, null, null,
             Actor.system(LEARNER).ref(), Instant.now(), Instant.now(), null, null, null, null, null, null, null, null);
         proposals.insert(p);
-        log.info("DF-05 proposal {}: {} provider {} -> {} (cost ${} -> ${}, labelled accuracy {} vs {})", p.proposalId(), name, def.provider(), def.fallbackProvider(),
-            primaryCost, fallbackCost, primaryAcc, fallbackAcc);
+        log.info("DF-05 proposal {}: {} provider {} -> {} ({})", p.proposalId(), name, def.provider(), b.provider(), compared);
         return true;
     }
+
+    /** Per provider: answers, labelled answers, kept share, cost per call (spend, else recorded cost) and p95 latency. */
+    static List<ProviderStats> stats(List<DecisionRecord> answered, List<DecisionRecord> labelled, Map<String, Double> spendPerCall) {
+        java.util.Set<String> providers = new java.util.TreeSet<>();
+        answered.forEach(r -> providers.add(r.provider()));
+        labelled.stream().filter(r -> r.provider() != null).forEach(r -> providers.add(r.provider()));
+        List<ProviderStats> out = new java.util.ArrayList<>();
+        for (String provider : providers) {
+            List<DecisionRecord> mine = answered.stream().filter(r -> provider.equals(r.provider())).toList();
+            List<DecisionRecord> mineLabelled = labelled.stream().filter(r -> provider.equals(r.provider())).toList();
+            Double cost = spendPerCall.containsKey(provider) ? spendPerCall.get(provider)
+                : mine.isEmpty() ? null : mine.stream().mapToDouble(DecisionRecord::costUsd).average().orElse(0);
+            Long p95 = mine.isEmpty() ? null : percentile(mine.stream().map(DecisionRecord::latencyMs).sorted().toList(), 0.95);
+            out.add(new ProviderStats(provider, mine.size(), mineLabelled.size(), accuracy(mineLabelled), cost, p95));
+        }
+        return out;
+    }
+
+    /**
+     * The provider to route to: among providers with enough labelled answers whose accuracy reaches the target (the
+     * floor when set, never more than {@code tolerance} below the primary), the cheapest; those within 10% of that cost
+     * are separated by p95 latency. Empty when no provider qualifies.
+     */
+    static Optional<ProviderStats> choose(List<ProviderStats> stats, ProviderStats primary, Double floor, int minSample, double tolerance) {
+        double target = Math.max(floor == null ? 0 : floor, primary == null || primary.labelled() < minSample ? 0 : primary.accuracy() - tolerance);
+        List<ProviderStats> ok = stats.stream().filter(st -> st.labelled() >= minSample && st.accuracy() >= target && st.costPerCall() != null).toList();
+        if (ok.isEmpty()) return Optional.empty();
+        double cheapest = ok.stream().mapToDouble(ProviderStats::costPerCall).min().orElse(0);
+        return ok.stream().filter(st -> st.costPerCall() <= cheapest * 1.10 + 1e-12)
+            .min(java.util.Comparator.comparingLong((ProviderStats st) -> st.p95LatencyMs() == null ? Long.MAX_VALUE : st.p95LatencyMs())
+                .thenComparingDouble(ProviderStats::costPerCall));
+    }
+
+    private static long percentile(List<Long> sorted, double q) {
+        if (sorted.isEmpty()) return 0;
+        int idx = (int) Math.ceil(q * sorted.size()) - 1;
+        return sorted.get(Math.max(0, Math.min(sorted.size() - 1, idx)));
+    }
+
+    private static double round(double v) { return Math.round(v * 10_000) / 10_000.0; }
 
     private static Map<String, Double> costPerCallByProvider(List<Map<String, Object>> rows, String decisionName) {
         Map<String, double[]> agg = new java.util.LinkedHashMap<>(); // provider -> [calls, cost]
@@ -150,25 +205,24 @@ public class ProviderRoutingLearner implements GovernedLearner {
     }
 
     @SuppressWarnings("unchecked")
-    private static double accuracy(List<DecisionRecord> labelled, String provider) {
-        List<DecisionRecord> subset = labelled.stream().filter(r -> provider.equals(r.provider())).toList();
-        if (subset.isEmpty()) return 0;
-        long nonOverridden = subset.stream().filter(r -> {
+    private static double accuracy(List<DecisionRecord> labelled) {
+        if (labelled.isEmpty()) return 0;
+        long kept = labelled.stream().filter(r -> {
             Map<String, Object> res = (Map<String, Object>) r.labels().get(HUMAN_RESOLUTION_LABEL);
             Object action = res == null ? null : res.get("action");
-            return action == null || String.valueOf(action).isBlank() || String.valueOf(action).equalsIgnoreCase(String.valueOf(r.effectiveValue()));
+            return action == null || String.valueOf(action).isBlank() || String.valueOf(action).equalsIgnoreCase(String.valueOf(r.value()));
         }).count();
-        return nonOverridden / (double) subset.size();
+        return kept / (double) labelled.size();
     }
 
-    private void writeFact(String decisionName, String provider, double costPerCall) {
+    private void writeFact(String decisionName, String provider, FactKey key, double value, int sampleSize) {
         Instant now = Instant.now();
         String subjectId = decisionName + ":" + provider;
-        var prior = facts.active(SubjectType.DECISION, subjectId, FactKey.PROVIDER_COST_PER_CALL);
+        var prior = facts.active(SubjectType.DECISION, subjectId, key);
+        if (prior.isPresent() && prior.get().value() instanceof TypedValue.NumberValue n && Math.abs(n.value() - value) < 1e-9 && prior.get().sampleSize() == sampleSize) return;
         int version = prior.map(f -> f.version() + 1).orElse(1);
-        facts.supersede(SubjectType.DECISION, subjectId, FactKey.PROVIDER_COST_PER_CALL, now);
-        facts.insert(new LearnedFact(Ids.prefixed("fact"), SubjectType.DECISION, subjectId, FactKey.PROVIDER_COST_PER_CALL,
-            new TypedValue.NumberValue(costPerCall), 1.0, 0, LEARNER, version, now, null, now));
+        facts.supersede(SubjectType.DECISION, subjectId, key, now);
+        facts.insert(new LearnedFact(Ids.prefixed("fact"), SubjectType.DECISION, subjectId, key, new TypedValue.NumberValue(value), 1.0, sampleSize, LEARNER, version, now, null, now));
     }
 
     private boolean hasPendingProposal(String name) {
@@ -177,7 +231,7 @@ public class ProviderRoutingLearner implements GovernedLearner {
 
     @Override
     public LearnerDescriptor descriptor() {
-        return LearnerDescriptor.of(KEY, "AI provider routing", "Finds the cheapest AI provider that is just as accurate for each decision.", LearnerDescriptor.Loop.FAST, "DF-05");
+        return LearnerDescriptor.of(KEY, "AI provider routing", "Finds, among every AI provider that answered a decision, the one that meets the accuracy target at the lowest cost and latency.", LearnerDescriptor.Loop.FAST, "DF-05");
         // Routing goes live as a promoted config change (learning.provider_route.<decision>), not as a learned live value.
     }
 

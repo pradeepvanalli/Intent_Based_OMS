@@ -46,6 +46,22 @@ public interface SegmentNamer {
         return out;
     }
 
+    /** Every trait a segment label can carry (the typed vocabulary of CI-02 labels). */
+    List<String> TRAITS = List.of("split-tolerant", "one-delivery", "speed-first", "cost-conscious", "store-pickup", "home-delivery", "frequent", "occasional");
+
+    /** The segment's typed label: the traits (from {@link #TRAITS}) of the features that set it apart by at least 0.3 sd. */
+    static List<String> traits(Profile p, Map<String, Double> overall, Map<String, Double> spread) {
+        List<Map.Entry<String, Double>> z = new ArrayList<>();
+        for (String f : FEATURES) {
+            double s = Math.max(1e-6, spread.getOrDefault(f, 1.0));
+            z.add(Map.entry(f, (p.means().getOrDefault(f, 0.0) - overall.getOrDefault(f, 0.0)) / s));
+        }
+        z.sort((a, b) -> Double.compare(Math.abs(b.getValue()), Math.abs(a.getValue())));
+        List<String> out = new ArrayList<>();
+        for (var e : z) if (out.isEmpty() || Math.abs(e.getValue()) >= 0.3) out.add(phrase(e.getKey(), e.getValue()));
+        return out;
+    }
+
     static String phrase(String feature, double z) {
         boolean high = z >= 0;
         return switch (feature) {

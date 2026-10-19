@@ -21,8 +21,16 @@ public class NodeAssignmentRepository {
     private final JdbcClient jdbc;
     public NodeAssignmentRepository(JdbcClient jdbc) { this.jdbc = jdbc; }
 
-    /** What sourcing knew about one package when it assigned the node. Any field may be null for older events. */
-    public record Sourced(String skuClass, LocalDate promisedEta, String destZip3, String shipMethod, String dayPart, Integer backlogUnits, Double statedOnTime) {
+    /**
+     * What sourcing knew about one package when it assigned the node. Any field may be null for older events.
+     * {@code shipBy} is the date the package must leave the node (FS-02 on-time pick); {@code baseOnTime} is the on-time
+     * probability before lane calibration, {@code statedOnTime} the one the order was given (CX-01).
+     */
+    public record Sourced(String skuClass, LocalDate promisedEta, String destZip3, String shipMethod, String dayPart, Integer backlogUnits, Double statedOnTime,
+                          LocalDate shipBy, Double baseOnTime) {
+        public Sourced(String skuClass, LocalDate promisedEta, String destZip3, String shipMethod, String dayPart, Integer backlogUnits, Double statedOnTime) {
+            this(skuClass, promisedEta, destZip3, shipMethod, dayPart, backlogUnits, statedOnTime, null, null);
+        }
         public static Sourced of(String skuClass, LocalDate promisedEta) { return new Sourced(skuClass, promisedEta, null, null, null, null, null); }
     }
 
@@ -32,23 +40,28 @@ public class NodeAssignmentRepository {
 
     public void record(String orderId, String nodeId, Sourced s, Instant at) {
         jdbc.sql("""
-            insert into node_assignment(tenant_id, order_id, node_id, sku_class, promised_eta, assigned_at, dest_zip3, ship_method, day_part, backlog_units, stated_on_time)
-            values (:t, :o, :n, :sc, :eta, :at, :zip3, :method, :dp, :backlog, :stated)
+            insert into node_assignment(tenant_id, order_id, node_id, sku_class, promised_eta, assigned_at, dest_zip3, ship_method, day_part, backlog_units, stated_on_time,
+                                        ship_by, base_on_time)
+            values (:t, :o, :n, :sc, :eta, :at, :zip3, :method, :dp, :backlog, :stated, :shipBy, :base)
             on conflict (tenant_id, order_id, node_id) do update set promised_eta = coalesce(node_assignment.promised_eta, excluded.promised_eta),
               dest_zip3 = coalesce(node_assignment.dest_zip3, excluded.dest_zip3), ship_method = coalesce(node_assignment.ship_method, excluded.ship_method),
               day_part = coalesce(node_assignment.day_part, excluded.day_part), backlog_units = coalesce(node_assignment.backlog_units, excluded.backlog_units),
-              stated_on_time = coalesce(node_assignment.stated_on_time, excluded.stated_on_time)
+              stated_on_time = coalesce(node_assignment.stated_on_time, excluded.stated_on_time), ship_by = coalesce(node_assignment.ship_by, excluded.ship_by),
+              base_on_time = coalesce(node_assignment.base_on_time, excluded.base_on_time)
             """)
             .param("t", TenantContext.require()).param("o", orderId).param("n", nodeId).param("sc", s.skuClass() == null ? "default" : s.skuClass())
             .param("eta", s.promisedEta() == null ? null : Date.valueOf(s.promisedEta())).param("at", Timestamp.from(at))
             .param("zip3", s.destZip3()).param("method", s.shipMethod()).param("dp", s.dayPart()).param("backlog", s.backlogUnits()).param("stated", s.statedOnTime())
+            .param("shipBy", s.shipBy() == null ? null : Date.valueOf(s.shipBy())).param("base", s.baseOnTime())
             .update();
     }
 
     public record Assignment(String nodeId, LocalDate promisedEta, String carrier, Instant shippedAt, String skuClass, String destZip3, String shipMethod,
-                             String dayPart, Integer backlogUnits, Double statedOnTime, Instant deliveredAt, Boolean deliveredOnTime) {}
+                             String dayPart, Integer backlogUnits, Double statedOnTime, Instant deliveredAt, Boolean deliveredOnTime, LocalDate shipBy,
+                             Boolean pickedOnTime, Double baseOnTime) {}
 
-    private static final String COLS = "node_id, promised_eta, carrier, shipped_at, sku_class, dest_zip3, ship_method, day_part, backlog_units, stated_on_time, delivered_at, delivered_on_time";
+    private static final String COLS = "node_id, promised_eta, carrier, shipped_at, sku_class, dest_zip3, ship_method, day_part, backlog_units, stated_on_time, " +
+        "delivered_at, delivered_on_time, ship_by, picked_on_time, base_on_time";
 
     public List<Assignment> assignmentsFor(String orderId) {
         String t = TenantContext.require();
@@ -68,6 +81,12 @@ public class NodeAssignmentRepository {
         if (nodeId == null) { recordShipped(orderId, carrier, shippedAt); return; }
         jdbc.sql("update node_assignment set carrier = coalesce(carrier, :c), shipped_at = coalesce(shipped_at, :at) where tenant_id = :t and order_id = :o and node_id = :n")
             .param("c", carrier).param("at", Timestamp.from(shippedAt)).param("t", TenantContext.require()).param("o", orderId).param("n", nodeId).update();
+    }
+
+    /** FS-02: records whether the node's pick left on time; the first shipment wins (a redelivered event changes nothing). */
+    public boolean recordPicked(String orderId, String nodeId, boolean onTime) {
+        return jdbc.sql("update node_assignment set picked_on_time = :ot where tenant_id = :t and order_id = :o and node_id = :n and picked_on_time is null")
+            .param("ot", onTime).param("t", TenantContext.require()).param("o", orderId).param("n", nodeId).update() == 1;
     }
 
     /** Records the delivery outcome of one assignment; the first delivery wins (a redelivered event changes nothing). */
@@ -98,12 +117,29 @@ public class NodeAssignmentRepository {
             """).param("t", TenantContext.require()).param("m", shipMethod).param("n", nodeId).query(String.class).optional();
     }
 
+    /**
+     * The assignments one {@code order.delivered} event speaks for. The workflow appends one event per fulfilment group
+     * with that group's {@code nodeIds}, so only those nodes are credited; a partial scan ({@code groupDelivered=false})
+     * credits nobody yet, the group is judged when its last parcel arrives. An older event that names no node speaks for
+     * the whole order. Redelivered events change nothing: each (order, node) is counted once.
+     */
+    public static List<Assignment> deliveredBy(List<Assignment> assignments, Map<String, Object> payload) {
+        if (payload == null) return assignments;
+        if (Boolean.FALSE.equals(payload.get("groupDelivered"))) return List.of();
+        java.util.Set<String> nodes = new java.util.HashSet<>();
+        if (payload.get("nodeIds") instanceof List<?> ids) for (Object id : ids) if (id != null) nodes.add(String.valueOf(id));
+        if (nodes.isEmpty() && payload.get("nodeId") != null) nodes.add(String.valueOf(payload.get("nodeId")));
+        if (nodes.isEmpty()) return assignments;
+        return assignments.stream().filter(a -> nodes.contains(a.nodeId())).toList();
+    }
+
     private static Assignment hydrate(Map<String, Object> r) {
         Object eta = r.get("promised_eta");
+        Object shipBy = r.get("ship_by");
         return new Assignment((String) r.get("node_id"), eta == null ? null : ((Date) eta).toLocalDate(), (String) r.get("carrier"), ts(r.get("shipped_at")),
             (String) r.get("sku_class"), (String) r.get("dest_zip3"), (String) r.get("ship_method"), (String) r.get("day_part"),
             r.get("backlog_units") == null ? null : ((Number) r.get("backlog_units")).intValue(), (Double) r.get("stated_on_time"), ts(r.get("delivered_at")),
-            (Boolean) r.get("delivered_on_time"));
+            (Boolean) r.get("delivered_on_time"), shipBy == null ? null : ((Date) shipBy).toLocalDate(), (Boolean) r.get("picked_on_time"), (Double) r.get("base_on_time"));
     }
 
     private static Instant ts(Object o) { return o == null ? null : ((Timestamp) o).toInstant(); }

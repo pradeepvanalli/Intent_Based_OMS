@@ -26,7 +26,7 @@ import java.util.Set;
 @Component
 public class AuthorScheduler {
     private static final Logger log = LoggerFactory.getLogger(AuthorScheduler.class);
-    static final Set<String> AUTHORED_ACTIONS = Set.of("add_rule", "retire_rule");
+    static final Set<String> AUTHORED_ACTIONS = Set.of("add_rule", "retire_rule", "allow_list_change");
 
     private final AuthorService author;
     private final HypothesisRepository hypotheses;
@@ -65,6 +65,7 @@ public class AuthorScheduler {
     }
 
     static boolean authorable(Hypothesis h) {
+        if (TemplateAuthor.allowList(h)) return true;
         Object action = h.lever().get("action");
         if (action != null) return AUTHORED_ACTIONS.contains(String.valueOf(action));
         return AuthorService.leverTarget(h) != null;

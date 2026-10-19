@@ -42,11 +42,17 @@ class FulfilmentLearnersUnitTest {
         assertThat(SourcingPolicyBandit.parseWeights(BanditRewardLearner.encode(w))).containsOnlyKeys(w.keySet());
     }
 
-    @Test void banditBucketsByChannelIntentBasketAndRegion() {
+    @Test void banditBucketsByChannelIntentBasketRegionSegmentAndLoad() {
         assertThat(SourcingPolicyBandit.bucket(Map.of("channel", "web", "intentPolicy", "ship_complete", "basketUnits", 3, "destinationZip", "10001")))
-            .isEqualTo("web|ship_complete|2-3|z1");
-        assertThat(SourcingPolicyBandit.bucket(Map.of("channel", "pos", "lineCount", 6, "destinationState", "TX"))).isEqualTo("pos|none|4+|TX");
-        assertThat(SourcingPolicyBandit.bucket(Map.of())).isEqualTo("any|none|1|any");
+            .isEqualTo("web|ship_complete|2-3|z1|none|any");
+        assertThat(SourcingPolicyBandit.bucket(Map.of("channel", "pos", "lineCount", 6, "destinationState", "TX"))).isEqualTo("pos|none|4+|TX|none|any");
+        assertThat(SourcingPolicyBandit.bucket(Map.of())).isEqualTo("any|none|1|any|none|any");
+        assertThat(SourcingPolicyBandit.bucket(Map.of("channel", "web", "segment", "seg-a", "networkLoad", "strained"))).isEqualTo("web|none|1|any|seg-a|strained");
+        assertThat(SourcingPolicyBandit.coarseBucket("web|none|1|any|seg-a|strained")).isEqualTo("web|none|1|any");
+        assertThat(SourcingPolicyBandit.loadBand(0.2)).isEqualTo("calm");
+        assertThat(SourcingPolicyBandit.loadBand(0.7)).isEqualTo("busy");
+        assertThat(SourcingPolicyBandit.loadBand(0.95)).isEqualTo("strained");
+        assertThat(SourcingPolicyBandit.loadBand(Double.NaN)).isEqualTo("any");
     }
 
     @Test void rejectPenaltyScalesWithTheNodesRejectRateRelativeToTheFleet() {
@@ -69,14 +75,22 @@ class FulfilmentLearnersUnitTest {
         assertThat(PromiseBufferLearner.segment(null)).isEqualTo("default");
     }
 
-    @Test void warnEarlyThresholdBalancesCaughtDelaysAgainstFalseAlarms() {
+    @Test void warnEarlyThresholdTradesContactsAvoidedAndEarlinessAgainstFalseAlarms() {
+        java.time.Instant promise = java.time.Instant.parse("2026-10-10T00:00:00Z");
+        java.time.Instant early = promise.minus(java.time.Duration.ofHours(72)), afterPromise = promise.plus(java.time.Duration.ofHours(6));
         List<WarnEarlyThresholdLearner.Observed> obs = new ArrayList<>();
-        for (int i = 0; i < 10; i++) obs.add(new WarnEarlyThresholdLearner.Observed(3, true));   // late orders reach 3
-        for (int i = 0; i < 5; i++) obs.add(new WarnEarlyThresholdLearner.Observed(2, true));    // some late orders only reach 2
-        for (int i = 0; i < 30; i++) obs.add(new WarnEarlyThresholdLearner.Observed(1, false));  // most on-time orders sit at 1
-        for (int i = 0; i < 4; i++) obs.add(new WarnEarlyThresholdLearner.Observed(2, false));
-        assertThat(WarnEarlyThresholdLearner.bestThreshold(obs, 1.0, 0.3)).isEqualTo(2);
-        assertThat(WarnEarlyThresholdLearner.bestThreshold(List.of(new WarnEarlyThresholdLearner.Observed(3, false)), 1.0, 0.3)).isNull();
+        // Late orders reach 2 three days before the promise, and 3 only after it has already been missed.
+        for (int i = 0; i < 12; i++) obs.add(new WarnEarlyThresholdLearner.Observed(List.of(new WarnEarlyThresholdLearner.Point(early, 2),
+            new WarnEarlyThresholdLearner.Point(afterPromise, 3)), promise, true, i < 8, false));
+        for (int i = 0; i < 30; i++) obs.add(new WarnEarlyThresholdLearner.Observed(List.of(new WarnEarlyThresholdLearner.Point(early, 1)), promise, false, false, false));
+        for (int i = 0; i < 3; i++) obs.add(new WarnEarlyThresholdLearner.Observed(List.of(new WarnEarlyThresholdLearner.Point(early, 2)), promise, false, false, false));
+        var rates = WarnEarlyThresholdLearner.contactRates(obs, 0.5);
+        assertThat(rates.lateUnwarned()).isGreaterThan(rates.lateWarned());
+        assertThat(WarnEarlyThresholdLearner.bestThreshold(obs, rates)).isEqualTo(2);   // 3 would come too late to avoid any contact
+        assertThat(WarnEarlyThresholdLearner.earliness(early, promise)).isEqualTo(1.0);
+        assertThat(WarnEarlyThresholdLearner.earliness(afterPromise, promise)).isZero();
+        assertThat(WarnEarlyThresholdLearner.bestThreshold(List.of(new WarnEarlyThresholdLearner.Observed(List.of(new WarnEarlyThresholdLearner.Point(early, 3)), promise, false, false, false)),
+            rates)).isNull();
     }
 
     @Test void appeasementPicksTheSmallestCreditThatStopsRepeatComplaints() {

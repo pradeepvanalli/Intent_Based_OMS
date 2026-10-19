@@ -21,7 +21,8 @@ import java.util.Optional;
 /**
  * The Critic (SOO requirements doc §6.1): reviews a proposal's changeset against its evaluation report. Its
  * verdict is evidence attached to the proposal for a human reviewer — it never approves, rejects or blocks on its
- * own, regardless of how risky its own verdict reads.
+ * own, regardless of how risky its own verdict reads. Without a model key (or over the monthly budget) the rule-based
+ * {@link TemplateCritic} reviews instead; its review says so ({@code source: rules}).
  */
 @Service
 public class CriticService {
@@ -32,8 +33,10 @@ public class CriticService {
     private final PromptTemplates templates;
     private final ProposalRepository proposals;
     private final LearningLlmAudit audit;
+    private final TemplateCritic rules;
 
-    public CriticService(CopilotLlmClient llm, PromptTemplates templates, ProposalRepository proposals, LearningLlmAudit audit) {
+    public CriticService(CopilotLlmClient llm, PromptTemplates templates, ProposalRepository proposals, LearningLlmAudit audit, TemplateCritic rules) {
+        this.rules = rules;
         this.audit = audit;
         this.llm = llm;
         this.templates = templates;
@@ -44,7 +47,7 @@ public class CriticService {
     public Optional<Review> review(String proposalId) {
         Proposal p = proposals.find(proposalId).orElseThrow(() -> new ValidationException("Proposal " + proposalId + " not found"));
         if (p.evaluationReport() == null || p.evaluationReport().isEmpty()) { log.info("Critic skipped {}: no evaluation report yet", proposalId); return Optional.empty(); }
-        if (!llm.available()) { log.info("Critic skipped: no copilot model key configured"); return Optional.empty(); }
+        if (!llm.available()) return ruleReview(p);
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("target", p.changeset().target().toString());
@@ -54,8 +57,8 @@ public class CriticService {
         payload.put("evaluationReport", p.evaluationReport());
 
         if (!audit.withinBudget("critic", FEATURE, "proposal", proposalId, LearningSchemas.REVIEW, "system-critic.md")) {
-            log.info("Critic skipped {}: monthly learning LLM budget reached", proposalId);
-            return Optional.empty();
+            log.info("Critic: monthly learning LLM budget reached for {}, using the rule-based critic", proposalId);
+            return ruleReview(p);
         }
         String prompt = templates.get("system-critic.md");
         JsonNode out;
@@ -71,6 +74,13 @@ public class CriticService {
         Review review = new Review(Review.Verdict.valueOf(out.path("verdict").asText("NEEDS_CHANGES")), risks);
         proposals.setCriticReview(proposalId, review);
         audit.record("critic", FEATURE, "proposal", proposalId, LearningSchemas.REVIEW, "system-critic.md", prompt, "ok", proposalId);
+        return Optional.of(review);
+    }
+
+    private Optional<Review> ruleReview(Proposal p) {
+        Review review = rules.review(p);
+        proposals.setCriticReview(p.proposalId(), review);
+        log.info("Rule-based critic reviewed {}: {} {}", p.proposalId(), review.verdict(), review.risks());
         return Optional.of(review);
     }
 }

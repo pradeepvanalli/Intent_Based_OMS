@@ -111,10 +111,21 @@ public class CiSegmentDiscovery implements GovernedLearner {
             for (int f = 0; f < mean.length; f++) means.put(SegmentNamer.FEATURES.get(f), rawMean(members, f));
             profiles.add(new SegmentNamer.Profile(j, members.size(), means));
         }
-        List<SegmentNamer.Name> names = Optional.ofNullable(namers.getIfAvailable())
-            .flatMap(n -> { try { return n.name(profiles, overall); } catch (RuntimeException e) { log.warn("Segment naming failed, using template: {}", e.toString()); return Optional.empty(); } })
-            .filter(l -> l.size() == profiles.size())
-            .orElseGet(() -> SegmentNamer.template(profiles, overall, spread));
+        SegmentNamer namer = namers.getIfAvailable();
+        String namedBy = "template";
+        String templateReason = namer == null ? "no analyst configured" : null;
+        List<SegmentNamer.Name> names = null;
+        if (namer != null) {
+            try {
+                Optional<List<SegmentNamer.Name>> fromAnalyst = namer.name(profiles, overall);
+                if (fromAnalyst.isPresent() && fromAnalyst.get().size() == profiles.size()) { names = fromAnalyst.get(); namedBy = "analyst"; }
+                else templateReason = fromAnalyst.isEmpty() ? "analyst unavailable (no key, over budget or no answer)" : "analyst returned the wrong number of names";
+            } catch (RuntimeException e) {
+                log.warn("Segment naming failed, using template: {}", e.toString());
+                templateReason = "analyst failed: " + e.getClass().getSimpleName();
+            }
+        }
+        if (names == null) names = SegmentNamer.template(profiles, overall, spread);
 
         int version = segments.nextVersion();
         Instant now = Instant.now();
@@ -137,7 +148,10 @@ public class CiSegmentDiscovery implements GovernedLearner {
             definition.put("centroid", p.means());
             definition.put("minSize", minSize);
             definition.put("sampleMembers", sample);
-            definition.put("namedBy", namers.getIfAvailable() == null ? "template" : "analyst_or_template");
+            // CI-02: who actually named it, and a typed label every segment carries whoever named it.
+            definition.put("namedBy", namedBy);
+            if (templateReason != null) definition.put("templateReason", templateReason);
+            definition.put("traits", SegmentNamer.traits(p, overall, spread));
             Segment s = new Segment(Ids.prefixed("seg"), version, name.label(), name.description(), definition, p.size(), "system:" + KEY, now);
             segments.insert(s);
             written.add(s);

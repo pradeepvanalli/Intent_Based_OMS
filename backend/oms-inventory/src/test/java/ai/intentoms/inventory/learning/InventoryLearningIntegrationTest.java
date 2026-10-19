@@ -233,14 +233,52 @@ class InventoryLearningIntegrationTest extends PostgresTestBase {
         assertThat(inventory.atp(sku, n).available()).isEqualTo(10 + (int) Math.floor(100 * learned));
     }
 
+    /**
+     * IU-04: a typed recommendation {sku, from, to, qty, splitsAvoided, cost}. Splits avoided are the recent orders that
+     * split because the receiving node lacked the SKU (it shipped from elsewhere while the rest of the order was there).
+     */
     @Test
     void transferSuggestionsMoveSurplusToNodesAboutToRunOut() {
-        String sku = sku(), full = node(), empty = node();
+        String sku = sku(), other = sku(), full = node(), empty = node();
         inventory.upsert(List.of(new InventoryPosition(sku, full, "on_hand", null, 100, 0, null), new InventoryPosition(sku, empty, "on_hand", null, 1, 0, null)), "wms");
         for (int d = 1; d <= 20; d++) demand(sku, empty, 2, d);   // 40 units in 28 days: 10 a week, 0.1 weeks of cover
-        List<TransferRecommender.Transfer> recs = transfers.recommendForTenant();
-        assertThat(recs).filteredOn(t -> t.sku().equals(sku)).containsExactly(new TransferRecommender.Transfer(sku, full, empty, 19));
-        LearnedFact f = facts.active(SubjectType.SKU, sku, FactKey.TRANSFER_RECOMMENDATION).orElseThrow();
-        assertThat(((TypedValue.ListValue) f.value()).values()).containsExactly(full + ">" + empty + ":19");
+        // 7 orders split: their other line was at the empty node, this SKU came from the full one.
+        for (int i = 0; i < 7; i++) {
+            String order = "ord-" + Ids.shortId();
+            reservation(order, other, empty, 1, 3);
+            reservation(order, sku, full, 1, 3);
+        }
+        // One order that took the SKU from the full node with nothing at the empty node is not a split the move avoids.
+        reservation("ord-" + Ids.shortId(), sku, full, 1, 2);
+        config.set("inventory.transfer.fixed_cost_usd", 20.0);
+        config.set("inventory.transfer.unit_cost_usd", 0.5);
+        config.set("sourcing.split_penalty_usd", 12.0);
+        try {
+            List<TransferRecommender.TransferRecommendation> recs = transfers.recommendForTenant();
+            TransferRecommender.TransferRecommendation r = recs.stream().filter(t -> t.sku().equals(sku)).findFirst().orElseThrow();
+            assertThat(r.fromNode()).isEqualTo(full);
+            assertThat(r.toNode()).isEqualTo(empty);
+            assertThat(r.qty()).isEqualTo(19); // two weeks of cover at 10 a week, less the 1 on hand
+            assertThat(r.splitsAvoided()).isEqualTo(7);
+            assertThat(r.cost()).isEqualByComparingTo("29.50");
+            assertThat(r.splitSavings()).isEqualByComparingTo("84.00");
+            assertThat(r.worthIt()).isTrue();
+            LearnedFact f = facts.active(SubjectType.SKU, sku, FactKey.TRANSFER_RECOMMENDATION).orElseThrow();
+            assertThat(((TypedValue.ListValue) f.value()).values()).containsExactly(full + ">" + empty + ":19");
+            assertThat(repo.openTransfers()).filteredOn(t -> t.sku().equals(sku)).singleElement()
+                .satisfies(o -> { assertThat(o.qty()).isEqualTo(19); assertThat(o.splitsAvoided()).isEqualTo(7); assertThat(o.cost()).isEqualByComparingTo("29.50"); });
+        } finally {
+            config.delete("inventory.transfer.fixed_cost_usd");
+            config.delete("inventory.transfer.unit_cost_usd");
+            config.delete("sourcing.split_penalty_usd");
+        }
+    }
+
+    private void reservation(String order, String sku, String node, int qty, int daysAgo) {
+        jdbc.sql("""
+            insert into inventory_reservation(id, tenant_id, sku, node_id, qty, source, ref_id, order_id, status, created_at, updated_at)
+            values (:id, :t, :s, :n, :q, 'order', :o, :o, 'CONSUMED', :at, :at)
+            """).param("id", Ids.prefixed("rsv")).param("t", TenantContext.require()).param("s", sku).param("n", node).param("q", qty)
+            .param("o", order).param("at", Timestamp.from(Instant.now().minus(Duration.ofDays(daysAgo)))).update();
     }
 }

@@ -5,7 +5,7 @@
 # value and reversible by re-ordering, so T1 with a 0.8 act band and a `wait` default that never costs anything.
 # Sandbox gates 0.6 / 0.5 (production 0.90 / 0.05).
 decision: backorder_next_action
-version: 1
+version: 2
 owner: fulfilment-ops
 tier: T1
 provider: jev
@@ -27,6 +27,8 @@ state:
     - order.needed_by_days
     - customer.tier
     - network.atp_elsewhere
+    - line.backorder_conversion_rate
+    - history.option_kept_rate
 rules:
   - id: customer_declined_substitute
     when: "has(input.order.notes) && input.order.notes.matches('(?i)(happy to wait|don.?t substitute|no substitut|exact model|only this model)')"
@@ -46,7 +48,10 @@ rules:
 questions:
   next_action:
     type: choice
-    instructions: What should happen to this backordered line now that it has waited past its SLA?
+    instructions: >-
+      What should happen to this backordered line now that it has waited past its SLA? When present, line.backorder_conversion_rate is how often customers kept a backorder of
+      this item rather than cancelling, and history.option_kept_rate is how often lines were kept after each option was
+      chosen before; prefer the option that keeps the sale.
     feeds: backorder_playbook
     criteria:
       wait: Restock ETA is close or the customer said they would wait for this exact model, keep the line and notify the new ETA

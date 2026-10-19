@@ -37,12 +37,15 @@ import java.util.Map;
  *       {@code oms.learning.fraud-drift-multiple} (default 2) times the baseline, or under half of it.</li>
  * </ul>
  * Pausing goes through {@link LearnerGovernance}, with the reason, so autonomy levels are kept and a person resumes.
+ * Every pause also raises a high-severity operator alert ({@code learning:fraud_drift:<tenant>}) through
+ * {@link OperatorAlerts}, so someone looks at it rather than finding it in a digest. Labels are read as
+ * {@link FraudLabels} says: a provisional "not fraud" inside the chargeback window is not counted.
  */
 @Component
 public class FraudDriftMonitor {
     private static final Logger log = LoggerFactory.getLogger(FraudDriftMonitor.class);
     private static final List<String> FRAUD_DECISIONS = List.of("payment_risk", "rto_risk", "address_risk", "return_risk");
-    private static final List<String> GUARDED_LEARNERS = List.of(FraudThresholdTuner.KEY, FraudAbuseHypothesisScanner.KEY);
+    private static final List<String> GUARDED_LEARNERS = List.of(FraudThresholdTuner.KEY, FraudAbuseHypothesisScanner.KEY, FraudSignalLearner.KEY);
     static final List<String> PSI_FEATURES = List.of("payment.velocity_1h", "payment.velocity_24h", "payment.address_linkage_count", "payment.device_linkage_count",
         "payment.token_customer_count", "payment.billing_shipping_mismatch", "order.total");
     static final int MIN_RECORDS = 50;
@@ -50,12 +53,17 @@ public class FraudDriftMonitor {
     private final DecisionRecordRepository decisionRecords;
     private final LearnedFactRepository facts;
     private final LearnerGovernance governance;
+    private final org.springframework.beans.factory.ObjectProvider<OperatorAlerts> alerts;
+    private final ai.intentoms.platform.config.TenantConfigStore config;
 
     @Value("${oms.learning.fraud-drift-multiple:2.0}") private double driftMultiple = 2.0;
     @Value("${oms.learning.fraud-drift-psi:0.25}") private double psiThreshold = 0.25;
 
-    public FraudDriftMonitor(DecisionRecordRepository decisionRecords, LearnedFactRepository facts, LearnerGovernance governance) {
+    public FraudDriftMonitor(DecisionRecordRepository decisionRecords, LearnedFactRepository facts, LearnerGovernance governance,
+                             org.springframework.beans.factory.ObjectProvider<OperatorAlerts> alerts, ai.intentoms.platform.config.TenantConfigStore config) {
         this.governance = governance;
+        this.alerts = alerts;
+        this.config = config;
         this.decisionRecords = decisionRecords;
         this.facts = facts;
     }
@@ -96,9 +104,23 @@ public class FraudDriftMonitor {
         }
         if (reason != null) {
             log.warn("{}; pausing fraud learners", reason);
-            for (String key : GUARDED_LEARNERS) if (governance.gate(key).mayRun()) governance.pause(key, reason, "system:fraud-drift-monitor");
+            List<String> paused = new ArrayList<>();
+            for (String key : GUARDED_LEARNERS) if (governance.gate(key).mayRun()) { governance.pause(key, reason, "system:fraud-drift-monitor"); paused.add(key); }
+            alert(reason, paused);
         }
         return new DriftReport(psi, reason);
+    }
+
+    private void alert(String reason, List<String> paused) {
+        OperatorAlerts sink = alerts.getIfAvailable();
+        if (sink == null) return;
+        String body = reason + ". " + (paused.isEmpty() ? "The fraud learners were already paused." : "Paused auto-tuning: " + String.join(", ", paused) + ".")
+            + " Check whether this is a real shift (a sale, a new fraud pattern, a data problem) before resuming them.";
+        try {
+            sink.raise("learning:fraud_drift:" + TenantContext.require(), "high", "Fraud learning paused: drift detected", body, Map.of("learning", "/learning"));
+        } catch (RuntimeException e) {
+            log.warn("Fraud drift alert failed: {}", e.toString());
+        }
     }
 
     /** PSI per feature, recent against baseline; empty when either window has too few decisions to judge. */
@@ -160,9 +182,11 @@ public class FraudDriftMonitor {
     private Double confirmedRate(String decision, Instant from, Instant to) {
         List<DecisionRecord> labelled = new ArrayList<>();
         for (int[] v : decisionRecords.activeVersions(decision, from)) labelled.addAll(decisionRecords.labelledBetween(decision, v[0], from, to));
-        List<DecisionRecord> withLabel = labelled.stream().filter(r -> r.labels() != null && r.labels().get("fraud_outcome") instanceof Map).toList();
-        if (withLabel.size() < 20) return null;
-        long confirmed = withLabel.stream().filter(r -> Boolean.TRUE.equals(((Map<String, Object>) r.labels().get("fraud_outcome")).get("confirmed"))).count();
-        return (double) confirmed / withLabel.size();
+        Instant now = Instant.now();
+        int window = config.getInt(FraudLabels.WINDOW_KEY, FraudLabels.DEFAULT_WINDOW_DAYS);
+        List<Boolean> usable = labelled.stream().map(r -> FraudLabels.usable(r, now, window)).filter(java.util.Objects::nonNull).toList();
+        if (usable.size() < 20) return null;
+        long confirmed = usable.stream().filter(Boolean::booleanValue).count();
+        return (double) confirmed / usable.size();
     }
 }

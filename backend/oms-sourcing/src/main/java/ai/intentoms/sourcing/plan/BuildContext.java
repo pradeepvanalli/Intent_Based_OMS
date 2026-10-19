@@ -21,20 +21,32 @@ import java.util.Map;
  * @param marginFloor      tenant floor ratio (GR-01)
  * @param pickupRadiusKm   radius within which a BOPIS store is offered as pickup for a ship-to-home order
  * @param penalties        learned node+sku penalties (FR-SRC-07)
+ * @param calibration      node id -> lane calibration offset added to the stated on-time probability (CX-01)
  */
 public record BuildContext(SourcingRequest req, List<Candidate> candidates, RateCard card, Map<String, Double> softScores, Instant now, LocalDate today, int maxSplit,
-                           boolean businessDaysOnly, double splitPenaltyUsd, double marginFloor, double pickupRadiusKm, SourcingSettings.Weights weights, PenaltyLookup penalties) {
+                           boolean businessDaysOnly, double splitPenaltyUsd, double marginFloor, double pickupRadiusKm, SourcingSettings.Weights weights, PenaltyLookup penalties,
+                           Map<String, Double> calibration) {
     public BuildContext {
         candidates = candidates == null ? List.of() : List.copyOf(candidates);
         softScores = softScores == null ? Map.of() : Map.copyOf(softScores);
         weights = weights == null ? SourcingSettings.Weights.defaults() : weights;
         penalties = penalties == null ? PenaltyLookup.nodeLevel() : penalties;
+        calibration = calibration == null ? Map.of() : Map.copyOf(calibration);
         maxSplit = Math.max(1, maxSplit);
     }
 
-    public BuildContext withRequest(SourcingRequest r) {
-        return new BuildContext(r, candidates, card, softScores, now, today, maxSplit, businessDaysOnly, splitPenaltyUsd, marginFloor, pickupRadiusKm, weights, penalties);
+    /** Without lane calibration (replay, tests). */
+    public BuildContext(SourcingRequest req, List<Candidate> candidates, RateCard card, Map<String, Double> softScores, Instant now, LocalDate today, int maxSplit,
+                        boolean businessDaysOnly, double splitPenaltyUsd, double marginFloor, double pickupRadiusKm, SourcingSettings.Weights weights, PenaltyLookup penalties) {
+        this(req, candidates, card, softScores, now, today, maxSplit, businessDaysOnly, splitPenaltyUsd, marginFloor, pickupRadiusKm, weights, penalties, Map.of());
     }
+
+    public BuildContext withRequest(SourcingRequest r) {
+        return new BuildContext(r, candidates, card, softScores, now, today, maxSplit, businessDaysOnly, splitPenaltyUsd, marginFloor, pickupRadiusKm, weights, penalties, calibration);
+    }
+
+    /** CX-01: the served lane-calibration offset for a node's on-time probability (0 when not promoted or unknown). */
+    public double calibration(String nodeId) { return calibration.getOrDefault(nodeId, 0.0); }
 
     public double soft(String nodeId) { return softScores.getOrDefault(nodeId, PlanScorer.NEUTRAL_SOFT); }
 }

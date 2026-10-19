@@ -157,6 +157,63 @@ public class InventoryLearningRepository {
 
     public record BackorderStat(String sku, int converted, int cancelled) {}
 
+    /** IU-06: records which option the backorder decision chose for the line this resolution closed. */
+    public void linkBackorderResolution(String eventId, String decisionRecordId, String option) {
+        jdbc.sql("update inventory_backorder_resolution set decision_record_id = :d, chosen_option = :o where tenant_id = :t and event_id = :e")
+            .param("d", decisionRecordId).param("o", option).param("t", t()).param("e", eventId).update();
+    }
+
+    /** IU-06: kept (converted) and cancelled backorders per option the decision chose, across SKUs. */
+    public List<BackorderStat> backorderOptionStats() {
+        return jdbc.sql("""
+            select chosen_option, count(*) filter (where outcome = 'converted') as converted, count(*) filter (where outcome = 'cancelled') as cancelled
+            from inventory_backorder_resolution where tenant_id = :t and chosen_option is not null group by chosen_option
+            """).param("t", t()).query((rs, i) -> new BackorderStat(rs.getString(1), rs.getInt(2), rs.getInt(3))).list();
+    }
+
+    // ---- transfers (IU-04)
+
+    /**
+     * Orders since {@code since} that split because {@code toNode} lacked this SKU: the SKU was reserved at another node
+     * while the same order had other lines reserved at {@code toNode}.
+     */
+    public int splitOrders(String sku, String toNode, Instant since) {
+        return jdbc.sql("""
+            select count(distinct r.order_id) from inventory_reservation r
+            where r.tenant_id = :t and r.sku = :s and r.node_id <> :n and r.order_id is not null and r.status in ('ACTIVE', 'CONSUMED') and r.created_at >= :since
+              and exists (select 1 from inventory_reservation o where o.tenant_id = r.tenant_id and o.order_id = r.order_id and o.node_id = :n
+                          and o.sku <> r.sku and o.status in ('ACTIVE', 'CONSUMED'))
+            """).param("t", t()).param("s", sku).param("n", toNode).param("since", Timestamp.from(since)).query(Integer.class).single();
+    }
+
+    /** Closes the SKU's open suggestions and stores the new ones (typed, recommend only). */
+    public void replaceTransfers(String sku, List<TransferRecommender.TransferRecommendation> recs, Instant at) {
+        closeTransfers(sku, at);
+        for (TransferRecommender.TransferRecommendation r : recs) {
+            jdbc.sql("""
+                insert into inventory_transfer_recommendation(tenant_id, id, sku, from_node, to_node, qty, splits_avoided, cost, split_savings, currency, status, generated_at)
+                values (:t, :id, :s, :f, :to, :q, :sa, :c, :ss, :cur, 'OPEN', :at)
+                """).param("t", t()).param("id", ai.intentoms.platform.ids.Ids.prefixed("xfer")).param("s", r.sku()).param("f", r.fromNode()).param("to", r.toNode())
+                .param("q", r.qty()).param("sa", r.splitsAvoided()).param("c", r.cost()).param("ss", r.splitSavings()).param("cur", r.currency())
+                .param("at", Timestamp.from(r.generatedAt())).update();
+        }
+    }
+
+    public void closeTransfers(String sku, Instant at) {
+        jdbc.sql("update inventory_transfer_recommendation set status = 'CLOSED', closed_at = :at where tenant_id = :t and sku = :s and status = 'OPEN'")
+            .param("at", Timestamp.from(at)).param("t", t()).param("s", sku).update();
+    }
+
+    public List<TransferRecommender.TransferRecommendation> openTransfers() {
+        return jdbc.sql("""
+            select sku, from_node, to_node, qty, splits_avoided, cost, split_savings, currency, generated_at from inventory_transfer_recommendation
+            where tenant_id = :t and status = 'OPEN' order by sku, qty desc
+            """).param("t", t())
+            .query((rs, i) -> new TransferRecommender.TransferRecommendation(rs.getString("sku"), rs.getString("from_node"), rs.getString("to_node"), rs.getInt("qty"),
+                rs.getInt("splits_avoided"), rs.getBigDecimal("cost"), rs.getBigDecimal("split_savings"), rs.getString("currency"), rs.getTimestamp("generated_at").toInstant()))
+            .list();
+    }
+
     public Optional<BackorderStat> backorderStat(String sku) {
         return jdbc.sql("select sku, converted, cancelled from inventory_backorder_stat where tenant_id = :t and sku = :s")
             .param("t", t()).param("s", sku).query((rs, i) -> new BackorderStat(rs.getString(1), rs.getInt(2), rs.getInt(3))).optional();

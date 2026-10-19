@@ -1,6 +1,7 @@
 package ai.intentoms.sourcing.learning;
 
 import ai.intentoms.decision.record.DecisionRecordRepository;
+import ai.intentoms.learning.event.LearningEvents;
 import ai.intentoms.learning.governance.GovernedLearner;
 import ai.intentoms.learning.governance.LearnerDescriptor;
 import ai.intentoms.learning.governance.LearnerGovernance;
@@ -43,7 +44,11 @@ import java.util.Map;
  * whose higher values go with higher reward (positive correlation) gains weight, a negatively correlated one loses
  * it, each by at most {@code maxStep} per proposal, and the vector is renormalised to sum to 1. The result is a
  * {@code WeightChange} proposal (T1) on {@code config:sourcing.weights}, with the evidence in its hypothesis; it is
- * simulated, approved and applied through the normal promotion gate, never written directly.
+ * approved and applied through the normal promotion gate, never written directly.
+ *
+ * <p>Validated by replay ({@link SourcingWeightReplay}): every recorded order's considered plans are re-scored under the
+ * proposed weights, and the orders whose chosen plan would change are scored with a reward model fitted on the chosen
+ * plans. That report, with its 95% interval, is the proposal's evaluation ({@code plan_rescoring_replay}).
  */
 @Component
 public class SourcingWeightLearner implements GovernedLearner {
@@ -59,13 +64,16 @@ public class SourcingWeightLearner implements GovernedLearner {
     private final SourcingSettings settings;
     private final DecisionRecordRepository decisionRecords;
     private final LearnerGovernance governance;
+    private final LearningEvents events;
 
+    @Value("${oms.learning.fs04.replay-orders:1000}") private int replayOrders = 1000;
     @Value("${oms.learning.fs04.window-days:60}") private int windowDays = 60;
     @Value("${oms.learning.fs04.min-samples:50}") private int minSamples = 50;
     @Value("${oms.learning.fs04.max-step:0.05}") private double maxStep = 0.05;
 
     public SourcingWeightLearner(SourcingPlanRepository plans, EpisodeRepository episodes, ProposalRepository proposals, HypothesisRepository hypotheses,
-                                 SourcingSettings settings, DecisionRecordRepository decisionRecords, LearnerGovernance governance) {
+                                 SourcingSettings settings, DecisionRecordRepository decisionRecords, LearnerGovernance governance, LearningEvents events) {
+        this.events = events;
         this.plans = plans;
         this.episodes = episodes;
         this.proposals = proposals;
@@ -92,12 +100,14 @@ public class SourcingWeightLearner implements GovernedLearner {
         governance.recordRun(KEY);
         if (proposals.existsOpenFor(TARGET)) return 0;
         List<double[]> rows = new ArrayList<>(); // cost, time, soft, split, reward
+        Map<String, Double> rewardByOrder = new LinkedHashMap<>();
         for (var e : plans.chosenComponentsSince(Instant.now().minus(Duration.ofDays(windowDays)), 5_000)) {
             Double reward = episodes.forOrder(e.getKey()).stream().filter(ep -> SoftScorer.DECISION.equals(ep.decisionName()) && ep.reward() != null)
                 .map(Episode::reward).findFirst().orElse(null);
             if (reward == null) continue;
             Map<String, Double> c = e.getValue();
             rows.add(new double[]{c.get("cost"), c.get("time"), c.get("soft"), c.get("split"), reward});
+            rewardByOrder.put(e.getKey(), reward);
         }
         if (rows.size() < minSamples) return 0;
         Map<String, Double> current = new LinkedHashMap<>();
@@ -119,10 +129,36 @@ public class SourcingWeightLearner implements GovernedLearner {
             "Plan-score weights should follow the components that go with better outcomes.", Hypothesis.Status.DRAFTED, now);
         hypotheses.insert(h);
         PolicyChangeset cs = new PolicyChangeset(new ArtifactRef("config", SourcingConfigKeys.WEIGHTS), 0, changes, h.hypothesisId(), PolicyChangeset.RiskTier.T1);
-        proposals.insert(new Proposal(Ids.prefixed("prop"), cs, h.hypothesisId(), PolicyChangeset.RiskTier.T1, ProposalStatus.DRAFT, null, null,
+        String proposalId = Ids.prefixed("prop");
+        proposals.insert(new Proposal(proposalId, cs, h.hypothesisId(), PolicyChangeset.RiskTier.T1, ProposalStatus.DRAFT, null, null,
             Actor.system(KEY).ref(), now, now, null, null, null, null, null, null, null, null));
-        log.info("FS-04 proposal for {}: {} -> {}", TARGET, current, proposed);
+        Map<String, Object> report = new LinkedHashMap<>(SourcingWeightReplay.replay(replayOrders(rewardByOrder), current, proposed));
+        report.put("changeTypes", List.of("WeightChange"));
+        report.put("evaluatedAt", now.toString());
+        proposals.markEvaluated(proposalId, report, now);
+        events.proposalEvaluated(proposalId, Actor.system(KEY), report);
+        log.info("FS-04 proposal for {}: {} -> {} (replay lift {})", TARGET, current, proposed, report.get("liftEstimate"));
         return 1;
+    }
+
+    /** The recorded orders to replay: every considered plan with its components, the chosen one marked, and the reward. */
+    @SuppressWarnings("unchecked")
+    private List<SourcingWeightReplay.Order> replayOrders(Map<String, Double> rewardByOrder) {
+        List<SourcingWeightReplay.Order> out = new ArrayList<>();
+        for (var e : rewardByOrder.entrySet()) {
+            if (out.size() >= replayOrders) break;
+            List<SourcingWeightReplay.Plan> considered = new ArrayList<>();
+            for (SourcingPlanRepository.Row row : plans.forOrder(e.getKey())) {
+                Object explain = row.plan().get("explain");
+                Object comps = explain instanceof Map<?, ?> m ? m.get("components") : null;
+                if (!(comps instanceof Map<?, ?> cm)) continue;
+                Map<String, Double> c = new LinkedHashMap<>();
+                for (String k : SourcingWeightReplay.COMPONENTS) if (cm.get(k) instanceof Number n) c.put(k, n.doubleValue());
+                considered.add(new SourcingWeightReplay.Plan(row.id(), row.policy(), c, row.chosen()));
+            }
+            out.add(new SourcingWeightReplay.Order(e.getKey(), considered, e.getValue()));
+        }
+        return out;
     }
 
     /** Pearson correlation of each component with the reward; 0 when either has no spread. */

@@ -45,6 +45,10 @@ import java.util.Optional;
  * people overrode, never the raw input. Every change it returns is re-validated against the live artifact (§6.3, §11
  * "hallucinated lever"): a threshold must quote the live value, a retired rule must exist, and the whole changeset applied
  * to the live YAML must lint clean, so an invalid CEL expression never becomes a proposal.
+ *
+ * <p>Without a model key, or once the monthly learning budget is spent, the {@link TemplateAuthor} writes what a
+ * hypothesis states precisely (a rule people agreed on, a rule to retire, an abuse rule, an allow-list change), labelled
+ * as template output. The model is always preferred when it is available.
  */
 @Service
 public class AuthorService {
@@ -63,9 +67,12 @@ public class AuthorService {
     private final ProposalRepository proposals;
     private final LearningEvents events;
     private final LearningLlmAudit audit;
+    private final TemplateAuthor template;
 
     public AuthorService(CopilotLlmClient llm, PromptTemplates templates, DecisionStudioService decisions, DecisionDefinitionRepository definitions,
-                         DecisionRecordRepository decisionRecords, HypothesisRepository hypotheses, ProposalRepository proposals, LearningEvents events, LearningLlmAudit audit) {
+                         DecisionRecordRepository decisionRecords, HypothesisRepository hypotheses, ProposalRepository proposals, LearningEvents events, LearningLlmAudit audit,
+                         TemplateAuthor template) {
+        this.template = template;
         this.llm = llm;
         this.templates = templates;
         this.decisions = decisions;
@@ -89,7 +96,8 @@ public class AuthorService {
     public Optional<Proposal> draft(String hypothesisId) {
         Hypothesis h = hypotheses.find(hypothesisId).orElseThrow(() -> new ValidationException("Hypothesis " + hypothesisId + " not found"));
         if (h.status() != Hypothesis.Status.OPEN) return Optional.empty();
-        if (!llm.available()) { log.info("Author skipped: no copilot model key configured"); return Optional.empty(); }
+        if (TemplateAuthor.allowList(h)) return template.draft(h); // a config list change: exact, no model needed
+        if (!llm.available()) { log.info("Author: no copilot model key configured, using the template author"); return template.draft(h); }
         String leverTarget = leverTarget(h);
         ArtifactRef ref;
         try { ref = ArtifactRef.parse(leverTarget == null ? "" : leverTarget); }
@@ -99,8 +107,8 @@ public class AuthorService {
         if (live == null) return Optional.empty();
         Map<String, Object> target = currentState(live);
         if (!audit.withinBudget("author", FEATURE, "hypothesis", hypothesisId, LearningSchemas.CHANGESET, PROMPT)) {
-            log.info("Author skipped {}: monthly learning LLM budget reached", hypothesisId);
-            return Optional.empty();
+            log.info("Author: monthly learning LLM budget reached for {}, using the template author", hypothesisId);
+            return template.draft(h);
         }
 
         Map<String, Object> hyp = new LinkedHashMap<>();

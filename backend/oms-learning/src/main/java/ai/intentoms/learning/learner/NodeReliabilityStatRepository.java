@@ -9,15 +9,21 @@ import java.util.List;
 import java.util.Map;
 
 /** Beta-binomial sufficient statistics per node x sku_class x day_part (FS-02). Incremental: one row update per
- * observed delivery/reject, no full-history replay needed to get today's posterior mean. */
+ * observed pick/delivery/reject, no full-history replay needed to get today's posterior mean. With a half-life, every
+ * update first fades the evidence already held by 0.5^(days since the last update / half-life), so the posterior
+ * follows recent behaviour and a node recovers from an old run of rejects (FS-06). */
 @Repository
 public class NodeReliabilityStatRepository {
     private final JdbcClient jdbc;
     public NodeReliabilityStatRepository(JdbcClient jdbc) { this.jdbc = jdbc; }
 
     @Transactional
-    public void recordOnTime(String nodeId, String skuClass, String dayPart, boolean onTime) {
+    public void recordOnTime(String nodeId, String skuClass, String dayPart, boolean onTime) { recordOnTime(nodeId, skuClass, dayPart, onTime, 0); }
+
+    @Transactional
+    public void recordOnTime(String nodeId, String skuClass, String dayPart, boolean onTime, double halfLifeDays) {
         upsert(nodeId, skuClass, dayPart);
+        decay(nodeId, skuClass, dayPart, halfLifeDays);
         String col = onTime ? "on_time_alpha" : "on_time_beta";
         jdbc.sql("update node_reliability_stat set " + col + " = " + col + " + 1, sample_size = sample_size + 1, updated_at = now() " +
             "where tenant_id = :t and node_id = :n and sku_class = :sc and day_part = :dp")
@@ -25,11 +31,28 @@ public class NodeReliabilityStatRepository {
     }
 
     @Transactional
-    public void recordReject(String nodeId, String skuClass, String dayPart, boolean rejected) {
+    public void recordReject(String nodeId, String skuClass, String dayPart, boolean rejected) { recordReject(nodeId, skuClass, dayPart, rejected, 0); }
+
+    @Transactional
+    public void recordReject(String nodeId, String skuClass, String dayPart, boolean rejected, double halfLifeDays) {
         upsert(nodeId, skuClass, dayPart);
+        decay(nodeId, skuClass, dayPart, halfLifeDays);
         String col = rejected ? "reject_alpha" : "reject_beta";
         jdbc.sql("update node_reliability_stat set " + col + " = " + col + " + 1, updated_at = now() where tenant_id = :t and node_id = :n and sku_class = :sc and day_part = :dp")
             .param("t", TenantContext.require()).param("n", nodeId).param("sc", skuClass).param("dp", dayPart).update();
+    }
+
+    /** Fades the evidence (counts above the Beta(1,1) prior) by the time since the row was last updated; 0 = no decay. */
+    private void decay(String nodeId, String skuClass, String dayPart, double halfLifeDays) {
+        if (halfLifeDays <= 0) return;
+        jdbc.sql("""
+            update node_reliability_stat set
+              on_time_alpha = 1 + (on_time_alpha - 1) * f.k, on_time_beta = 1 + (on_time_beta - 1) * f.k,
+              reject_alpha = 1 + (reject_alpha - 1) * f.k, reject_beta = 1 + (reject_beta - 1) * f.k
+            from (select power(0.5, greatest(0, extract(epoch from (now() - updated_at))) / 86400.0 / :hl) as k
+                  from node_reliability_stat where tenant_id = :t and node_id = :n and sku_class = :sc and day_part = :dp) f
+            where tenant_id = :t and node_id = :n and sku_class = :sc and day_part = :dp and f.k < 0.999999
+            """).param("hl", halfLifeDays).param("t", TenantContext.require()).param("n", nodeId).param("sc", skuClass).param("dp", dayPart).update();
     }
 
     private void upsert(String nodeId, String skuClass, String dayPart) {

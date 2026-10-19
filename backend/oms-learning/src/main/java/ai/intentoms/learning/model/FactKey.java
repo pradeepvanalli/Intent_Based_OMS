@@ -30,10 +30,13 @@ public enum FactKey {
     FALSE_POSITIVE_RATE(TypedValue.NumberValue.class),       // FD-03: subject=DECISION, blocked orders later shown good / all blocked
     FEATURE_DRIFT_PSI(TypedValue.NumberValue.class),         // FD-07: subject=DECISION, population stability index of the input features this week vs baseline
     ADDRESS_REUSE_COUNT(TypedValue.NumberValue.class),       // FD-04: subject=ADDRESS (token), distinct customers using the address in 30 days
+    PROVIDER_LATENCY_MS(TypedValue.NumberValue.class),       // DF-05: subject=DECISION "<decision>:<provider>", p95 latency of its answers in the window
+    FRAUD_SIGNAL_RATE(TypedValue.NumberValue.class),         // FD-01: subject=DECISION "payment_risk|<signal>|<bucket>" or AGENT, labelled fraud rate at that signal level / of the agent's mandated orders
     // ---- fulfilment and promise (FS-*, CX-*)
     NODE_BACKLOG_BREACH_CURVE(TypedValue.ListValue.class),   // FS-05: subject=NODE, "<backlogUnits>:<breachProbability>" points
     NODE_REJECT_PENALTY(TypedValue.NumberValue.class),       // FS-06: subject=NODE, decaying penalty replacing sourcing.reject_penalty
-    LANE_CALIBRATION_OFFSET(TypedValue.NumberValue.class),   // CX-01: subject=LANE, observed minus stated on-time probability
+    LANE_CALIBRATION_OFFSET(TypedValue.NumberValue.class),   // CX-01: subject=LANE, observed on-time rate minus the probability before lane calibration
+    LANE_CALIBRATION_ERROR(TypedValue.NumberValue.class),    // CX-01: subject=LANE, residual after calibration: observed rate minus the probability orders were given
     PROMISE_BUFFER_DAYS(TypedValue.NumberValue.class),       // CX-02: subject=SEGMENT, buffer that maximises conversion x on-time
     WARN_EARLY_THRESHOLD(TypedValue.NumberValue.class),      // CX-03: subject=DECISION (sla_breach_risk), risk score that triggers a proactive notice
     APPEASEMENT_LEVEL(TypedValue.NumberValue.class),         // CX-04: subject=SEGMENT, credit amount that best retains within budget

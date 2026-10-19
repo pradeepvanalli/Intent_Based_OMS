@@ -29,12 +29,17 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * CI-01 / CI-03 / CI-04: four typed preference facts per customer, each from positive AND negative evidence.
+ * CI-01 / CI-03 / CI-04: four typed preference facts per customer and per segment, each from positive AND negative
+ * evidence.
  * <ul>
- *   <li>{@code SPLIT_TOLERANCE} (0..1): a split order (several shipments or packages) delivered without a WISMO/complaint
- *       contact is positive; a complaint on a split order is negative (and overrides an earlier positive for that order).</li>
+ *   <li>{@code SPLIT_TOLERANCE} (0..1): a split order (several shipments or packages) fully delivered without a WISMO or
+ *       complaint contact ({@code cs.wismo}, {@code cs.complaint}) is positive; a contact on a split order is negative
+ *       (and overrides an earlier positive for that order), and so is a return of a split order because part of it
+ *       arrived late or never arrived ({@code return.requested} with {@code arrived_late} / {@code not_received}).</li>
  *   <li>{@code SPEED_VS_COST} (-1..1): choosing an express / next-day / two-day ship method is evidence for speed, a
- *       standard / economy one for cost.</li>
+ *       standard / economy one for cost; so is a later change of ship method ({@code order.modified}): an upgrade to a
+ *       faster method counts for speed, a downgrade for cost. A return because the order {@code arrived_late} counts
+ *       for speed.</li>
  *   <li>{@code PICKUP_PREFERENCE} (bool): a pickup order (BOPIS, curbside, ship-to-store) is positive, a home-delivery order
  *       negative.</li>
  *   <li>{@code PREFERRED_CONTACT_CHANNEL} (text): the channel the customer contacts us on (each contact is a vote).</li>
@@ -43,7 +48,9 @@ import java.util.Set;
  * habits is not stuck with old behaviour; a daily sweep re-derives the facts of customers with no recent evidence so
  * they drift back toward their prior. Cold start (CI-03): every observation also counts for the customer's cohort
  * segment ({@code channel|basket|region}, e.g. {@code web|small|CA}), and a customer's value is their own evidence shrunk
- * toward their cohort's: {@code p = (pos + K * p_cohort) / (pos + neg + K)} with {@code K = 5}.
+ * toward their cohort's: {@code p = (pos + K * p_cohort) / (pos + neg + K)} with {@code K = 5}. The cohort's own
+ * value is written too, as a fact for subject SEGMENT {@code cohort:<channel|basket|region>} (Laplace-smoothed share,
+ * rewritten when it moves by a point or its evidence grows by a tenth).
  *
  * <p>Evidence is captured even while the learner is paused (it is data); facts are written only when the governance gate
  * lets the learner run.
@@ -72,7 +79,9 @@ public class CiPreferenceLearner implements EventSubscriber, GovernedLearner {
         this.jdbc = jdbc;
     }
 
-    @Override public List<String> eventTypePrefixes() { return List.of("order.captured", "order.shipped", "event.shipped", "order.delivered", "event.delivered", "cs.wismo"); }
+    @Override public List<String> eventTypePrefixes() {
+        return List.of("order.captured", "order.shipped", "event.shipped", "order.delivered", "event.delivered", "cs.wismo", "cs.complaint", "order.modified", "return.requested");
+    }
 
     @Override
     public void on(Event e) {
@@ -85,8 +94,10 @@ public class CiPreferenceLearner implements EventSubscriber, GovernedLearner {
             switch (e.type()) {
                 case "order.captured" -> onCaptured(e, p, orderId, at);
                 case "order.shipped", "event.shipped" -> { if (orderId != null) evidence.recordShipment(orderId, Math.max(1, num(p.get("packageCount"), 1))); }
-                case "order.delivered", "event.delivered" -> onDelivered(e, orderId, at);
-                case "cs.wismo" -> onContact(e, p, orderId, at);
+                case "order.delivered", "event.delivered" -> { if (!Boolean.FALSE.equals(p.get("allDelivered"))) onDelivered(e, orderId, at); }
+                case "cs.wismo", "cs.complaint" -> onContact(e, p, orderId, at);
+                case "order.modified" -> onModified(e, p, orderId, at);
+                case "return.requested" -> onReturn(e, p, orderId, at);
                 default -> {}
             }
         } catch (RuntimeException ex) {
@@ -126,6 +137,11 @@ public class CiPreferenceLearner implements EventSubscriber, GovernedLearner {
         if (ref.isEmpty()) return;
         evidence.recordComplaint(orderId);
         if (!ref.get().split()) return; // a contact on a single-package order says nothing about split tolerance
+        splitNegative(orderId, customer, cohort, at);
+    }
+
+    /** A split order the customer was unhappy with; replaces an earlier "happy split" count for the same order. */
+    private void splitNegative(String orderId, String customer, String cohort, Instant at) {
         boolean fresh = evidence.claimSplitEvidence(orderId, "neg");
         boolean flipped = !fresh && evidence.flipSplitEvidenceToNegative(orderId);
         if (fresh) observe(customer, cohort, FactKey.SPLIT_TOLERANCE, "neg", at);
@@ -137,6 +153,39 @@ public class CiPreferenceLearner implements EventSubscriber, GovernedLearner {
         }
     }
 
+    /** A later ship-method change: an upgrade to a faster method is evidence for speed, a downgrade for cost. */
+    private void onModified(Event e, Map<String, Object> p, String orderId, Instant at) {
+        String to = str(p.get("shipMethod")), from = str(p.get("fromShipMethod"));
+        if (orderId == null || to == null || from == null) return;
+        int delta = speedRank(to) - speedRank(from);
+        if (delta == 0 || speedRank(to) < 0 || speedRank(from) < 0) return;
+        Optional<CustomerEvidenceRepository.OrderRef> ref = evidence.order(orderId);
+        if (ref.isEmpty() || !evidence.claimEvent(e.id(), FactKey.SPEED_VS_COST.name())) return;
+        observe(ref.get().customerRef(), ref.get().cohort(), FactKey.SPEED_VS_COST, delta > 0 ? "pos" : "neg", at);
+    }
+
+    /** Returns: "arrived late" says speed mattered; a split order returned because part was late or missing is a bad split. */
+    private void onReturn(Event e, Map<String, Object> p, String orderId, Instant at) {
+        if (orderId == null) return;
+        Set<String> reasons = new java.util.HashSet<>();
+        if (str(p.get("reasonCode")) != null) reasons.add(str(p.get("reasonCode")).toLowerCase(Locale.ROOT));
+        if (p.get("lines") instanceof List<?> lines) for (Object l : lines) if (l instanceof Map<?, ?> m && str(m.get("reasonCode")) != null) reasons.add(str(m.get("reasonCode")).toLowerCase(Locale.ROOT));
+        Optional<CustomerEvidenceRepository.OrderRef> ref = evidence.order(orderId);
+        if (ref.isEmpty()) return;
+        String customer = ref.get().customerRef(), cohort = ref.get().cohort();
+        if (reasons.contains("arrived_late") && evidence.claimEvent(e.id(), FactKey.SPEED_VS_COST.name())) observe(customer, cohort, FactKey.SPEED_VS_COST, "pos", at);
+        if (ref.get().split() && (reasons.contains("arrived_late") || reasons.contains("not_received"))) splitNegative(orderId, customer, cohort, at);
+    }
+
+    /** 0 economy/standard, 1 two-day/express/priority, 2 next-day/overnight/same-day; -1 unknown. */
+    static int speedRank(String method) {
+        String m = method.toLowerCase(Locale.ROOT).replace('-', '_').replace(' ', '_');
+        if (m.contains("same_day") || m.contains("overnight") || m.contains("next_day") || m.equals("nextday") || m.equals("rush")) return 2;
+        if (m.contains("two_day") || m.equals("2day") || m.contains("express") || m.contains("priority")) return 1;
+        if (COST_METHODS.contains(m) || m.contains("standard") || m.contains("economy") || m.contains("ground")) return 0;
+        return -1;
+    }
+
     /** Adds one observation for the customer and their cohort, then re-derives the customer's fact. */
     void observe(String customer, String cohort, FactKey key, String option, Instant at) {
         double hl = halfLife();
@@ -145,6 +194,41 @@ public class CiPreferenceLearner implements EventSubscriber, GovernedLearner {
         if (!governance.begin(KEY).mayRun()) return;
         governance.recordRunThrottled(KEY);
         derive(customer, cohort, key, at);
+        if (cohort != null) deriveSegment(cohort, key, at);
+    }
+
+    /** The cohort's own value (CI-01 per segment): its decayed evidence, Laplace-smoothed toward 0.5. */
+    Optional<TypedValue> deriveSegment(String cohort, FactKey key, Instant at) {
+        Map<String, Double> w = evidence.weights(CustomerEvidenceRepository.SEGMENT, cohort, key.name(), halfLife(), at);
+        double n = w.values().stream().mapToDouble(v -> Math.max(0, v)).sum();
+        if (n <= 1e-9) return Optional.empty();
+        TypedValue value;
+        if (key == FactKey.PREFERRED_CONTACT_CHANNEL) {
+            value = new TypedValue.TextValue(preferredChannel(w, Map.of()));
+        } else {
+            double pos = Math.max(0, w.getOrDefault("pos", 0.0)), neg = Math.max(0, w.getOrDefault("neg", 0.0));
+            double p = (pos + 1) / (pos + neg + 2);
+            value = switch (key) {
+                case SPEED_VS_COST -> new TypedValue.NumberValue(round(2 * p - 1));
+                case PICKUP_PREFERENCE -> new TypedValue.BoolValue(p >= 0.5);
+                default -> new TypedValue.NumberValue(round(p));
+            };
+        }
+        String subject = segmentSubject(cohort);
+        int samples = (int) Math.round(n);
+        Optional<LearnedFact> current = facts.active(SubjectType.SEGMENT, subject, key);
+        if (current.isPresent() && !moved(current.get(), value, samples)) return Optional.of(current.get().value());
+        write(SubjectType.SEGMENT, subject, key, value, n / (n + SHRINKAGE_K), samples);
+        return Optional.of(value);
+    }
+
+    public static String segmentSubject(String cohort) { return "cohort:" + cohort; }
+
+    /** A segment fact is rewritten when its value moves by a point (or flips) or its evidence grows by a tenth. */
+    private static boolean moved(LearnedFact current, TypedValue value, int samples) {
+        if (samples >= Math.max(current.sampleSize() + 1, Math.ceil(current.sampleSize() * 1.1))) return true;
+        if (current.value() instanceof TypedValue.NumberValue a && value instanceof TypedValue.NumberValue b) return Math.abs(a.value() - b.value()) >= 0.01;
+        return !current.value().equals(value);
     }
 
     /** Recomputes one fact from decayed evidence; returns the value written, if any. */
@@ -165,7 +249,7 @@ public class CiPreferenceLearner implements EventSubscriber, GovernedLearner {
                 default -> new TypedValue.NumberValue(round(p));
             };
         }
-        write(customer, key, value, n / (n + SHRINKAGE_K), (int) Math.round(n));
+        write(SubjectType.CUSTOMER, customer, key, value, n / (n + SHRINKAGE_K), (int) Math.round(n));
         return Optional.of(value);
     }
 
@@ -186,13 +270,13 @@ public class CiPreferenceLearner implements EventSubscriber, GovernedLearner {
         return score.entrySet().stream().max(Map.Entry.comparingByValue()).map(Map.Entry::getKey).orElse("email");
     }
 
-    private void write(String customer, FactKey key, TypedValue value, double confidence, int n) {
-        Optional<LearnedFact> current = facts.active(SubjectType.CUSTOMER, customer, key);
+    private void write(SubjectType subjectType, String subject, FactKey key, TypedValue value, double confidence, int n) {
+        Optional<LearnedFact> current = facts.active(subjectType, subject, key);
         if (current.isPresent() && current.get().value().equals(value) && current.get().sampleSize() == n) return;
         Instant now = Instant.now();
-        int version = current.map(f -> f.version() + 1).orElseGet(() -> facts.history(SubjectType.CUSTOMER, customer, key, 1).stream().findFirst().map(f -> f.version() + 1).orElse(1));
-        facts.supersede(SubjectType.CUSTOMER, customer, key, now);
-        facts.insert(new LearnedFact(Ids.prefixed("fact"), SubjectType.CUSTOMER, customer, key, value, Math.min(1.0, confidence), n, KEY, version, now, null, now));
+        int version = current.map(f -> f.version() + 1).orElseGet(() -> facts.history(subjectType, subject, key, 1).stream().findFirst().map(f -> f.version() + 1).orElse(1));
+        facts.supersede(subjectType, subject, key, now);
+        facts.insert(new LearnedFact(Ids.prefixed("fact"), subjectType, subject, key, value, Math.min(1.0, confidence), n, KEY, version, now, null, now));
     }
 
     // ---- CI-04 decay sweep
@@ -271,9 +355,9 @@ public class CiPreferenceLearner implements EventSubscriber, GovernedLearner {
     @Override
     public LearnerDescriptor descriptor() {
         return LearnerDescriptor.of(KEY, "Customer preferences",
-                "Learns each customer's split tolerance, speed-versus-cost leaning, pickup preference and contact channel from what they do, fading old habits over time.",
+                "Learns each customer's and each segment's split tolerance, speed-versus-cost leaning, pickup preference and contact channel from what they do (complaints after splits, upgrades, returns), fading old habits over time.",
                 LearnerDescriptor.Loop.FAST, "CI-01, CI-03, CI-04")
-            .features("order.captured", "order.shipped", "order.delivered", "cs.wismo").feeds(CustomerFeatureFamilies.PREFERENCES);
+            .features("order.captured", "order.shipped", "order.delivered", "cs.wismo", "cs.complaint", "order.modified", "return.requested").feeds(CustomerFeatureFamilies.PREFERENCES);
     }
 
     @Override public boolean runnable() { return true; }

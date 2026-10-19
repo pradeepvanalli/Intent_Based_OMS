@@ -6,6 +6,7 @@ import ai.intentoms.decision.model.DecisionResult;
 import ai.intentoms.decision.model.Invocation;
 import ai.intentoms.decision.model.Layer;
 import ai.intentoms.decision.runtime.DecisionService;
+import ai.intentoms.learning.governance.LearningSubject;
 import ai.intentoms.learning.governance.ParameterResolver;
 import ai.intentoms.learning.hooks.NodeReliabilityFeatures;
 import ai.intentoms.learning.learner.BacklogBreachCurve;
@@ -135,7 +136,9 @@ public class BreachRiskScorer implements RiskLookup {
         List<String> signatures = new ArrayList<>(rows.size());
         List<OrderRisk> out = new ArrayList<>(rows.size());
         for (Map<String, Object> r : rows) {
-            Map<String, Object> input = buildInput(r, now, carrierOnTime);
+            // EX-04: learned values read for this order (backlog curves) are read for its customer, so a holdout
+            // customer stays on the static baseline.
+            Map<String, Object> input = LearningSubject.with(subjectOf(r), () -> buildInput(r, now, carrierOnTime));
             String signature = materialSignature(input);
             Instant scoredAt = OrderRiskRepository.ts(r.get("scored_at"));
             boolean unchanged = signature.equals(r.get("prev_signature")) && scoredAt != null && scoredAt.plus(rescore).isAfter(now);
@@ -154,7 +157,6 @@ public class BreachRiskScorer implements RiskLookup {
             batch.add(new Invocation(DECISION, input, DecisionOptions.live("order", (String) r.get("id"), ACTOR)));
         }
         if (batch.isEmpty()) return out;
-        ParameterResolver.Resolution warnAt = warnEarlyThreshold();
         List<DecisionResult> results = metrics.time("oms.monitoring.risk_decide", () -> decisions.decideAll(batch));
         for (int i = 0; i < decided.size(); i++) {
             Map<String, Object> r = decided.get(i);
@@ -178,6 +180,7 @@ public class BreachRiskScorer implements RiskLookup {
             }
             metrics.count("oms.monitoring.risk_scored", "level", level.key());
             Integer prevScore = r.get("prev_score") instanceof Number ps ? ps.intValue() : null;
+            ParameterResolver.Resolution warnAt = LearningSubject.with(subjectOf(r), this::warnEarlyThreshold);
             if (crossedWarnEarly(warnAt.value(), prevScore, score)) {
                 Map<String, Object> payload = new LinkedHashMap<>();
                 payload.put("score", score);
@@ -191,6 +194,10 @@ public class BreachRiskScorer implements RiskLookup {
             out.add(risk);
         }
         return out;
+    }
+
+    private static String subjectOf(Map<String, Object> r) {
+        return LearningSubject.routingKey("order", (String) r.get("id"), r.get("customer_ref"));
     }
 
     /** CX-03: warn once, when the score first reaches the threshold (not again while it stays above). */
