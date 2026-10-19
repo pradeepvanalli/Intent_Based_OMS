@@ -86,7 +86,8 @@ public class GoldenCandidateController {
         String notes = "Signed off by " + reviewer + " from " + h.evidence().size() + " agreeing human resolutions" + (body != null && body.notes() != null ? ": " + body.notes() : "");
         GoldenCase gc = new GoldenCase(def.evaluation().goldenSet(), caseId, source.input(), Map.of("value", typed(expected)), notes);
         golden.upsert(gc);
-        hypotheses.updateStatus(hypothesisId, Hypothesis.Status.DRAFTED);
+        // C-N3: signed off is done, not "drafted"; nothing waits on it any more.
+        hypotheses.updateStatus(hypothesisId, Hypothesis.Status.ACCEPTED);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("decision", decision);
         payload.put("goldenSet", gc.goldenSet());

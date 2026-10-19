@@ -290,7 +290,7 @@ export interface LearnedFact {
 export interface Hypothesis {
   hypothesisId: string; scope: Record<string, unknown>; targetMetric: string; expectedDirection: 'INCREASE' | 'DECREASE';
   lever: Record<string, unknown>; priorConfidence: number; evidence: string[]; rationale?: string | null;
-  status: 'OPEN' | 'DRAFTED' | 'REJECTED' | 'SUPERSEDED'; createdAt: string;
+  status: 'OPEN' | 'DRAFTED' | 'REJECTED' | 'SUPERSEDED' | 'ACCEPTED'; createdAt: string;
 }
 export interface ArtifactRef { type: string; name: string; }
 export type PolicyChange =

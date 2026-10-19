@@ -45,6 +45,8 @@ public class GoldenSetGrowthLearner implements GovernedLearner {
     public static final String KEY = "golden_set_growth";
     private static final Logger log = LoggerFactory.getLogger(GoldenSetGrowthLearner.class);
     private static final String HUMAN_RESOLUTION_LABEL = "human_resolution";
+    /** Key prefix of this learner's candidates (DF-04 uses its own). */
+    static final String GROUP_PREFIX = "golden:";
 
     private final DecisionDefinitionRepository definitions;
     private final DecisionRecordRepository decisionRecords;
@@ -123,9 +125,12 @@ public class GoldenSetGrowthLearner implements GovernedLearner {
 
     private boolean raiseIfNew(DecisionDefinition def, String situation, List<DecisionRecord> group) {
         String decisionName = def.name();
-        String refKey = decisionName + ":" + situation;
-        boolean already = hypotheses.byStatus("OPEN", 500).stream().anyMatch(h -> refKey.equals(h.lever().get("groupKey")))
-            || hypotheses.byStatus("DRAFTED", 500).stream().anyMatch(h -> refKey.equals(h.lever().get("groupKey")));
+        // Its own key and its own candidates only (C-N3): an override-to-rule candidate never blocks a golden case, nor
+        // the reverse. A signed-off candidate is ACCEPTED (its case is in the golden set, so it is a duplicate anyway).
+        String refKey = GROUP_PREFIX + decisionName + ":" + situation;
+        String legacyKey = decisionName + ":" + situation;
+        boolean already = java.util.stream.Stream.of("OPEN", "DRAFTED", "ACCEPTED").flatMap(st -> hypotheses.byStatus(st, 500).stream())
+            .anyMatch(h -> "add_golden_case".equals(h.lever().get("action")) && (refKey.equals(h.lever().get("groupKey")) || legacyKey.equals(h.lever().get("groupKey"))));
         if (already) return false;
 
         Map<String, Long> tally = group.stream().collect(Collectors.groupingBy(GoldenSetGrowthLearner::action, Collectors.counting()));

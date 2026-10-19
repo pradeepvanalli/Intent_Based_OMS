@@ -41,10 +41,17 @@ public final class HumanResolution {
         return SYSTEM;
     }
 
-    /** Who resolved, as {@link #PERSON}/{@link #AGENT}/{@link #SYSTEM}; labels written before the type was stored are judged by {@code resolvedBy}. */
+    /**
+     * Who resolved, as {@link #PERSON}/{@link #AGENT}/{@link #SYSTEM}. Labels written before the type was stored are
+     * judged by {@code resolvedBy} (or the older {@code by}); one that names nobody predates both and came from the Tasks
+     * page, so it counts as a person's.
+     */
     public static Optional<String> resolvedByType(DecisionRecord r) {
-        return label(r).map(l -> l.get("resolvedByType") != null && !String.valueOf(l.get("resolvedByType")).isBlank()
-            ? String.valueOf(l.get("resolvedByType")).toLowerCase(Locale.ROOT) : resolverType(l.get("resolvedBy") == null ? null : String.valueOf(l.get("resolvedBy"))));
+        return label(r).map(l -> {
+            if (l.get("resolvedByType") != null && !String.valueOf(l.get("resolvedByType")).isBlank()) return String.valueOf(l.get("resolvedByType")).toLowerCase(Locale.ROOT);
+            Object by = l.get("resolvedBy") != null ? l.get("resolvedBy") : l.get("by");
+            return by == null || String.valueOf(by).isBlank() ? PERSON : resolverType(String.valueOf(by));
+        });
     }
 
     /** True when a person (not an agent, not a job) resolved the task behind this label. */
