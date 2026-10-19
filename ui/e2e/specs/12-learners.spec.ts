@@ -104,10 +104,12 @@ test.describe('Learners', () => {
   });
 
   test('the paused learner explains why and offers Resume to an admin', async ({ pageAs }) => {
+    const tunerState = await ok<Learner>((await apiAs('admin')).get('/api/v1/learning/learners/fraud_threshold_tuner'));
+    expect(tunerState.pausedReason, 'the demo seed leaves the fraud tuner paused for low outcome coverage').toMatch(/^outcome coverage for address_risk is \d+% \(floor 80%\)$/);
     const page = await pageAs('admin');
     await page.goto('/learning?tab=learners');
     const tuner = page.getByTestId('learner-fraud_threshold_tuner');
-    await expect(tuner).toContainText('Paused: outcome coverage for address_risk is 45% (floor 80%)');
+    await expect(tuner).toContainText(`Paused: ${tunerState.pausedReason}`);
     await expect(tuner.getByRole('button', { name: 'Resume' })).toBeVisible();
     await expect(tuner.getByRole('button', { name: /^Run .* now$/ })).toHaveCount(0);
   });

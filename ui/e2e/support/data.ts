@@ -75,7 +75,8 @@ type OrderLine = { lineId: string; sku: string; qty: number; unitPrice: { amount
 export async function createOrder(api: APIRequestContext, opts: { ref?: string; lines?: OrderLine[]; tender?: Record<string, unknown> } = {}): Promise<string> {
   const ref = opts.ref ?? `e2e-${uid()}`;
   const lines = opts.lines ?? [{ lineId: '1', sku: 'TEE-BLK-M', qty: 1, unitPrice: { amount: 28.0, currency: 'USD' } }];
-  const total = lines.reduce((s, l) => s + l.qty * l.unitPrice.amount, 0) + 12;
+  // Generous enough to cover shipping and tax; the order takes what it needs.
+  const total = Math.round((lines.reduce((s, l) => s + l.qty * l.unitPrice.amount, 0) * 1.2 + 25) * 100) / 100;
   const body = {
     channel: 'web', channelOrderId: `E2E-${ref}`, orderType: 'standard_ship', customerRef: `cust-${ref}`,
     customer: { ref: `cust-${ref}`, name: 'E2E Shopper', email: `${ref}@example.com` }, lines,

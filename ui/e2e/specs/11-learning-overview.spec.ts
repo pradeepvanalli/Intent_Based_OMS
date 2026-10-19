@@ -11,7 +11,8 @@ test.describe('Learning overview', () => {
     const running = all.filter((l) => l.running).length;
     const waiting = (await proposals(api, 'DRAFT')).length + (await proposals(api, 'EVALUATED')).length + (await proposals(api, 'APPROVED')).length;
     const coverage = await ok<Record<string, number>>(api.get('/api/v1/learning/coverage'));
-    const lowest = Math.min(...Object.values(coverage));
+    const values = Object.values(coverage);
+    const healthy = values.filter((v) => v >= 0.8).length;
 
     const page = await pageAs('strategy');
     await page.goto('/learning');
@@ -22,8 +23,9 @@ test.describe('Learning overview', () => {
     await expect(page.getByText('Is learning helping?').first()).toBeVisible();
     await expect(page.getByRole('button', { name: /Changes waiting for you/ })).toContainText(String(waiting));
     await expect(page.getByRole('button', { name: /Learners running/ })).toContainText(`${running} of ${all.length}`);
-    await expect(page.getByText('Outcomes coming back').first()).toBeVisible();
-    await expect(page.locator('.learn-tiles')).toContainText(`${(lowest * 100).toFixed(0)}%`);
+    const outcomes = page.locator('.learn-tiles > *').filter({ hasText: 'Outcomes coming back' });
+    await expect(outcomes).toContainText(`${healthy} of ${values.length}`);
+    if (healthy < values.length) await expect(outcomes).toContainText('Address risk below 80%');
   });
 
   test('the lift table compares learning with the holdout in plain words', async ({ pageAs }) => {
