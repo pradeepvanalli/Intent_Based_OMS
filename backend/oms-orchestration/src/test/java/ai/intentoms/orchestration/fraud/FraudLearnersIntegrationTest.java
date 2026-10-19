@@ -190,4 +190,27 @@ class FraudLearnersIntegrationTest extends OrchestrationTestBase {
         assertThat(alert.get(0)).containsEntry("severity", "high");
         assertThat(String.valueOf(alert.get(0).get("body"))).contains("payment.velocity_1h").contains(FraudThresholdTuner.KEY);
     }
+
+    /** One labelled payment_risk decision made {@code daysAgo}, fraud confirmed by a chargeback or a matured "delivered". */
+    private void labelledAt(int daysAgo, boolean fraud) {
+        DecisionRecord r = paymentRisk(false, 0.9, input(0, 90.0), Instant.now().minus(Duration.ofDays(daysAgo)));
+        records.insert(r);
+        records.label(r.id(), "fraud_outcome", Map.of("confirmed", fraud, "kind", fraud ? "chargeback_fraud" : "delivered_no_chargeback", "provisional", !fraud));
+    }
+
+    @Test
+    void labelDriftComparesMaturedCohortsOnly() {
+        // This week's early chargebacks, with no goods known yet: not drift on their own.
+        for (int i = 0; i < 25; i++) labelledAt(3, true);
+        for (int i = 0; i < 30; i++) labelledAt(140, i < 3);    // baseline cohort: 10% fraud
+        for (int i = 0; i < 30; i++) labelledAt(124, i < 3);    // latest matured week: 10% fraud
+        assertThat(drift.checkTenant().pausedFor()).isNull();
+        assertThat(governance.gate(FraudThresholdTuner.KEY).mayRun()).isTrue();
+
+        // The latest matured week turns: 10% to 40% confirmed fraud.
+        for (int i = 0; i < 30; i++) labelledAt(123, i < 21);
+        FraudDriftMonitor.DriftReport report = drift.checkTenant();
+        assertThat(report.pausedFor()).startsWith("fraud label drift").contains("payment_risk");
+        assertThat(governance.gate(FraudThresholdTuner.KEY).mayRun()).isFalse();
+    }
 }

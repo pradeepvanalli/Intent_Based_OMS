@@ -2,6 +2,7 @@ package ai.intentoms.learning.promotion;
 
 import ai.intentoms.learning.event.LearningEvents;
 import ai.intentoms.learning.store.LearnedFactCache;
+import ai.intentoms.platform.json.Json;
 import ai.intentoms.platform.ledger.Actor;
 import ai.intentoms.platform.pii.PiiShreddedEvent;
 import ai.intentoms.platform.tenant.TenantContext;
@@ -12,7 +13,9 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -48,7 +51,7 @@ public class CryptoShredPropagation {
     public void onShred(PiiShreddedEvent e) {
         TenantContext.runAs(e.tenantId(), () -> {
             if (e.tenantWide()) purgeTenantCustomerFacts(e.by());
-            else purgeSubject(e.subjectRef(), e.by());
+            else purgeSubject(e.subjectRef(), e.pseudonym(), e.by());
         });
     }
 
@@ -61,19 +64,33 @@ public class CryptoShredPropagation {
      * Episodes of their orders stay: they hold order ids and reward numbers only.
      */
     @Transactional
-    public Map<String, Object> purgeSubject(String customerId, String by) {
+    public Map<String, Object> purgeSubject(String customerId, String by) { return purgeSubject(customerId, null, by); }
+
+    /**
+     * Facts can sit under either name: the raw reference (learned before the erasure) or the pseudonym that replaced it
+     * on orders (learned by an older build that did not check {@link ai.intentoms.learning.store.ErasedSubjects}). Both
+     * are purged, so a repeated erasure removes what was learned in between. The pseudonym comes with the event, or
+     * from {@code pii_erasure} when the purge is called directly.
+     */
+    @Transactional
+    public Map<String, Object> purgeSubject(String customerId, String pseudonym, String by) {
         String t = TenantContext.require();
-        int facts = jdbc.sql("delete from learned_fact where tenant_id = :t and subject_type = 'CUSTOMER' and subject_id = :c").param("t", t).param("c", customerId).update();
-        int evidence = jdbc.sql("delete from customer_preference_evidence where tenant_id = :t and subject_kind = 'customer' and subject_id = :c")
-            .param("t", t).param("c", customerId).update();
-        int orderRefs = jdbc.sql("delete from customer_order_ref where tenant_id = :t and customer_ref = :c").param("t", t).param("c", customerId).update();
-        jdbc.sql("delete from outcome o using episode e where o.tenant_id = :t and e.tenant_id = :t and o.episode_id = e.episode_id and e.subject_type = 'customer' and e.subject_id = :c")
-            .param("t", t).param("c", customerId).update();
-        int episodes = jdbc.sql("delete from episode where tenant_id = :t and subject_type = 'customer' and subject_id = :c").param("t", t).param("c", customerId).update();
+        List<String> names = new ArrayList<>(List.of(customerId));
+        String alias = pseudonym != null ? pseudonym : jdbc.sql("select pseudonym from pii_erasure where tenant_id = :t and subject_hash = :h")
+            .param("t", t).param("h", Json.sha256(Map.of("tenant", t, "subject", customerId))).query(String.class).optional().orElse(null);
+        if (alias != null && !alias.equals(customerId)) names.add(alias);
+        int facts = jdbc.sql("delete from learned_fact where tenant_id = :t and subject_type = 'CUSTOMER' and subject_id in (:c)").param("t", t).param("c", names).update();
+        int evidence = jdbc.sql("delete from customer_preference_evidence where tenant_id = :t and subject_kind = 'customer' and subject_id in (:c)")
+            .param("t", t).param("c", names).update();
+        int orderRefs = jdbc.sql("delete from customer_order_ref where tenant_id = :t and customer_ref in (:c)").param("t", t).param("c", names).update();
+        jdbc.sql("delete from outcome o using episode e where o.tenant_id = :t and e.tenant_id = :t and o.episode_id = e.episode_id and e.subject_type = 'customer' and e.subject_id in (:c)")
+            .param("t", t).param("c", names).update();
+        int episodes = jdbc.sql("delete from episode where tenant_id = :t and subject_type = 'customer' and subject_id in (:c)").param("t", t).param("c", names).update();
         Map<String, Object> extra = new LinkedHashMap<>();
         extra.put("evidenceDeleted", evidence);
         extra.put("orderRefsDeleted", orderRefs);
         extra.put("episodesDeleted", episodes);
+        extra.put("pseudonymPurged", alias != null);
         return finish("customer", facts, 0, by, extra);
     }
 

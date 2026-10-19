@@ -36,6 +36,15 @@ class CryptoShredPropagationIntegrationTest extends PostgresTestBase {
         facts.insert(new LearnedFact(Ids.prefixed("fact"), st, id, key, v, 0.7, 20, "test", 1, Instant.now(), null, Instant.now()));
     }
 
+    /** A fact written the way builds before the erased-subject check did: straight to the table. */
+    private void legacyFact(String customer) {
+        jdbc.sql("""
+            insert into learned_fact(fact_id, tenant_id, subject_type, subject_id, fact_key, value, confidence, sample_size, learner, version, valid_from, created_at)
+            values (:id, :t, 'CUSTOMER', :c, 'PICKUP_PREFERENCE', '{"type":"BoolValue","value":true}'::jsonb, 0.7, 20, 'legacy', 1, now(), now())
+            """).param("id", Ids.prefixed("fact")).param("t", TENANT).param("c", customer).update();
+        cache.invalidateAll();
+    }
+
     @Test
     void tokenizerShredDeletesCustomerAndAddressFactsAndRecountsSegments() {
         String customer = tokenizer.email("shred-me-" + Ids.shortId() + "@example.com");
@@ -70,5 +79,22 @@ class CryptoShredPropagationIntegrationTest extends PostgresTestBase {
         assertThat(result).containsEntry("customerFactsDeleted", 1);
         assertThat(facts.activeForSubject(SubjectType.CUSTOMER, gone)).isEmpty();
         assertThat(facts.activeForSubject(SubjectType.CUSTOMER, kept)).hasSize(1);
+    }
+
+    @Test
+    void repeatedErasureAlsoPurgesFactsLearnedUnderThePseudonym() {
+        String gone = "cust-alias-" + Ids.shortId();
+        String pseudonym = tokenizer.shredSubject(gone, "user:dpo").pseudonym();
+        // The repository now refuses facts for an erased subject (N2), so nothing new lands under the pseudonym ...
+        fact(SubjectType.CUSTOMER, pseudonym, FactKey.PICKUP_PREFERENCE, new TypedValue.BoolValue(true));
+        assertThat(facts.activeForSubject(SubjectType.CUSTOMER, pseudonym)).isEmpty();
+        // ... but an older build wrote them straight to the table after the first erasure.
+        legacyFact(pseudonym);
+        assertThat(facts.activeForSubject(SubjectType.CUSTOMER, pseudonym)).hasSize(1);
+        assertThat(tokenizer.shredSubject(gone, "user:dpo").firstTime()).isFalse();
+        assertThat(facts.activeForSubject(SubjectType.CUSTOMER, pseudonym)).isEmpty();
+        // A direct purge by the raw reference finds the pseudonym in pii_erasure.
+        legacyFact(pseudonym);
+        assertThat(propagation.purgeSubject(gone, "user:dpo")).containsEntry("customerFactsDeleted", 1).containsEntry("pseudonymPurged", true);
     }
 }

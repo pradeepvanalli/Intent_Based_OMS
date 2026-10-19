@@ -33,8 +33,10 @@ import java.util.Map;
  *       week against the prior four weeks (velocity, address/device/card linkage, billing mismatch, order value). The
  *       largest PSI is recorded as a {@code FEATURE_DRIFT_PSI} fact on the decision; above
  *       {@code oms.learning.fraud-drift-psi} (default 0.25, the usual "significant shift" line) the learners pause.</li>
- *   <li><b>Label drift.</b> For every fraud decision, a confirmed-fraud rate this week at least
- *       {@code oms.learning.fraud-drift-multiple} (default 2) times the baseline, or under half of it.</li>
+ *   <li><b>Label drift.</b> For every fraud decision, a confirmed-fraud rate in the latest matured week (decisions whose
+ *       chargeback or outcome window has closed) at least {@code oms.learning.fraud-drift-multiple} (default 2) times
+ *       the four weeks before it, or under half. Label drift therefore lags by the window; feature drift is the fast
+ *       signal.</li>
  * </ul>
  * Pausing goes through {@link LearnerGovernance}, with the reason, so autonomy levels are kept and a person resumes.
  * Every pause also raises a high-severity operator alert ({@code learning:fraud_drift:<tenant>}) through
@@ -95,8 +97,11 @@ public class FraudDriftMonitor {
         }
         for (String decision : FRAUD_DECISIONS) {
             if (reason != null) break;
-            Double baseline = confirmedRate(decision, baselineStart, weekAgo);
-            Double recent = confirmedRate(decision, weekAgo, now);
+            // Labels are compared on matured cohorts (FD-03): the latest week whose observation window has closed against
+            // the four weeks before it. Counting this week's early chargebacks without its goods would always look like drift.
+            Instant end = FraudLabels.cohortEnd(now, FraudLabels.windowDays(config, decision));
+            Double baseline = confirmedRate(decision, end.minus(Duration.ofDays(35)), end.minus(Duration.ofDays(7)), now);
+            Double recent = confirmedRate(decision, end.minus(Duration.ofDays(7)), end, now);
             if (baseline == null || recent == null || baseline < 0.01) continue;
             double ratio = recent / baseline;
             if (ratio >= driftMultiple || ratio <= 1.0 / driftMultiple)
@@ -178,15 +183,14 @@ public class FraudDriftMonitor {
             1.0, 0, "fraud_drift_monitor", prev.map(f -> f.version() + 1).orElse(1), now, null, now));
     }
 
-    @SuppressWarnings("unchecked")
-    private Double confirmedRate(String decision, Instant from, Instant to) {
+    /** Confirmed-fraud rate of decisions made in [from, to), from labels {@link FraudLabels#sampled} accepts; null under 20 labels. */
+    private Double confirmedRate(String decision, Instant from, Instant to, Instant now) {
         List<DecisionRecord> labelled = new ArrayList<>();
         for (int[] v : decisionRecords.activeVersions(decision, from)) labelled.addAll(decisionRecords.labelledBetween(decision, v[0], from, to));
-        Instant now = Instant.now();
-        int window = config.getInt(FraudLabels.WINDOW_KEY, FraudLabels.DEFAULT_WINDOW_DAYS);
-        List<Boolean> usable = labelled.stream().map(r -> FraudLabels.usable(r, now, window)).filter(java.util.Objects::nonNull).toList();
-        if (usable.size() < 20) return null;
-        long confirmed = usable.stream().filter(Boolean::booleanValue).count();
-        return (double) confirmed / usable.size();
+        int window = FraudLabels.windowDays(config, decision);
+        List<Boolean> sample = labelled.stream().map(r -> FraudLabels.sampled(r, now, window)).filter(java.util.Objects::nonNull).toList();
+        if (sample.size() < 20) return null;
+        long confirmed = sample.stream().filter(Boolean::booleanValue).count();
+        return (double) confirmed / sample.size();
     }
 }
