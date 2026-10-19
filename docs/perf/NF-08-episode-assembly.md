@@ -2,6 +2,14 @@
 
 NF-08: episode assembly keeps up with 10x the tenant's peak hourly order rate, measured in a published load test.
 
+
+## Latest recorded run (raw output committed)
+
+`docs/perf/NF-08-run-2026-10-19.txt` is the unedited output of `scripts/perf/episode-assembly.sh` (k6 summary plus the
+database check) on a fresh database: 181 orders at 1 order/s (10× a 360/h peak) for 3 minutes, 724 LIVE decisions,
+724 episodes, 0 unassembled, 0 s catch-up; order capture p95 50 ms, 0% failed requests. One app instance on a laptop,
+so this shows the mechanism keeps up locally; it is not a production-sized load test.
+
 ## How to run
 
 ```bash
