@@ -56,6 +56,21 @@ test('an order shipped in two parcels is delivered one parcel at a time', async 
   expect(lineStatus(v, '2')).toBe('delivered');
   expect(delivered()).toHaveLength(2);
   expect(delivered()[1].data).toMatchObject({ lineIds: ['2'], allDelivered: true });
+
+  // B-2: each fulfilment group's last parcel carries groupDelivered=true (earlier parcels of the same group false), so
+  // node and lane learners credit every group exactly once, whether the two lines shipped from one group or two.
+  const byGroup = new Map<string, Array<Record<string, unknown>>>();
+  for (const e of delivered()) {
+    const group = String(e.data?.fulfilmentGroupId);
+    byGroup.set(group, [...(byGroup.get(group) ?? []), e.data ?? {}]);
+  }
+  expect(byGroup.size, 'every delivery names its fulfilment group').toBeGreaterThan(0);
+  for (const [group, events] of byGroup) {
+    expect(events[events.length - 1].groupDelivered, `${group}: last parcel`).toBe(true);
+    for (const earlier of events.slice(0, -1)) expect(earlier.groupDelivered, `${group}: an earlier parcel`).toBe(false);
+  }
+  const liveGroups = v.fulfilmentGroups.filter((g) => !/rejected|cancelled/i.test(g.status)).map((g) => g.id).sort();
+  expect([...byGroup.keys()].sort()).toEqual(liveGroups);
   await page.reload();
   await expect(page.getByLabel('status Delivered').first()).toBeVisible();
   await expect(rows.filter({ hasText: second })).toContainText(/delivered/i);

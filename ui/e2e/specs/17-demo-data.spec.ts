@@ -1,6 +1,6 @@
 import { test, expect } from '../support/fixtures';
 import { apiAs } from '../support/api';
-import { ok, proposeLiveUse, seedStatus, uid } from '../support/data';
+import { liveDomains, ok, proposeLiveUse, seedStatus, uid } from '../support/data';
 
 /** Seeded reference data is complete, written as the demo-seed actor, and labelled wherever people see it. */
 test.describe('Demo reference data', () => {
@@ -60,6 +60,38 @@ test.describe('Demo reference data', () => {
     await expect(drawer.getByTestId('demo-badge')).toBeVisible();
     await expect(drawer).toContainText('Suggested by Confidence band tuner (demo)');
     await expect(drawer).not.toContainText('system:demo-seed');
+  });
+
+  test('every learned value the seed switched on fits its family\'s domain and has learned values behind it; what it left out is listed with the reason', async () => {
+    const api = await apiAs('strategy');
+    const s = await seedStatus(api) as Awaited<ReturnType<typeof seedStatus>> & { liveFamilies: string[]; skipped: Array<{ item: string; reason: string }> };
+    expect(Array.isArray(s.skipped), 'seed-status lists what was skipped').toBe(true);
+    for (const x of s.skipped) expect(x.reason, x.item).toBeTruthy();
+    const domains = new Map((await liveDomains(api)).map((d) => [d.family, d]));
+    const live = (await ok<Array<{ parameter: string; learnerKey: string; status: string; min?: number | null; max?: number | null; maxStep?: number | null }>>(
+      api.get('/api/v1/learning/live-parameters'))).filter((p) => p.status === 'LIVE' && s.liveFamilies.includes(p.parameter));
+    expect(live.length).toBeGreaterThanOrEqual(8);
+    for (const p of live) {
+      const d = domains.get(p.parameter)!;
+      expect(d, `${p.parameter} has a domain`).toBeTruthy();
+      if (d.kind === 'SWITCH') expect([p.min, p.max, p.maxStep].every((v) => v == null), `${p.parameter} is a switch: no range`).toBe(true);
+      if (d.kind === 'NUMBER') {
+        if (p.min != null) expect(p.min, `${p.parameter} min`).toBeGreaterThanOrEqual(d.min!);
+        if (p.max != null) expect(p.max, `${p.parameter} max`).toBeLessThanOrEqual(d.max!);
+        if (p.maxStep != null) expect(p.maxStep, `${p.parameter} max step`).toBeLessThanOrEqual(d.maxStepLimit!);
+      }
+    }
+    // Warn-early is a 0-4 breach-risk score; the default score is 1, so a range starting above it warns only real risk (audit B-1).
+    const warn = live.find((p) => p.parameter === 'monitoring.warn_early_threshold');
+    if (warn) expect(warn.min!).toBeGreaterThan(1);
+    // Learners that need matured or labelled history found it: fraud signal rates, a calibration curve, lane corrections, promise buffers.
+    const refs = (s.counts as { referenceFacts: Record<string, number> }).referenceFacts;
+    for (const key of ['FRAUD_SIGNAL_RATE', 'CALIBRATION_CURVE', 'LANE_CALIBRATION_OFFSET', 'PROMISE_BUFFER_DAYS', 'STOCK_AGE_DAYS', 'WARN_EARLY_THRESHOLD']) {
+      expect(refs[key], `seeded learners produced ${key}`).toBeGreaterThan(0);
+    }
+    expect(refs.fraudTunerDrafts, 'the fraud threshold tuner proposed from the matured cohort').toBeGreaterThan(0);
+    const fraud = await ok<Array<{ factKey: string; learner: string }>>(api.get('/api/v1/learning/facts', { params: { subjectType: 'DECISION', subjectId: 'payment_risk|velocity_1h|0' } }));
+    expect(fraud.find((f) => f.factKey === 'FRAUD_SIGNAL_RATE')?.learner).toBe('fraud_signals');
   });
 
   test('seeded rows wear a "Demo data" badge; anything a person creates does not', async ({ pageAs }) => {
