@@ -103,6 +103,34 @@ class OverrideToRuleStarvationIntegrationTest extends DecisionFabricTestBase {
         });
     }
 
+    /** The live repro: one customer's identical notes, a learned fact that moved half way, and other web orders people answered differently. */
+    @Test
+    void aSharedNoteKeepsTheMergedRuleSpecificEnoughToStayConsistent() {
+        String name = "gc_df04d_" + Ids.shortId().toLowerCase();
+        var d = studio.createDraft(name, probeYaml(name, null).replace("    - order.value\n", "    - order.value\n    - order.notes\n"));
+        studio.publish(name, d.version(), "live", true);
+        int v = d.version();
+        for (int i = 0; i < 13; i++) noted(name, v, 150, List.of("leave at the side door please"), "approve", "review");
+        for (int i = 0; i < 7; i++) noted(name, v, 160, List.of("leave at the side door please"), "approve", "review");
+        for (int i = 0; i < 4; i++) noted(name, v, 155, List.of(), "approve", "approve");
+        overrideToRule.sweepOnce();
+        assertThat(rulesFor(name)).singleElement().satisfies(h -> {
+            assertThat(h.lever()).containsEntry("resolutions", 20).containsEntry("situations", 2);
+            assertThat(String.valueOf(h.lever().get("when"))).contains("size(input.order.notes) == 1").contains("'leave at the side door please' in input.order.notes")
+                .contains("input.order.value >= 150 && input.order.value <= 160");
+        });
+    }
+
+    private void noted(String decision, int version, double value, List<String> notes, String modelValue, String chosen) {
+        String id = Ids.prefixed("dr");
+        String subject = "ord_" + Ids.shortId();
+        Map<String, Object> label = Map.of("value", chosen, "outcome", chosen.equals(modelValue) ? "accept" : "override", "resolvedBy", "user:ops", "resolvedByType", "person");
+        records.insert(new DecisionRecord(id, decision, version, Mode.LIVE, "order", subject, subject, Layer.L3_HUMAN, Band.ESCALATE, "escalate", modelValue,
+            Map.<String, Answer>of(), 0.4, "heuristic", "test", "hash_" + id, Map.of(), Map.of("order", Map.of("id", subject, "channel", "web", "value", value, "notes", notes)),
+            List.of(), List.of(), 10, 0, 0, true, null, "system:test", Map.of(), null, null, null, null, Map.of("human_resolution", label), Instant.now().minus(Duration.ofHours(2)),
+            Map.of(), List.of("approve", "review", "unclear"), "review", 1.0, version));
+    }
+
     @Test
     void agentsResolvingTheSameWayTwentyTimesDraftNoRule() {
         String name = installProbe("gc_df04c");

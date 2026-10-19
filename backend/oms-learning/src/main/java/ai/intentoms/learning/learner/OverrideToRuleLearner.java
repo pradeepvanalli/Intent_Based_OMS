@@ -154,7 +154,7 @@ public class OverrideToRuleLearner implements GovernedLearner {
                         values.stream().mapToDouble(v -> ((Number) v).doubleValue()).max().orElse(0)});
                 } else if (values.stream().distinct().count() == 1) {
                     Object v = values.get(0);
-                    if (v instanceof Boolean || (v instanceof String str && !str.startsWith("["))) equal.put(path, v);
+                    if (v instanceof Boolean || v instanceof String) equal.put(path, v); // a shared list compares as its rendered leaf
                 }
             }
             return new Condition(equal, range);

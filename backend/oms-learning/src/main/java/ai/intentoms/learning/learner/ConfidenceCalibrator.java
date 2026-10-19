@@ -120,8 +120,9 @@ public class ConfidenceCalibrator implements GovernedLearner {
      * state no model confidence. That includes escalated records (C-N2): a decision a person resolved was handed to them
      * because of its confidence, so it is stored as L3_HUMAN, but the record keeps the model's answer ({@code value},
      * also {@code details.modelAnswer}) and its confidence ({@code details.rawConfidence} when a curve had moved it), and
-     * those are exactly the observations calibration needs. An escalation because the model chose the escape option
-     * ("unclear") is not a confident answer and is left out, as is anything a person did not resolve (E3-N1).
+     * those are exactly the observations calibration needs. That includes an escape answer ("unclear"): the golden-set
+     * bins count it the same way (the person's answer says whether "unclear" was right). Anything a person did not
+     * resolve (an agent's or a job's completion, E3-N1) is left out.
      */
     List<Calibration.Observation> resolved(String name, int version) {
         Instant now = Instant.now();
@@ -137,13 +138,10 @@ public class ConfidenceCalibrator implements GovernedLearner {
         return out;
     }
 
-    /** L1/L2 answers, and L3 escalations of a model answer (not of the escape option). */
+    /** L1/L2 answers, and L3 escalations of a model answer (a provider answered; rules and defaults did not). */
     static boolean modelAnswered(DecisionRecord r) {
         if (r.layer() == Layer.L1_SYSTEM_ONE || r.layer() == Layer.L2_LLM) return true;
-        if (r.layer() != Layer.L3_HUMAN) return false;
-        Object reason = r.details() == null ? null : r.details().get("escalationReason");
-        if ("escape_option".equals(reason) || (r.reasonCodes() != null && r.reasonCodes().contains("escape_option"))) return false;
-        return r.provider() != null;
+        return r.layer() == Layer.L3_HUMAN && r.provider() != null;
     }
 
     /** The model's own answer: kept in {@code details.modelAnswer} when the applied value differs (an escalation, an explored arm). */
