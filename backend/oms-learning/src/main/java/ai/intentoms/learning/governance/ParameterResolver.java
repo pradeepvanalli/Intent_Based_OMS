@@ -17,21 +17,29 @@ import java.util.Optional;
  * learned parameter family is itself a promoted change through the EX-07 gate; once promoted, the fast loop's latest
  * value is served, clamped to the promoted range and at most {@code maxStep} away from the static value (GV-02). The
  * static value is served instead whenever there is no learned value yet, the family is not (or no longer) promoted,
- * or its learner is off, paused or at L0 (GV-03: kill switch reverts to the last stable value).
+ * its learner is off, paused or at L0 (GV-03: kill switch reverts to the last stable value), or the value is being
+ * read for a customer in the persistent holdout (EX-04: the holdout stays on the baseline, learned values included).
+ * The holdout is known from {@link LearningSubject} (set by the caller) or passed explicitly to the {@code ...For}
+ * methods.
  */
 @Component
 public class ParameterResolver {
     private final LiveParameterRepository live;
     private final LearnerGovernance governance;
     private final Metrics metrics;
+    private final org.springframework.beans.factory.ObjectProvider<HoldoutCheck> holdout;
     private final Cache<String, Optional<LiveParameterRepository.LiveParameter>> cache =
         Caffeine.newBuilder().expireAfterWrite(Duration.ofSeconds(10)).maximumSize(10_000).build();
 
-    public ParameterResolver(LiveParameterRepository live, LearnerGovernance governance, Metrics metrics) {
+    public ParameterResolver(LiveParameterRepository live, LearnerGovernance governance, Metrics metrics,
+                             org.springframework.beans.factory.ObjectProvider<HoldoutCheck> holdout) {
         this.live = live;
         this.governance = governance;
         this.metrics = metrics;
+        this.holdout = holdout;
     }
+
+    static final String HOLDOUT_REASON = "holdout customer: kept on the baseline (EX-04)";
 
     /** What was served and why, for the Why drawer and the decision record. {@code value} is null only when both
      * the static and the learned value are absent. */
@@ -55,11 +63,17 @@ public class ParameterResolver {
 
     /** {@code staticValue} may be null for a family with no configured default (the learned value is then additive). */
     public Resolution explain(String parameter, Double staticValue, Double learned) {
+        return explainFor(LearningSubject.current().orElse(null), parameter, staticValue, learned);
+    }
+
+    /** As {@link #explain}, for the subject named by {@code routingKey} ({@link LearningSubject#routingKey}). */
+    public Resolution explainFor(String routingKey, String parameter, Double staticValue, Double learned) {
         if (learned == null || learned.isNaN()) return fallback(parameter, staticValue, null, "no learned value yet");
         Optional<LiveParameterRepository.LiveParameter> row = liveRow(parameter);
         if (row.isEmpty() || !row.get().live()) return fallback(parameter, staticValue, learned, "not promoted for live use");
         LearnerGovernance.Gate gate = governance.gate(row.get().learnerKey());
         if (!gate.mayFeedLive()) return fallback(parameter, staticValue, learned, gate.mayRun() ? "learner is observe-only (L0)" : gate.reason());
+        if (inHoldout(routingKey)) return fallback(parameter, staticValue, learned, HOLDOUT_REASON);
         double v = learned;
         String reason = "promoted for live use";
         LiveParameterRepository.LiveParameter p = row.get();
@@ -73,9 +87,19 @@ public class ParameterResolver {
         return new Resolution(parameter, v, "LEARNED", reason, learned, staticValue);
     }
 
-    public boolean isLive(String parameter) {
+    public boolean isLive(String parameter) { return isLiveFor(LearningSubject.current().orElse(null), parameter); }
+
+    /** Whether the family is live for this subject: promoted, its learner may feed live, and the subject is not held out. */
+    public boolean isLiveFor(String routingKey, String parameter) {
         Optional<LiveParameterRepository.LiveParameter> row = liveRow(parameter);
-        return row.isPresent() && row.get().live() && governance.gate(row.get().learnerKey()).mayFeedLive();
+        return row.isPresent() && row.get().live() && governance.gate(row.get().learnerKey()).mayFeedLive() && !inHoldout(routingKey);
+    }
+
+    /** EX-04: whether this subject is in the persistent holdout (false when no subject is known). */
+    public boolean inHoldout(String routingKey) {
+        if (routingKey == null || routingKey.isBlank()) return false;
+        HoldoutCheck h = holdout.getIfAvailable();
+        return h != null && h.inHoldout(routingKey);
     }
 
     public void promote(String parameter, String learnerKey, Double min, Double max, Double maxStep, String proposalId, String by) {

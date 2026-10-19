@@ -117,6 +117,11 @@ public class ExperimentManager {
         Instant now = Instant.now();
         Duration duration = rule.get("durationDays") instanceof Number d ? Duration.ofHours(Math.round(d.doubleValue() * 24))
             : mode == ExperimentMode.SHADOW ? DEFAULT_SHADOW_DURATION : DEFAULT_CANARY_DURATION;
+        if (mode == ExperimentMode.CANARY) {
+            int minDays = rule.get("minDurationDays") instanceof Number m ? m.intValue() : 7;
+            if (minDays < 0) throw new ValidationException("minDurationDays cannot be negative");
+            if (duration.compareTo(Duration.ofDays(minDays)) < 0) duration = Duration.ofDays(minDays);
+        }
         Experiment e = new Experiment(Ids.prefixed("exp"), proposalId, mode, share, ExperimentStatus.RUNNING, now, now.plus(duration), rule, null, now,
             targetRef, decisionName, candidate, baseline, actorRef);
         if (!experiments.insert(e)) {
@@ -150,13 +155,21 @@ public class ExperimentManager {
         });
     }
 
-    /** Ends an experiment now with its measured result (shadow verdict or canary sequential test). */
+    /**
+     * Ends an experiment now with its measured result (shadow verdict or canary sequential test). EX-03: a canary
+     * completes only after its minimum duration ({@code minDurationDays}, default 7), so a lucky first day cannot
+     * decide it; stop it instead if it must end sooner.
+     */
     public Experiment complete(String experimentId, Actor by) {
         Experiment e = experiments.get(experimentId);
         if (e.status() != ExperimentStatus.RUNNING) throw new ConflictException("Experiment " + experimentId + " is " + e.status());
         if (e.mode() == ExperimentMode.HOLDOUT) throw new ConflictException("The persistent holdout does not complete; stop it explicitly");
+        if (e.mode() == ExperimentMode.CANARY && !pastMinimumDuration(e, Instant.now())) {
+            throw new ConflictException(String.format(java.util.Locale.ROOT, "This trial has run %.1f of its minimum %d days (EX-03); stop it instead if it has to end now",
+                Duration.between(e.startAt(), Instant.now()).toHours() / 24.0, minDurationDays(e)));
+        }
         Map<String, Object> result = measure(e);
-        finish(e, ExperimentStatus.COMPLETED, result, by);
+        finish(e, ExperimentStatus.COMPLETED, result, by, true);
         return experiments.get(experimentId);
     }
 
@@ -165,17 +178,35 @@ public class ExperimentManager {
         if (e.status() != ExperimentStatus.RUNNING) throw new ConflictException("Experiment " + experimentId + " is " + e.status());
         Map<String, Object> r = new LinkedHashMap<>(result == null ? Map.of() : result);
         r.putIfAbsent("stoppedBy", by.ref());
-        finish(e, status == null || status == ExperimentStatus.RUNNING ? ExperimentStatus.STOPPED : status, r, by);
+        finish(e, status == null || status == ExperimentStatus.RUNNING ? ExperimentStatus.STOPPED : status, r, by, true);
     }
 
-    private void finish(Experiment e, ExperimentStatus status, Map<String, Object> result, Actor by) {
+    /** Stops a canary because its change is being rolled back; the caller closes the proposal (EX-05 during rollout). */
+    public void stopForRollback(String experimentId, String reason, Actor by) {
+        Experiment e = experiments.get(experimentId);
+        if (e.status() != ExperimentStatus.RUNNING) return;
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("stoppedBy", by.ref());
+        r.put("reason", reason);
+        r.put("rolledBack", true);
+        finish(e, ExperimentStatus.STOPPED, r, by, false);
+    }
+
+    /** EX-03 minimum duration of a canary, from its stop rule (default 7 days). */
+    static int minDurationDays(Experiment e) { return intRule(e, "minDurationDays", 7); }
+
+    static boolean pastMinimumDuration(Experiment e, Instant now) {
+        return !now.isBefore(e.startAt().plus(Duration.ofDays(minDurationDays(e))));
+    }
+
+    private void finish(Experiment e, ExperimentStatus status, Map<String, Object> result, Actor by, boolean reopenProposal) {
         experiments.stop(e.experimentId(), status, result, Instant.now());
         router.invalidate();
         if (e.mode() == ExperimentMode.SHADOW && e.candidateVersion() != null) retireVersion(e.decisionName(), e.candidateVersion());
         if (status == ExperimentStatus.COMPLETED && e.mode() == ExperimentMode.SHADOW) proposals.mergeReport(e.proposalId(), "shadow", result);
         if (e.mode() == ExperimentMode.CANARY) {
             if (status == ExperimentStatus.COMPLETED) proposals.mergeReport(e.proposalId(), "canary", result);
-            reopenAfterCanary(e.proposalId(), result);
+            if (reopenProposal) reopenAfterCanary(e.proposalId(), result);
         }
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("proposalId", e.proposalId());
@@ -292,8 +323,10 @@ public class ExperimentManager {
                     experiments.updateResult(e.experimentId(), r);
                     Object verdict = ((Map<?, ?>) r.get("msprt")).get("verdict");
                     boolean decided = Msprt.Verdict.TREATMENT_BETTER.name().equals(verdict) || Msprt.Verdict.TREATMENT_WORSE.name().equals(verdict);
+                    // EX-03: the sequential test may stop a canary early, but never before its minimum duration.
+                    boolean earlyStopAllowed = pastMinimumDuration(e, now);
                     boolean expired = now.isAfter(e.startAt().plus(MAX_CANARY_DURATION)) || (e.endAt() != null && now.isAfter(e.endAt()) && !Msprt.Verdict.INSUFFICIENT_DATA.name().equals(verdict));
-                    if (decided || expired) { finish(e, ExperimentStatus.COMPLETED, r, sys); n++; }
+                    if ((decided && earlyStopAllowed) || expired) { finish(e, ExperimentStatus.COMPLETED, r, sys, true); n++; }
                 }
             } catch (RuntimeException ex) { log.warn("Experiment {} sweep step failed: {}", e.experimentId(), ex.toString()); }
         }

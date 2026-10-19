@@ -38,13 +38,18 @@ public class LearningDecisionHooks implements DecisionLearningHooks {
     @Override
     public Contribution contribute(String decision, Map<String, Object> input, DecisionOptions opts) {
         if (!governance.learningOn()) return Contribution.none(input);
-        Map<String, Object> copy = null;
         List<Map<String, Object>> used = new ArrayList<>();
-        for (FeatureContributor c : contributors.orderedStream().toList()) {
-            if (!c.appliesTo(decision)) continue;
-            if (copy == null) copy = deepCopy(input);
-            c.contribute(decision, copy, opts, used);
-        }
+        // EX-04: contributors read learned values through ParameterResolver, which keeps a holdout customer on the baseline.
+        String routingKey = opts == null ? null : ai.intentoms.learning.governance.LearningSubject.routingKey(opts.subjectType(), opts.subjectId(), opts.extraVars().get("customerRef"));
+        Map<String, Object> copy = ai.intentoms.learning.governance.LearningSubject.with(routingKey, () -> {
+            Map<String, Object> c0 = null;
+            for (FeatureContributor c : contributors.orderedStream().toList()) {
+                if (!c.appliesTo(decision)) continue;
+                if (c0 == null) c0 = deepCopy(input);
+                c.contribute(decision, c0, opts, used);
+            }
+            return c0;
+        });
         if (copy == null) return Contribution.none(input);
         // GV-07: whatever a contributor adds, a protected attribute never reaches a decision.
         ai.intentoms.learning.governance.FeatureAllowlist.stripAddedProtected(input, copy);

@@ -83,7 +83,10 @@ public class SourcingPolicyBandit implements GovernedLearner {
         long seed = RANDOM.nextLong();
         String sampled = gate.mayRun() ? sample(eligiblePolicies, weights, true, new Random(seed)) : null;
         double sampledP = sampled == null ? 0.0 : drawProbability(sampled, eligiblePolicies, weights, DEFAULT_EXPLORATION);
-        boolean acted = sampled != null && parameters.isLive(LIVE_PARAMETER);
+        // EX-04: a holdout customer always gets the default policy, so lift measures what the bandit adds.
+        String routingKey = ai.intentoms.learning.governance.LearningSubject.routingKey("order", orderId, context == null ? null : context.get("customerRef"));
+        boolean heldOut = parameters.inHoldout(routingKey);
+        boolean acted = sampled != null && !heldOut && parameters.isLiveFor(routingKey, LIVE_PARAMETER);
         String applied = acted ? sampled : defaultPolicy;
         double propensity = acted ? sampledP : 1.0;
 
@@ -101,6 +104,7 @@ public class SourcingPolicyBandit implements GovernedLearner {
         details.put("weights", weights);
         details.put("randomSeed", seed);
         details.put("mode", Mode.LIVE.name());
+        if (heldOut) details.put("experiment", Map.of("arm", "holdout"));
         if (sampled != null && !acted) details.put("shadow", Map.of("arm", sampled, "propensity", sampledP));
         List<String> arms = new ArrayList<>(eligiblePolicies);
         if (applied != null && !arms.contains(applied)) arms.add(applied);

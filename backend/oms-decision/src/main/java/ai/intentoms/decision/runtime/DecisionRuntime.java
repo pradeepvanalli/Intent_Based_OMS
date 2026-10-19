@@ -222,10 +222,15 @@ public class DecisionRuntime implements DecisionService {
         return new Resolution(selected, shadows);
     }
 
-    /** Experiments split by customer when the caller passes {@code customerRef} in the options, else by subject. */
+    /**
+     * Experiments split by customer: {@code customer:<ref>} when the caller passes {@code customerRef}, else
+     * {@code <subjectType>:<subjectId>}, which the learning layer resolves to the subject's customer (EX-03 / EX-04).
+     */
     private static String routingKey(DecisionOptions o) {
         Object c = o.extraVars().get("customerRef");
-        return c != null ? String.valueOf(c) : o.subjectId();
+        if (c != null && !String.valueOf(c).isBlank()) return "customer:" + c;
+        if (o.subjectId() == null || o.subjectId().isBlank()) return null;
+        return o.subjectType() == null || o.subjectType().isBlank() ? o.subjectId() : o.subjectType() + ":" + o.subjectId();
     }
 
     /** Resolved on first use, not in the constructor: the learning implementation may itself depend on decisions. */
