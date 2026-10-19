@@ -100,7 +100,7 @@ public class TemplateAuthor {
             null, null, null, null, null, null, null, null);
         proposals.insert(p);
         hypotheses.updateStatus(h.hypothesisId(), Hypothesis.Status.DRAFTED);
-        if ("add_rule".equals(h.lever().get("action"))) draftPromptGuidance(h, live);
+        if ("add_rule".equals(h.lever().get("action"))) draftPromptGuidance(h, live, ACTOR);
         log.info("Template author drafted {} from hypothesis {}: {}", p.proposalId(), h.hypothesisId(), changes);
         return Optional.of(p);
     }
@@ -178,8 +178,11 @@ public class TemplateAuthor {
         return proposals.find(p.proposalId()).or(() -> Optional.of(p));
     }
 
-    /** DF-06: a draft prompt version for the main question that states the guidance people agreed on. */
-    private void draftPromptGuidance(Hypothesis h, DecisionDefinition live) {
+    /**
+     * DF-06: a draft prompt version for the main question that states the guidance people agreed on, attributed to the
+     * author that wrote it ({@code system:template-author} or {@code system:author}).
+     */
+    void draftPromptGuidance(Hypothesis h, DecisionDefinition live, String author) {
         try {
             var main = live.main().orElse(null);
             String question = live.questions().entrySet().stream().filter(e -> e.getValue() == main).map(Map.Entry::getKey).findFirst().orElse(null);
@@ -187,7 +190,8 @@ public class TemplateAuthor {
             String base = main.effectiveInstructions() == null ? "" : main.effectiveInstructions().strip();
             String guidance = "Reviewers agreed (" + h.lever().getOrDefault("resolutions", "several") + " cases, " + pct(h.lever().get("agreement")) + "): when "
                 + h.lever().get("when") + ", the answer is \"" + h.lever().get("suggestedThen") + "\".";
-            prompts.draft(live.name(), question, base + "\n" + guidance, "Template author from hypothesis " + h.hypothesisId(), null);
+            String by = ACTOR.equals(author) ? "Template author" : "Author";
+            prompts.draft(live.name(), question, base + "\n" + guidance, by + " from hypothesis " + h.hypothesisId(), null, author);
         } catch (RuntimeException e) {
             log.info("Template author: no prompt draft for {}: {}", h.hypothesisId(), e.getMessage());
         }

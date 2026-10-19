@@ -27,6 +27,7 @@ class LearningPipelineIntegrationTest extends CopilotTestBase {
     @Autowired HypothesisRepository hypotheses;
     @Autowired ProposalRepository proposals;
     @Autowired TenantConfigStore config;
+    @Autowired ai.intentoms.decision.studio.PromptVersionService prompts;
 
     private String overrideHypothesis() {
         Hypothesis h = new Hypothesis(Ids.prefixed("hyp"), Map.of("decision", "return_risk"), "override_rate", Direction.DECREASE,
@@ -39,6 +40,28 @@ class LearningPipelineIntegrationTest extends CopilotTestBase {
     private static Map<String, Object> changeset(String expression) {
         return Map.of("targetType", "decision", "targetName", "return_risk", "tier", "T0", "motivatedBy", "People keep sending these returns to inspection",
             "changes", List.of(Map.of("type", "RuleAdd", "argsJson", LlmStubs.json(Map.of("decision", "return_risk", "expression", expression, "thenValue", "4", "reason", "repeat_claims")))));
+    }
+
+    /** DF-06 / C6: the LLM author's rule also becomes a draft prompt version, attributed to system:author. */
+    @Test
+    void theLlmAuthorsPromptDraftIsAttributedToTheAuthor() {
+        config.delete(LearningLlmAudit.BUDGET_KEY);
+        LLM.resetAll();
+        String when = "input.customer.history.not_received_claims >= 7";
+        Hypothesis h = new Hypothesis(Ids.prefixed("hyp"), Map.of("decision", "return_risk"), "override_rate", Direction.DECREASE,
+            Map.of("action", "add_rule", "decision", "return_risk", "groupKey", "return_risk:" + Ids.shortId(), "inputHash", "h", "suggestedThen", "4", "when", when,
+                "resolutions", 30, "agreement", 0.93),
+            0.9, List.of(), "30 overrides agreed on 4 when a customer has 7 or more not-received claims", Hypothesis.Status.OPEN, Instant.now());
+        hypotheses.insert(h);
+        LlmStubs.stub(LLM, "policy_changeset", changeset(when));
+
+        Proposal p = authorScheduler.runOnce().stream().filter(x -> h.hypothesisId().equals(x.hypothesisId())).findFirst().orElseThrow();
+        assertThat(p.createdBy()).isEqualTo(AuthorService.ACTOR);
+        assertThat(prompts.list("return_risk")).anySatisfy(v -> {
+            assertThat(v.status()).isEqualTo("draft");
+            assertThat(v.text()).contains(when);
+            assertThat(v.createdBy()).isEqualTo(AuthorService.ACTOR);
+        });
     }
 
     @Test

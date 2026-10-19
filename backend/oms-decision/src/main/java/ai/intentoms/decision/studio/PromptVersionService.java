@@ -53,12 +53,20 @@ public class PromptVersionService {
     public PromptVersion get(String decision, String question, int version) { return prompts.get(decision, question, version); }
 
     public PromptVersion draft(String decision, String question, String text, String reason, String ticket) {
+        return draft(decision, question, text, reason, ticket, null);
+    }
+
+    /**
+     * DF-06: a draft written by the system (the template or LLM author) is attributed to that system actor
+     * ({@code createdBy}), never to the person whose request happened to trigger the run; null means the caller.
+     */
+    public PromptVersion draft(String decision, String question, String text, String reason, String ticket, String createdBy) {
         DecisionDefinition live = live(decision);
         if (!live.questions().containsKey(question)) throw new ValidationException("Decision " + decision + " has no question '" + question + "'");
         if (text == null || text.isBlank()) throw new ValidationException("Prompt text is required");
         int v = prompts.nextVersion(decision, question);
         var now = time.now();
-        prompts.insert(new PromptVersion(decision, question, v, text.strip(), "draft", reason, ticket, null, null, null, authz.actorRef(), now, now, null));
+        prompts.insert(new PromptVersion(decision, question, v, text.strip(), "draft", reason, ticket, null, null, null, createdBy == null ? authz.actorRef() : createdBy, now, now, null));
         return prompts.get(decision, question, v);
     }
 
