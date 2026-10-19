@@ -104,7 +104,7 @@ step "6) A learned value goes live only through a governed change"
 # behind them before those without. Each range is in the family's own units and inside its domain (B-1, see
 # GET /api/v1/learning/live-parameters/domains): an on/off family such as the aged-stock tie-break takes no range at
 # all, and warn-early is a 0-4 breach-risk score.
-PROP=""
+PROP=""; COOLING=""
 call GET /api/v1/learning/live-parameters/domains "" "$STRATEGY_TOKEN"; must 200
 say "learned values have domains: $(field '"; ".join("%s = %s" % (x["family"], x["description"]) for x in d if x["family"] in ("sourcing.aged_stock_tiebreak", "monitoring.warn_early_threshold"))')"
 call GET /api/v1/learning/live-parameters "" "$STRATEGY_TOKEN"; must 200
@@ -121,34 +121,41 @@ for CANDIDATE in \
   RANGE=""; [ -n "$LO" ] && RANGE=",\"min\":$LO,\"max\":$HI,\"maxStep\":$STEP"
   call POST /api/v1/learning/live-parameters/proposals "{\"family\":\"$FAMILY\",\"learnerKey\":\"$LEARNER\"$RANGE,\"reason\":\"UC8: $WHY\"}" "$STRATEGY_TOKEN"
   if [ "$CODE" = 200 ] || [ "$CODE" = 201 ]; then PROP=$(field 'd["proposalId"]'); break; fi
-  if [ "$CODE" = 409 ]; then ok "$FAMILY was rolled back recently, so the same change cannot be re-proposed yet (409); trying the next one"; continue; fi
+  if [ "$CODE" = 409 ]; then COOLING="$COOLING $FAMILY"; ok "$FAMILY was rolled back recently, so the same change cannot be re-proposed yet (409); trying the next one"; continue; fi
   must 200 201
 done
-[ -n "$PROP" ] || { printf '\033[31m  ✗ every candidate family is cooling down or live; run on a fresh demo tenant\033[0m\n' >&2; exit 1; }
-ok "strategy lead drafted $PROP for $FAMILY ($(field 'd["status"]'))"
-call POST "/api/v1/learning/proposals/$PROP/evaluate" "" "$STRATEGY_TOKEN"; must 200
-say "replay: method $(field 'd["evaluationReport"].get("method")') · $(field '(d["evaluationReport"].get("reason") or d["evaluationReport"].get("note") or "")[:160]')"
-call POST "/api/v1/learning/proposals/$PROP/approve" '{}' "$STRATEGY_TOKEN"; must 400 409 422
-ok "the author cannot approve their own change ($CODE)"
-call POST "/api/v1/learning/proposals/$PROP/approve" '{}' "$OPS_TOKEN"; must 403
-ok "an ops analyst cannot approve learning changes (403)"
-call POST "/api/v1/learning/proposals/$PROP/approve" '{}'; must 200
-ok "admin approved ($(field 'd["status"]'), by $(field 'd["approvedBy"]'))"
-# A live-use family cannot be replayed, so promotion waives full evidence with a written reason (EX-07).
-call POST "/api/v1/learning/proposals/$PROP/promote" '{"overrideReason":"Live-use family: no counterfactual replay exists; bounded by range and max step"}'; must 200
-ok "promoted ($(field 'd["status"]'))"
-call GET /api/v1/learning/live-parameters "" "$STRATEGY_TOKEN"; must 200
-say "live families: $(field '", ".join("%s (%s, %s)" % (p["parameter"], p["status"], p["learnerKey"]) for p in d)')"
-call GET "/api/v1/learning/proposals/$PROP/card" "" "$STRATEGY_TOKEN"; must 200
-say "change card: $(field '"; ".join("%s: %s -> %s" % (x.get("key"), x.get("from"), x.get("to")) for x in (d.get("diff") or []))')"
-call GET "/api/v1/learning/lift?days=90" "" "$STRATEGY_TOKEN"; must 200
-say "lift vs holdout: $(field '"holdout running" if d.get("holdout") else "no holdout"') · $(field '"; ".join("%s %s" % (m["metric"], ("%+.3f" % m["lift"]) if m.get("lift") is not None else "n/a") for m in (d.get("metrics") or [])[:4])')"
+if [ -z "$PROP" ]; then
+  # A re-run on the same tenant: earlier runs promoted and rolled these back, and a rollback for cause holds the same
+  # change off for the cooldown (learning.rollback_cooldown_days, default 30). That refusal is the governance working.
+  [ -n "$COOLING" ] || { printf '\033[31m  ✗ every candidate family is already live; nothing left to switch on\033[0m\n' >&2; exit 1; }
+  ok "every candidate is live or cooling down after an earlier rollback (${COOLING# }); steps 6-7 already ran on this tenant"
+  say "to watch the promote and rollback again, start from a fresh demo tenant (scripts/try.sh --reset)"
+else
+  ok "strategy lead drafted $PROP for $FAMILY ($(field 'd["status"]'))"
+  call POST "/api/v1/learning/proposals/$PROP/evaluate" "" "$STRATEGY_TOKEN"; must 200
+  say "replay: method $(field 'd["evaluationReport"].get("method")') · $(field '(d["evaluationReport"].get("reason") or d["evaluationReport"].get("note") or "")[:160]')"
+  call POST "/api/v1/learning/proposals/$PROP/approve" '{}' "$STRATEGY_TOKEN"; must 400 409 422
+  ok "the author cannot approve their own change ($CODE)"
+  call POST "/api/v1/learning/proposals/$PROP/approve" '{}' "$OPS_TOKEN"; must 403
+  ok "an ops analyst cannot approve learning changes (403)"
+  call POST "/api/v1/learning/proposals/$PROP/approve" '{}'; must 200
+  ok "admin approved ($(field 'd["status"]'), by $(field 'd["approvedBy"]'))"
+  # A live-use family cannot be replayed, so promotion waives full evidence with a written reason (EX-07).
+  call POST "/api/v1/learning/proposals/$PROP/promote" '{"overrideReason":"Live-use family: no counterfactual replay exists; bounded by range and max step"}'; must 200
+  ok "promoted ($(field 'd["status"]'))"
+  call GET /api/v1/learning/live-parameters "" "$STRATEGY_TOKEN"; must 200
+  say "live families: $(field '", ".join("%s (%s, %s)" % (p["parameter"], p["status"], p["learnerKey"]) for p in d)')"
+  call GET "/api/v1/learning/proposals/$PROP/card" "" "$STRATEGY_TOKEN"; must 200
+  say "change card: $(field '"; ".join("%s: %s -> %s" % (x.get("key"), x.get("from"), x.get("to")) for x in (d.get("diff") or []))')"
+  call GET "/api/v1/learning/lift?days=90" "" "$STRATEGY_TOKEN"; must 200
+  say "lift vs holdout: $(field '"holdout running" if d.get("holdout") else "no holdout"') · $(field '"; ".join("%s %s" % (m["metric"], ("%+.3f" % m["lift"]) if m.get("lift") is not None else "n/a") for m in (d.get("metrics") or [])[:4])')"
 
-step "7) Roll it back: exactly what it replaced comes back"
-call POST "/api/v1/learning/promotions/$PROP/rollback" '{"reason":"UC8 demo: roll back after review"}'; must 200
-ok "rolled back ($(field 'd["status"]'))"
-call GET /api/v1/learning/live-parameters "" "$STRATEGY_TOKEN"; must 200
-say "$FAMILY is now $(FAMILY="$FAMILY" field 'next((p["status"] for p in d if p["parameter"]==__import__("os").environ["FAMILY"]), "absent")')"
+  step "7) Roll it back: exactly what it replaced comes back"
+  call POST "/api/v1/learning/promotions/$PROP/rollback" '{"reason":"UC8 demo: roll back after review"}'; must 200
+  ok "rolled back ($(field 'd["status"]'))"
+  call GET /api/v1/learning/live-parameters "" "$STRATEGY_TOKEN"; must 200
+  say "$FAMILY is now $(FAMILY="$FAMILY" field 'next((p["status"] for p in d if p["parameter"]==__import__("os").environ["FAMILY"]), "absent")')"
+fi
 
 step "8) Why did the split order go where it went? (the facts a decision used are on its record)"
 REC=$(decision_for "$SPLIT" order sourcing_node_score)
