@@ -66,8 +66,47 @@ class CustomerIntelligenceIntegrationTest extends PostgresTestBase {
         return event("order.captured", orderId, p);
     }
 
+    @Autowired ai.intentoms.learning.store.CustomerSubjects subjects;
+    @Autowired ai.intentoms.learning.store.CustomerSubjectRekey rekey;
+
+    /** A customer's fact: learned from events under the vault token (NF-07), or written directly under the id given. */
     private Object value(String customer, FactKey key) {
-        return facts.active(SubjectType.CUSTOMER, customer, key).map(f -> CustomerFactContext.scalar(f.value())).orElse(null);
+        return facts.active(SubjectType.CUSTOMER, subjects.key(customer), key).or(() -> facts.active(SubjectType.CUSTOMER, customer, key))
+            .map(f -> CustomerFactContext.scalar(f.value())).orElse(null);
+    }
+
+    @Test
+    void customerFactsAreKeyedByTheVaultTokenNeverTheRawReference() {
+        String c = "cust-tok-" + Ids.shortId(), o = "ord-" + Ids.shortId();
+        learner.on(captured(o, c, "express", "standard_ship", "WA", 1));
+        learner.on(event("cs.wismo", o, Map.of("orderId", o, "customerRef", c, "channel", "chat")));
+        String token = subjects.key(c);
+        assertThat(token).matches("cu_[0-9a-f]{20}").isEqualTo(tokenizer.token("cu", c)).as("the erasure pseudonym").isEqualTo(subjects.key(token));
+        for (FactKey k : FactKey.values()) assertThat(facts.active(SubjectType.CUSTOMER, c, k)).as("raw " + k).isEmpty();
+        assertThat(facts.active(SubjectType.CUSTOMER, token, FactKey.PREFERRED_CONTACT_CHANNEL)).isPresent();
+        assertThat(jdbc.sql("select count(*) from customer_preference_evidence where tenant_id = :t and subject_id = :c").param("t", TENANT).param("c", c).query(Long.class).single()).isZero();
+        assertThat(evidence.order(o)).hasValueSatisfying(r -> assertThat(r.customerRef()).isEqualTo(token));
+        List<String> payloads = jdbc.sql("select payload::text from event where tenant_id = :t and type = 'fact.learned' and payload->>'subjectType' = 'CUSTOMER' and payload->>'subjectId' in (:ids)")
+            .param("t", TENANT).param("ids", List.of(c, token)).query(String.class).list();
+        assertThat(payloads).isNotEmpty().allSatisfy(pl -> assertThat(pl).contains(token).doesNotContain(c).doesNotContain("\"value\""));
+    }
+
+    @Test
+    void rowsWrittenUnderARawReferenceAreReKeyedThroughTheTokenizer() {
+        String c = "cust-old-" + Ids.shortId(), o = "ord-" + Ids.shortId();
+        Instant now = Instant.now();
+        jdbc.sql("insert into learned_fact(fact_id, tenant_id, subject_type, subject_id, fact_key, value, confidence, sample_size, learner, version, valid_from, created_at) "
+            + "values (:id, :t, 'CUSTOMER', :c, 'SPLIT_TOLERANCE', '{\"type\":\"NumberValue\",\"value\":0.7}'::jsonb, 0.5, 3, 'ci_preference', 1, now(), now())")
+            .param("id", Ids.prefixed("fact")).param("t", TENANT).param("c", c).update();
+        evidence.add(CustomerEvidenceRepository.CUSTOMER, c, FactKey.SPLIT_TOLERANCE.name(), "pos", 2.0, 90, now);
+        jdbc.sql("insert into customer_order_ref(tenant_id, order_id, customer_ref, cohort) values (:t, :o, :c, 'web|single|WA')").param("t", TENANT).param("o", o).param("c", c).update();
+        assertThat(rekey.rekeyTenant()).isGreaterThanOrEqualTo(1);
+        String token = subjects.key(c);
+        assertThat(facts.active(SubjectType.CUSTOMER, c, FactKey.SPLIT_TOLERANCE)).isEmpty();
+        assertThat(facts.active(SubjectType.CUSTOMER, token, FactKey.SPLIT_TOLERANCE)).isPresent();
+        assertThat(evidence.weights(CustomerEvidenceRepository.CUSTOMER, token, FactKey.SPLIT_TOLERANCE.name(), 90, now).get("pos")).isCloseTo(2.0, within(1e-3));
+        assertThat(evidence.order(o)).hasValueSatisfying(r -> assertThat(r.customerRef()).isEqualTo(token));
+        assertThat(rekey.rekeyTenant()).as("idempotent").isZero();
     }
 
     @Test
@@ -80,7 +119,7 @@ class CustomerIntelligenceIntegrationTest extends PostgresTestBase {
         learner.on(second);   // redelivered: no extra evidence
         learner.on(captured(o3, c, "standard", "bopis", "CA", 2));
 
-        assertThat(evidence.weights(CustomerEvidenceRepository.CUSTOMER, c, FactKey.SPEED_VS_COST.name(), 90, Instant.now()))
+        assertThat(evidence.weights(CustomerEvidenceRepository.CUSTOMER, subjects.key(c), FactKey.SPEED_VS_COST.name(), 90, Instant.now()))
             .hasEntrySatisfying("pos", w -> assertThat(w).isCloseTo(2.0, within(1e-3)))
             .hasEntrySatisfying("neg", w -> assertThat(w).isCloseTo(1.0, within(1e-3)));
         assertThat((Double) value(c, FactKey.SPEED_VS_COST)).isGreaterThan(0.0).isLessThan(1.0);
@@ -93,17 +132,17 @@ class CustomerIntelligenceIntegrationTest extends PostgresTestBase {
         assertThat((Double) value(c, FactKey.SPLIT_TOLERANCE)).isGreaterThan(0.5);
         learner.on(event("order.shipped", o2, Map.of("orderId", o2, "packageCount", 2)));
         learner.on(event("cs.wismo", o2, Map.of("orderId", o2, "customerRef", c, "channel", "sms")));
-        Map<String, Double> split = evidence.weights(CustomerEvidenceRepository.CUSTOMER, c, FactKey.SPLIT_TOLERANCE.name(), 90, Instant.now());
+        Map<String, Double> split = evidence.weights(CustomerEvidenceRepository.CUSTOMER, subjects.key(c), FactKey.SPLIT_TOLERANCE.name(), 90, Instant.now());
         assertThat(split.get("pos")).isCloseTo(1.0, within(1e-3));
         assertThat(split.get("neg")).isCloseTo(1.0, within(1e-3));
         assertThat(value(c, FactKey.PREFERRED_CONTACT_CHANNEL)).isEqualTo("sms");
-        LearnedFact tolerance = facts.active(SubjectType.CUSTOMER, c, FactKey.SPLIT_TOLERANCE).orElseThrow();
+        LearnedFact tolerance = facts.active(SubjectType.CUSTOMER, subjects.key(c), FactKey.SPLIT_TOLERANCE).orElseThrow();
         assertThat(tolerance.sampleSize()).isEqualTo(2);
         assertThat(tolerance.learner()).isEqualTo(CiPreferenceLearner.KEY);
 
         // A complaint after a delivered split replaces that order's positive evidence.
         learner.on(event("cs.wismo", o1, Map.of("orderId", o1, "channel", "email")));
-        Map<String, Double> after = evidence.weights(CustomerEvidenceRepository.CUSTOMER, c, FactKey.SPLIT_TOLERANCE.name(), 90, Instant.now());
+        Map<String, Double> after = evidence.weights(CustomerEvidenceRepository.CUSTOMER, subjects.key(c), FactKey.SPLIT_TOLERANCE.name(), 90, Instant.now());
         assertThat(after.get("pos")).isCloseTo(0.0, within(1e-3));
         assertThat(after.get("neg")).isCloseTo(2.0, within(1e-3));
         assertThat((Double) value(c, FactKey.SPLIT_TOLERANCE)).isLessThan(0.5);
@@ -138,7 +177,7 @@ class CustomerIntelligenceIntegrationTest extends PostgresTestBase {
 
         DecisionLearningHooks.Contribution notLive = hooks.contribute("split_acceptability", input, opts);
         assertThat(notLive.factsUsed()).anySatisfy(u -> {
-            assertThat(u).containsEntry("factKey", "SPEED_VS_COST").containsEntry("source", "STATIC").containsEntry("subjectId", c);
+            assertThat(u).containsEntry("factKey", "SPEED_VS_COST").containsEntry("source", "STATIC").containsEntry("subjectId", subjects.key(c));
         });
         assertThat((Map<String, Object>) notLive.input().get("customer")).doesNotContainKey("facts");
 
@@ -192,7 +231,7 @@ class CustomerIntelligenceIntegrationTest extends PostgresTestBase {
         // A complaint on a split order counts against split tolerance (defect 24: it used to be ignored).
         learner.on(event("order.shipped", o1, Map.of("orderId", o1, "packageCount", 2)));
         learner.on(event("cs.complaint", o1, Map.of("orderId", o1, "customerRef", c, "channel", "chat", "reason", "complaint")));
-        assertThat(evidence.weights(CustomerEvidenceRepository.CUSTOMER, c, FactKey.SPLIT_TOLERANCE.name(), 90, Instant.now()).get("neg")).isCloseTo(1.0, within(1e-3));
+        assertThat(evidence.weights(CustomerEvidenceRepository.CUSTOMER, subjects.key(c), FactKey.SPLIT_TOLERANCE.name(), 90, Instant.now()).get("neg")).isCloseTo(1.0, within(1e-3));
         assertThat(value(c, FactKey.PREFERRED_CONTACT_CHANNEL)).isEqualTo("chat");
 
         // Upgrading two orders to next-day after checkout outweighs the three standard choices' cost evidence... partly.
@@ -200,24 +239,24 @@ class CustomerIntelligenceIntegrationTest extends PostgresTestBase {
         learner.on(upgrade);
         learner.on(upgrade); // redelivered: counted once
         learner.on(event("order.modified", o3, Map.of("orderId", o3, "fromShipMethod", "ground", "shipMethod", "express")));
-        Map<String, Double> speed = evidence.weights(CustomerEvidenceRepository.CUSTOMER, c, FactKey.SPEED_VS_COST.name(), 90, Instant.now());
+        Map<String, Double> speed = evidence.weights(CustomerEvidenceRepository.CUSTOMER, subjects.key(c), FactKey.SPEED_VS_COST.name(), 90, Instant.now());
         assertThat(speed.get("pos")).isCloseTo(2.0, within(1e-3));
         assertThat(speed.get("neg")).isCloseTo(3.0, within(1e-3));
         // A downgrade is evidence for cost.
         learner.on(event("order.modified", o3, Map.of("orderId", o3, "fromShipMethod", "express", "shipMethod", "standard")));
-        assertThat(evidence.weights(CustomerEvidenceRepository.CUSTOMER, c, FactKey.SPEED_VS_COST.name(), 90, Instant.now()).get("neg")).isCloseTo(4.0, within(1e-3));
+        assertThat(evidence.weights(CustomerEvidenceRepository.CUSTOMER, subjects.key(c), FactKey.SPEED_VS_COST.name(), 90, Instant.now()).get("neg")).isCloseTo(4.0, within(1e-3));
 
         // A split order returned because part of it arrived late: speed mattered, and the split did not work for them.
         learner.on(event("order.shipped", o2, Map.of("orderId", o2, "packageCount", 2)));
         learner.on(event("order.delivered", o2, Map.of("orderId", o2, "allDelivered", true)));
-        assertThat(evidence.weights(CustomerEvidenceRepository.CUSTOMER, c, FactKey.SPLIT_TOLERANCE.name(), 90, Instant.now()).get("pos")).isCloseTo(1.0, within(1e-3));
+        assertThat(evidence.weights(CustomerEvidenceRepository.CUSTOMER, subjects.key(c), FactKey.SPLIT_TOLERANCE.name(), 90, Instant.now()).get("pos")).isCloseTo(1.0, within(1e-3));
         learner.on(new Event(Ids.id(), TenantContext.require(), "return", "rma-" + o2, 1, "return.requested",
             Map.of("orderId", o2, "customerRef", c, "reasonCode", "arrived_late", "lines", List.of(Map.of("lineId", "L1", "reasonCode", "arrived_late"))),
             Actor.system("t"), null, o2, Map.of(), Instant.now()));
-        Map<String, Double> split = evidence.weights(CustomerEvidenceRepository.CUSTOMER, c, FactKey.SPLIT_TOLERANCE.name(), 90, Instant.now());
+        Map<String, Double> split = evidence.weights(CustomerEvidenceRepository.CUSTOMER, subjects.key(c), FactKey.SPLIT_TOLERANCE.name(), 90, Instant.now());
         assertThat(split.get("pos")).isCloseTo(0.0, within(1e-3));
         assertThat(split.get("neg")).isCloseTo(2.0, within(1e-3));
-        assertThat(evidence.weights(CustomerEvidenceRepository.CUSTOMER, c, FactKey.SPEED_VS_COST.name(), 90, Instant.now()).get("pos")).isCloseTo(3.0, within(1e-3));
+        assertThat(evidence.weights(CustomerEvidenceRepository.CUSTOMER, subjects.key(c), FactKey.SPEED_VS_COST.name(), 90, Instant.now()).get("pos")).isCloseTo(3.0, within(1e-3));
 
         // Per segment: the cohort (web | small basket | state) has its own typed facts.
         String segment = CiPreferenceLearner.segmentSubject("web|small|" + state);

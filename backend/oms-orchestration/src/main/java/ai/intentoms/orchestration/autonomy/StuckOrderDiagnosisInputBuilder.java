@@ -91,7 +91,7 @@ public class StuckOrderDiagnosisInputBuilder {
 
         input.put("holds", holdsSignal(order.id()));
         input.put("tasks", tasksSignal(order.id()));
-        buildCustomer(order.notes()).ifPresent(m -> input.put("customer", m));
+        buildCustomer(order.notes(), ai.intentoms.order.model.OrderPii.known(order)).ifPresent(m -> input.put("customer", m));
         return input;
     }
 
@@ -179,12 +179,12 @@ public class StuckOrderDiagnosisInputBuilder {
         return m;
     }
 
-    private Optional<Map<String, Object>> buildCustomer(List<Note> notes) {
+    private Optional<Map<String, Object>> buildCustomer(List<Note> notes, ai.intentoms.platform.pii.KnownPii known) {
         if (notes == null || notes.isEmpty()) return Optional.empty();
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("notes_count", notes.size());
         Note latest = notes.get(notes.size() - 1);
-        if (latest.text() != null && !latest.text().isBlank()) m.put("latest_note", ai.intentoms.platform.pii.FreeTextRedactor.redact(latest.text())); // NF-07
+        if (latest.text() != null && !latest.text().isBlank()) m.put("latest_note", ai.intentoms.platform.pii.FreeTextRedactor.redact(latest.text(), known)); // NF-07
         return Optional.of(m);
     }
 

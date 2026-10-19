@@ -86,11 +86,22 @@ public class CryptoShredPropagation {
         jdbc.sql("delete from outcome o using episode e where o.tenant_id = :t and e.tenant_id = :t and o.episode_id = e.episode_id and e.subject_type = 'customer' and e.subject_id in (:c)")
             .param("t", t).param("c", names).update();
         int episodes = jdbc.sql("delete from episode where tenant_id = :t and subject_type = 'customer' and subject_id in (:c)").param("t", t).param("c", names).update();
+        // Segment definitions list a few sample members (by vault token since NF-07): an erased customer is not one of them.
+        int samples = 0;
+        for (Map<String, Object> row : jdbc.sql("select segment_id, definition::text as d from segment where tenant_id = :t").param("t", t).query().listOfRows()) {
+            Map<String, Object> def = Json.readMap((String) row.get("d"));
+            if (!(def.get("sampleMembers") instanceof List<?> members) || members.stream().noneMatch(m -> names.contains(String.valueOf(m)))) continue;
+            Map<String, Object> out = new LinkedHashMap<>(def);
+            out.put("sampleMembers", members.stream().filter(m -> !names.contains(String.valueOf(m))).toList());
+            jdbc.sql("update segment set definition = :d where tenant_id = :t and segment_id = :id").param("d", ai.intentoms.platform.jdbc.Jsonb.of(out)).param("t", t).param("id", row.get("segment_id")).update();
+            samples++;
+        }
         Map<String, Object> extra = new LinkedHashMap<>();
         extra.put("evidenceDeleted", evidence);
         extra.put("orderRefsDeleted", orderRefs);
         extra.put("episodesDeleted", episodes);
         extra.put("pseudonymPurged", alias != null);
+        extra.put("segmentSamplesScrubbed", samples);
         return finish("customer", facts, 0, by, extra);
     }
 

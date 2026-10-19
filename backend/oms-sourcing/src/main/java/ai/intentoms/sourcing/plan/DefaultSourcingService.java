@@ -498,12 +498,18 @@ public class DefaultSourcingService implements SourcingService {
         }
     }
 
+    private ai.intentoms.learning.store.CustomerSubjects customerSubjects;
+
+    /** NF-07: customer facts are keyed by the customer's vault token. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCustomerSubjects(ai.intentoms.learning.store.CustomerSubjects customerSubjects) { this.customerSubjects = customerSubjects; }
+
     /** The customer's discovered segment (CI-02 {@code SEGMENT_MEMBERSHIP}), null when unknown. */
     private String segmentOf(Order order) {
         String ref = order.customerRef() != null ? order.customerRef() : order.customer() == null ? null : order.customer().ref();
         if (ref == null || ref.isBlank()) return null;
         try {
-            return facts.active(SubjectType.CUSTOMER, ref, FactKey.SEGMENT_MEMBERSHIP)
+            return facts.active(SubjectType.CUSTOMER, customerSubjects == null ? ref : customerSubjects.key(ref), FactKey.SEGMENT_MEMBERSHIP)
                 .map(f -> f.value() instanceof TypedValue.TextValue t ? t.value() : null).orElse(null);
         } catch (RuntimeException e) {
             return null;
@@ -649,7 +655,8 @@ public class DefaultSourcingService implements SourcingService {
     private Map<String, Object> splitInput(Order order, Run run, SourcingPlan chosen) {
         Map<String, Object> o = new LinkedHashMap<>();
         o.put("channel", order.channel());
-        o.put("notes", order.notes() == null ? "" : String.join(" ", order.notes().stream().map(Note::text).filter(t -> t != null).map(ai.intentoms.platform.pii.FreeTextRedactor::redact).toList()));
+        ai.intentoms.platform.pii.KnownPii known = ai.intentoms.order.model.OrderPii.known(order); // NF-07: names and street addresses too
+        o.put("notes", order.notes() == null ? "" : String.join(" ", order.notes().stream().map(Note::text).filter(t -> t != null).map(t -> ai.intentoms.platform.pii.FreeTextRedactor.redact(t, known)).toList()));
         o.put("intent", order.intent() == null ? "" : order.intent().policy());
         Map<String, Object> cust = new LinkedHashMap<>();
         cust.put("tier", order.customer() == null || order.customer().tier() == null ? "" : order.customer().tier());

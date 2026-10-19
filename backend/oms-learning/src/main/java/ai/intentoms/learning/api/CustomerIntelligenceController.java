@@ -30,6 +30,11 @@ public class CustomerIntelligenceController {
     private final CustomerEvidenceRepository evidence;
     private final ParameterResolver resolver;
 
+    private ai.intentoms.learning.store.CustomerSubjects subjects;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCustomerSubjects(ai.intentoms.learning.store.CustomerSubjects subjects) { this.subjects = subjects; }
+
     public CustomerIntelligenceController(SegmentRepository segments, CustomerFactContext facts, CustomerEvidenceRepository evidence, ParameterResolver resolver) {
         this.segments = segments;
         this.facts = facts;
@@ -42,17 +47,27 @@ public class CustomerIntelligenceController {
     @RequiresPermission(Permissions.LEARNING_READ)
     public List<Segment> segments() { return segments.latest(); }
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ai.intentoms.learning.learner.CiSegmentDiscovery discovery;
+
+    /** C-N7: the latest segment discovery run's result: whether it versioned segments and, when it did not, why. */
+    @GetMapping("/segments/last-run")
+    @RequiresPermission(Permissions.LEARNING_READ)
+    public Map<String, Object> lastSegmentRun() { return discovery == null ? Map.of() : discovery.lastRun(); }
+
     /** One customer's learned preferences, their cohort and segment, and whether decisions use them yet. */
     @GetMapping("/customers/{customerRef}/preferences")
     @RequiresPermission(Permissions.LEARNING_READ)
     public Map<String, Object> preferences(@PathVariable String customerRef) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("customerRef", customerRef);
-        out.put("orders", evidence.orderCount(customerRef));
-        out.put("cohort", evidence.latestCohort(customerRef).orElse(null));
+        String subject = subjects == null ? customerRef : subjects.key(customerRef); // NF-07: learning keys customers by vault token
+        out.put("subject", subject);
+        out.put("orders", evidence.orderCount(subject));
+        out.put("cohort", evidence.latestCohort(subject).orElse(null));
         out.put("usedByDecisions", resolver.isLive(CustomerFeatureFamilies.PREFERENCES));
         List<Map<String, Object>> list = new ArrayList<>();
-        for (Map.Entry<FactKey, LearnedFact> e : facts.freshFacts(customerRef).entrySet()) {
+        for (Map.Entry<FactKey, LearnedFact> e : facts.freshFacts(subject).entrySet()) {
             LearnedFact f = e.getValue();
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("key", CustomerFactContext.field(e.getKey()));

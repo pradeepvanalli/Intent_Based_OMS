@@ -55,4 +55,17 @@ class FreeTextRedactorTest {
         assertThat(out).isEqualTo(Map.of("order", Map.of("notes", List.of("text [phone]", "ok"), "lines", 2)));
         assertThat(FreeTextRedactor.redactAll(List.of("a@b.io"))).containsExactly("[email]");
     }
+
+    @org.junit.jupiter.api.Test
+    void knownNamesAndAddressesAndStreetPatternsAreRedacted() {
+        KnownPii known = new KnownPii(java.util.List.of("Jane Doe", "Jo"), java.util.List.of("400 Oak Ave", "Apt 7"), java.util.List.of("jane@example.com"), java.util.List.of());
+        org.assertj.core.api.Assertions.assertThat(FreeTextRedactor.redact("Call jane  DOE at 12 Elm Street, not 400 oak ave", known))
+            .isEqualTo("Call [name] at [address], not [address]");
+        org.assertj.core.api.Assertions.assertThat(FreeTextRedactor.redact("side door of 4418 Wren Hollow Rd Unit 9 please")).isEqualTo("side door of [address] please");
+        org.assertj.core.api.Assertions.assertThat(FreeTextRedactor.redact("ship 2 boxes together, gift for mum, leave at the side door", known))
+            .as("no street suffix, no known value: unchanged").isEqualTo("ship 2 boxes together, gift for mum, leave at the side door");
+        org.assertj.core.api.Assertions.assertThat(FreeTextRedactor.redact("Jonas will collect", known)).as("values under 3 characters are ignored, words are matched whole")
+            .isEqualTo("Jonas will collect");
+        org.assertj.core.api.Assertions.assertThat(FreeTextRedactor.redact("Janet Doering", known)).isEqualTo("Janet Doering");
+    }
 }

@@ -53,7 +53,8 @@ import java.util.Set;
  * rewritten when it moves by a point or its evidence grows by a tenth).
  *
  * <p>Evidence is captured even while the learner is paused (it is data); facts are written only when the governance gate
- * lets the learner run.
+ * lets the learner run. Customers are keyed by their vault token ({@link ai.intentoms.learning.store.CustomerSubjects}),
+ * never the raw customer reference (NF-07).
  */
 @Component
 public class CiPreferenceLearner implements EventSubscriber, GovernedLearner {
@@ -74,6 +75,14 @@ public class CiPreferenceLearner implements EventSubscriber, GovernedLearner {
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setErasedSubjects(ai.intentoms.learning.store.ErasedSubjects erasedSubjects) { this.erasedSubjects = erasedSubjects; }
+
+    private ai.intentoms.learning.store.CustomerSubjects subjects;
+
+    /** NF-07: customers are learned under their vault token, never the raw reference. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCustomerSubjects(ai.intentoms.learning.store.CustomerSubjects subjects) { this.subjects = subjects; }
+
+    private String subject(String customerRef) { return subjects == null ? customerRef : subjects.key(customerRef); }
 
     public CiPreferenceLearner(CustomerEvidenceRepository evidence, LearnedFactRepository facts, LearnerGovernance governance, TenantConfigStore config, JdbcClient jdbc) {
         this.evidence = evidence;
@@ -112,7 +121,7 @@ public class CiPreferenceLearner implements EventSubscriber, GovernedLearner {
     }
 
     private void onCaptured(Event e, Map<String, Object> p, String orderId, Instant at) {
-        String customer = str(p.get("customerRef"));
+        String customer = subject(str(p.get("customerRef")));
         if (customer == null || orderId == null) return;
         String cohort = cohortOf(p);
         evidence.registerOrder(orderId, customer, cohort);
@@ -132,7 +141,7 @@ public class CiPreferenceLearner implements EventSubscriber, GovernedLearner {
 
     private void onContact(Event e, Map<String, Object> p, String orderId, Instant at) {
         Optional<CustomerEvidenceRepository.OrderRef> ref = orderId == null ? Optional.empty() : evidence.order(orderId);
-        String customer = Optional.ofNullable(str(p.get("customerRef"))).orElse(ref.map(CustomerEvidenceRepository.OrderRef::customerRef).orElse(null));
+        String customer = Optional.ofNullable(subject(str(p.get("customerRef")))).orElse(ref.map(CustomerEvidenceRepository.OrderRef::customerRef).orElse(null));
         if (customer == null) return;
         String cohort = ref.map(CustomerEvidenceRepository.OrderRef::cohort).or(() -> evidence.latestCohort(customer)).orElse("unknown|unknown|unknown");
         String channel = str(p.get("channel"));

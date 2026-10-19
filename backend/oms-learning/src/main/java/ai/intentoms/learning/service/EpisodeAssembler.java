@@ -44,6 +44,11 @@ public class EpisodeAssembler implements EventSubscriber {
 
     @Override public List<String> eventTypePrefixes() { return List.of("decision.evaluated"); }
 
+    private ai.intentoms.learning.store.CustomerSubjects subjects;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCustomerSubjects(ai.intentoms.learning.store.CustomerSubjects subjects) { this.subjects = subjects; }
+
     @Override
     public void on(Event e) {
         var previousTenant = TenantContext.current();
@@ -52,8 +57,10 @@ public class EpisodeAssembler implements EventSubscriber {
             Optional<DecisionRecord> rec = decisionRecords.find(e.aggregateId());
             if (rec.isEmpty() || rec.get().mode() != Mode.LIVE || excluded.contains(rec.get().decision())) return;
             DecisionRecord r = rec.get();
+            // NF-07: an episode about a customer names them by vault token, never the raw reference.
+            String subjectId = "customer".equalsIgnoreCase(r.subjectType()) && subjects != null ? subjects.key(r.subjectId()) : r.subjectId();
             episodes.upsertDecisionPoint(Episode.open(Ids.prefixed("epi"), r.id(), r.decision(), DecisionPoints.orderId(r, e.correlationId()),
-                DecisionPoints.lineId(r), DecisionPoints.fulfillmentGroupId(r), r.policyVersion(), r.subjectType(), r.subjectId(), r.createdAt()));
+                DecisionPoints.lineId(r), DecisionPoints.fulfillmentGroupId(r), r.policyVersion(), r.subjectType(), subjectId, r.createdAt()));
         } catch (RuntimeException ex) {
             log.warn("Episode assembly failed for decision record {}: {}", e.aggregateId(), ex.toString());
         } finally {

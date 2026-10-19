@@ -85,8 +85,7 @@ public class CiSegmentDiscovery implements GovernedLearner {
         governance.recordRun(KEY);
         Map<String, double[]> raw = customerVectors();
         if (raw.size() < 2 * minSize) {
-            log.info("Segment discovery skipped for tenant {}: {} customers with behaviour, need {}", TenantContext.require(), raw.size(), 2 * minSize);
-            return List.of();
+            return nothingVersioned("too few customers with behaviour: " + raw.size() + ", need " + (2 * minSize) + " (two segments of at least " + minSize + ")", raw.size(), null);
         }
         List<String> customers = new ArrayList<>(raw.keySet());
         double[][] x = new double[customers.size()][];
@@ -95,7 +94,10 @@ public class CiSegmentDiscovery implements GovernedLearner {
         standardise(x, mean, sd);
         int maxK = Math.min(6, customers.size() / minSize);
         KMeans.Result r = KMeans.dropSmall(x, KMeans.best(x, maxK, SEED), minSize);
-        if (r.k() < 2) return List.of();
+        if (r.k() < 2) {
+            return nothingVersioned("fewer than two clusters of at least " + minSize + " customers after folding small ones into their neighbours ("
+                + customers.size() + " customers, " + r.k() + " cluster left)", customers.size(), r.k());
+        }
 
         List<SegmentNamer.Profile> profiles = new ArrayList<>();
         Map<String, Double> overall = new LinkedHashMap<>(), spread = new LinkedHashMap<>();
@@ -161,8 +163,41 @@ public class CiSegmentDiscovery implements GovernedLearner {
             if (writeMembership(customers.get(i), keyByCluster.get(r.assignment()[i]), now)) changed++;
         }
         log.info("Discovered {} segments (silhouette {}) for tenant {}; {} memberships changed", r.k(), r.silhouette(), TenantContext.require(), changed);
+        recordRunResult(Map.of("outcome", "versioned", "version", version, "segments", r.k(), "customers", customers.size(),
+            "silhouette", Math.round(r.silhouette() * 1000) / 1000.0, "membershipsChanged", changed));
         return written;
     }
+
+    /** Config key holding the latest run's result: whether it versioned segments and, if not, why (C-N7). */
+    public static final String LAST_RUN_KEY = "learning.segments.last_run";
+
+    /** C-N7: a run that versions nothing says why, in the log and in the stored run result. */
+    private List<Segment> nothingVersioned(String reason, int customers, Integer clusters) {
+        log.info("Segment discovery for tenant {} versioned nothing: {}", TenantContext.require(), reason);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("outcome", "nothing_versioned");
+        result.put("reason", reason);
+        result.put("customers", customers);
+        if (clusters != null) result.put("clusters", clusters);
+        result.put("minSize", minSize);
+        recordRunResult(result);
+        return List.of();
+    }
+
+    private void recordRunResult(Map<String, Object> result) {
+        if (config == null) return;
+        Map<String, Object> stored = new LinkedHashMap<>(result);
+        stored.put("at", Instant.now().toString());
+        try { config.set(LAST_RUN_KEY, stored); } catch (RuntimeException e) { log.warn("Could not record the segment discovery result: {}", e.toString()); }
+    }
+
+    /** The latest run's result (outcome, reason when nothing was versioned), empty before the first run. */
+    public Map<String, Object> lastRun() { return config == null ? Map.of() : config.getMap(LAST_RUN_KEY); }
+
+    private ai.intentoms.platform.config.TenantConfigStore config;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setConfig(ai.intentoms.platform.config.TenantConfigStore config) { this.config = config; }
 
     /** Raw feature vector per customer that has any CI-01 fact. */
     Map<String, double[]> customerVectors() {

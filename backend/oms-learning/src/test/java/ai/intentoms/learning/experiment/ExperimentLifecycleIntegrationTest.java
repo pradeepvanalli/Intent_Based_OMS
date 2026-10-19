@@ -245,7 +245,7 @@ class ExperimentLifecycleIntegrationTest extends DecisionFabricTestBase {
             assertThat(parameters.explain(family, 2.0, 3.0).source()).isEqualTo("LEARNED"); // no subject known: not held out
             // With no resolver for orders on the classpath, a subject routes on itself.
             assertThat(router.customerKey("order:ord_1")).isEqualTo("order:ord_1");
-            assertThat(router.customerKey("customer:c1")).isEqualTo("customer:c1");
+            assertThat(router.customerKey("customer:c1")).as("NF-07: a customer is keyed by vault token").matches("customer:cu_[0-9a-f]{20}");
         } finally {
             experiments.stop(holdout.experimentId(), ExperimentStatus.STOPPED, Map.of(), Actor.parse(TESTER));
             parameters.revoke(family, TESTER);

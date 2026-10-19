@@ -25,7 +25,7 @@ import java.util.Optional;
  * measured), and — through {@link HoldoutCheck} — the static value of every learned parameter, so lift measures
  * everything learning changed, not only decision versions. A canary customer gets the candidate version.
  *
- * <p>Assignment is per customer: the routing key is {@code customer:<ref>} when the caller passes {@code customerRef},
+ * <p>Assignment is per customer, keyed by the customer's vault token (NF-07): {@code customer:<token>} when the caller passes {@code customerRef},
  * otherwise the subject is resolved to its customer ({@link CustomerKeyResolver}, e.g. an order to the customer who
  * placed it), and only when no customer can be found does a subject route on its own id. The same customer therefore
  * lands in the same arm for every decision and every order. Running experiments and resolved customers are cached
@@ -76,15 +76,23 @@ public class ExperimentTrafficRouter implements ExperimentRouter, HoldoutCheck {
      */
     public String customerKey(String routingKey) {
         if (routingKey == null || routingKey.isBlank()) return null;
-        if (routingKey.startsWith("customer:")) return routingKey;
+        if (routingKey.startsWith("customer:")) return customer(routingKey.substring("customer:".length()));
         int colon = routingKey.indexOf(':');
         if (colon <= 0) return routingKey;
         String type = routingKey.substring(0, colon), id = routingKey.substring(colon + 1);
         String cacheKey = TenantContext.require() + "|" + routingKey;
         String resolved = customers.get(cacheKey, k -> resolvers.orderedStream().map(r -> r.customerOf(type, id)).flatMap(Optional::stream)
-            .findFirst().map(c -> "customer:" + c).orElse(routingKey));
+            .findFirst().map(this::customer).orElse(routingKey));
         return resolved;
     }
+
+    /** NF-07: the experiment key of a customer is their vault token, as everywhere else in learning. */
+    private String customer(String ref) { return "customer:" + (subjects == null ? ref : subjects.key(ref)); }
+
+    private ai.intentoms.learning.store.CustomerSubjects subjects;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCustomerSubjects(ai.intentoms.learning.store.CustomerSubjects subjects) { this.subjects = subjects; }
 
     public void invalidate() {
         TenantContext.current().ifPresentOrElse(cache::invalidate, cache::invalidateAll);

@@ -114,6 +114,33 @@ class CustomerErasureIntegrationTest extends PostgresTestBase {
         assertThat(again).containsEntry("firstTime", false).containsEntry("pseudonym", pseudonym);
     }
 
+    @Autowired ai.intentoms.decision.api.DecisionRecordController decisionRecords;
+
+    @Test
+    void afterErasureNoLearnedFactAboutTheCustomerSurvivesOnDecisionRecordsOrTheWhyView() {
+        String ref = "cust-why-" + Ids.shortId();
+        String token = ai.intentoms.platform.tenant.TenantContext.supplyAs(TENANT, () -> customerSubjects.key(ref));
+        Map<String, Object> input = Map.of("order", Map.of("id", "ord_why", "notes", List.of()), "customer", Map.of("ref", ref, "tier", "gold"));
+        String recordId = Ids.id();
+        List<Map<String, Object>> used = List.of(
+            Map.of("subjectType", "CUSTOMER", "subjectId", token, "factKey", "SPEED_VS_COST", "learned", -0.94, "source", "STATIC"),
+            Map.of("subjectType", "CUSTOMER", "subjectId", ref, "factKey", "PICKUP_PREFERENCE", "learned", false, "source", "STATIC"),
+            Map.of("subjectType", "NODE", "subjectId", "DC-NJ", "factKey", "NODE_ON_TIME_RATE", "learned", 0.93, "source", "LEARNED"));
+        records.insert(new DecisionRecord(recordId, "fulfilment_intent", 1, Mode.LIVE, "order", "ord_why", "ord_why", Layer.L1_SYSTEM_ONE, Band.ACT, "act", "ship_complete",
+            Map.of(), 0.9, "heuristic", "h", Json.sha256(input), Map.of(), input, List.of(), List.of(), 1, 0, 0, false, null, "system:test", Map.of("learnedFacts", used),
+            null, null, null, null, Map.of(), Instant.now(), Map.of(), List.of("ship_complete"), "ship_complete", 1.0, 1));
+
+        actAs("admin", Set.of("*"));
+        privacy.erase(ref);
+
+        String why = Json.write(decisionRecords.why(recordId, null));
+        assertThat(why).as("the why view shows no learned fact about the erased customer").doesNotContain("SPEED_VS_COST").doesNotContain("PICKUP_PREFERENCE")
+            .doesNotContain(ref).contains("NODE_ON_TIME_RATE");
+        assertThat(count("select count(*) from decision_record where tenant_id = :t and (details::text like '%' || :c || '%' or input::text like '%' || :c || '%')", ref)).isZero();
+    }
+
+    @Autowired ai.intentoms.learning.store.CustomerSubjects customerSubjects;
+
     private long count(String sql, String c) {
         return jdbc.sql(sql).param("t", TENANT).param("c", c).query(Long.class).single();
     }

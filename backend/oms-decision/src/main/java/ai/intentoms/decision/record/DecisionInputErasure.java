@@ -18,10 +18,15 @@ import java.util.Set;
 
 /**
  * GV-06 for decision records: a record's {@code input} is kept in full for replay (FR-SIM-01) and so can hold a
- * customer's name, email, phone and address. When that customer is erased, every record whose input mentions them is
+ * customer's name, email, phone and address. When that customer is erased, every record that mentions them is
  * pseudonymised: personal fields become {@code "[erased]"} and the customer reference becomes its pseudonym, wherever it
- * appears (subject id, correlation id, input). The tokenised {@code state} sent to providers holds no raw PII and is kept.
- * This is the one documented exception to decision records being append-only by convention.
+ * appears (subject id, correlation id, input, details). What learning knew about the customer is removed from the
+ * record too (C-N4): the {@code details.learnedFacts} entries about the customer (named by the raw reference or by its
+ * vault token, which is the pseudonym) are dropped, so the Why view shows no learned fact about an erased person.
+ * The tokenised {@code state} sent to providers holds no raw PII and is kept.
+ *
+ * <p>This is the one exception to decision records being append-only (§9.1, migration V405): the update runs with
+ * {@code oms.legal_erasure} set for its own transaction, which the trigger honours for the personal columns only.
  */
 @Component
 public class DecisionInputErasure {
@@ -45,23 +50,45 @@ public class DecisionInputErasure {
     public int erase(String customerRef, String pseudonym) {
         String t = TenantContext.require();
         String needle = "%" + Json.write(customerRef) + "%";
+        String tokenNeedle = "%" + Json.write(pseudonym) + "%";
         List<Map<String, Object>> rows = jdbc.sql("""
-            select id, input::text as input from decision_record
-            where tenant_id = :t and (input::text like :n or subject_id = :c or correlation_id = :c)
-            """).param("t", t).param("n", needle).param("c", customerRef).query().listOfRows();
+            select id, input::text as input, details::text as details from decision_record
+            where tenant_id = :t and (input::text like :n or subject_id = :c or correlation_id = :c or details::text like :n or details::text like :tn)
+            """).param("t", t).param("n", needle).param("tn", tokenNeedle).param("c", customerRef).query().listOfRows();
         for (Map<String, Object> r : rows) {
             Object input = r.get("input") == null ? null : Json.read((String) r.get("input"), Object.class);
             Object scrubbed = scrub(input, customerRef, pseudonym);
+            Object details = r.get("details") == null ? null : scrub(dropCustomerFacts(Json.read((String) r.get("details"), Object.class), customerRef, pseudonym), customerRef, pseudonym);
             jdbc.sql("""
-                update decision_record set input = :input,
+                with erasure as (select set_config('oms.legal_erasure', 'on', true) as on_)
+                update decision_record set input = :input, details = coalesce(:details, details),
                        subject_id = case when subject_id = :c then :p else subject_id end,
                        correlation_id = case when correlation_id = :c then :p else correlation_id end
-                where tenant_id = :t and id = :id
-                """).param("input", scrubbed == null ? null : Jsonb.of(scrubbed)).param("c", customerRef).param("p", pseudonym)
-                .param("t", t).param("id", r.get("id")).update();
+                from erasure where tenant_id = :t and id = :id and erasure.on_ = 'on'
+                """).param("input", scrubbed == null ? null : Jsonb.of(scrubbed)).param("details", details == null ? null : Jsonb.of(details))
+                .param("c", customerRef).param("p", pseudonym).param("t", t).param("id", r.get("id")).update();
         }
         if (!rows.isEmpty()) log.info("GV-06: pseudonymised {} decision record(s) for tenant {}", rows.size(), t);
         return rows.size();
+    }
+
+    /**
+     * C-N4: the {@code learnedFacts} list without the entries about this customer (CUSTOMER facts named by the raw
+     * reference or by its vault token). Other facts (a node's reliability, a lane's transit) stay.
+     */
+    static Object dropCustomerFacts(Object details, String ref, String pseudonym) {
+        if (!(details instanceof Map<?, ?> m) || !(m.get("learnedFacts") instanceof List<?> facts)) return details;
+        List<Object> kept = new ArrayList<>();
+        for (Object f : facts) {
+            if (f instanceof Map<?, ?> fm && "CUSTOMER".equalsIgnoreCase(String.valueOf(fm.get("subjectType")))
+                && (String.valueOf(fm.get("subjectId")).equals(ref) || String.valueOf(fm.get("subjectId")).equals(pseudonym))) continue;
+            kept.add(f);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        m.forEach((k, val) -> out.put(String.valueOf(k), val));
+        out.put("learnedFacts", kept);
+        if (kept.size() < facts.size()) out.put("learnedFactsErased", facts.size() - kept.size());
+        return out;
     }
 
     @SuppressWarnings("unchecked")

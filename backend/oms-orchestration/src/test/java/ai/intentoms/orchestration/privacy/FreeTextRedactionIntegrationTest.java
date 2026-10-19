@@ -68,4 +68,41 @@ class FreeTextRedactionIntegrationTest extends OrchestrationTestBase {
         assertThat(rows).anyMatch(r -> "return_reason".equals(r.get("decision")));
         assertNoContactDetails(rows);
     }
+
+    /** NF-07 (audit 3): names and street addresses typed into free text, the order's own ones and any street address. */
+    private static void assertNoNamesOrStreets(List<Map<String, Object>> rows) {
+        assertThat(rows).isNotEmpty().allSatisfy(r -> {
+            String all = (r.get("input") + " " + r.get("state") + " " + r.get("features")).toLowerCase(java.util.Locale.ROOT);
+            assertThat(all).as("decision %s", r.get("decision")).doesNotContain("dana whitfield").doesNotContain("12 elm street").doesNotContain("233 s wacker")
+                .doesNotContain("9 maple ave");
+        });
+    }
+
+    @Test
+    void anOrderNoteWithTheCustomersNameAndStreetAddressesYieldsDecisionRecordsWithNeither() {
+        Order o = capture(webOrder("A3-NAME", "tok_visa_ok", "Call Dana Whitfield at 12 Elm Street, or leave it at 233 s wacker dr"));
+        driveToStep(StandardShipOrderWorkflow.TYPE, o.id(), WorkflowStatus.WAITING_SIGNAL, "await_fulfilment");
+        drainOutbox();
+
+        List<Map<String, Object>> rows = decisionRows(o.id());
+        assertNoNamesOrStreets(rows);
+        assertThat(rows).filteredOn(r -> "fulfilment_intent".equals(r.get("decision"))).singleElement()
+            .satisfies(r -> assertThat(String.valueOf(r.get("input"))).as("the note keeps what the customer wants").contains("Call [name] at [address], or leave it at [address]"));
+    }
+
+    @Test
+    void aReturnReasonWithANameAndAStreetAddressYieldsDecisionRecordsWithNeither() {
+        Order o = capture(webOrder("A3-RETNAME", "tok_visa_ok"));
+        driveToStep(StandardShipOrderWorkflow.TYPE, o.id(), WorkflowStatus.WAITING_SIGNAL, "await_fulfilment");
+        inbound.wms(nodeOf(o), wmsEvent("A3-RETNAME-ship", "shipped", o.id(), Map.of("carrier", "UPS", "tracking", "TRK-A3-RETNAME")));
+        driveToStep(StandardShipOrderWorkflow.TYPE, o.id(), WorkflowStatus.WAITING_SIGNAL, "await_delivery");
+        inbound.carrier(Map.of("eventId", "A3-RETNAME-del", "type", "delivered", "orderId", o.id(), "tracking", "TRK-A3-RETNAME"));
+        driveToTerminal(StandardShipOrderWorkflow.TYPE, o.id());
+
+        ReturnRma rma = returns.create(new ReturnRequest(o.id(), List.of(new ReturnLineRequest("1", 1, null, "too small, send the new one to Dana Whitfield, 9 Maple Ave")),
+            ReturnChannel.WEB, null, null, false, null, null), SYSTEM);
+        List<Map<String, Object>> rows = decisionRows(rma.rmaId());
+        assertThat(rows).anyMatch(r -> "return_reason".equals(r.get("decision")));
+        assertNoNamesOrStreets(rows);
+    }
 }

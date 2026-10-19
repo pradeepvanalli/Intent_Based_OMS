@@ -68,10 +68,10 @@ public class ReturnCreateTool implements McpTool {
         List<ReturnLineRequest> lines = new ArrayList<>();
         List<ScreenResult> screens = new ArrayList<>();
         String reason = AgentTextSanitizer.sanitize(args.get("reason") == null ? null : args.get("reason").toString());
-        if (reason != null && !reason.isBlank()) screens.add(screen.screen("agent_return_reason", reason, "order", orderId));
+        if (reason != null && !reason.isBlank()) screens.add(screen.screen("agent_return_reason", reason, "order", orderId, ai.intentoms.order.model.OrderPii.known(order)));
         for (Map<String, Object> l : rawLines) {
             String text = AgentTextSanitizer.sanitize(l.get("reasonText") == null ? null : l.get("reasonText").toString());
-            if (text != null && !text.isBlank()) screens.add(screen.screen("agent_return_reason", text, "order", orderId));
+            if (text != null && !text.isBlank()) screens.add(screen.screen("agent_return_reason", text, "order", orderId, ai.intentoms.order.model.OrderPii.known(order)));
             lines.add(new ReturnLineRequest(String.valueOf(l.get("lineId")), ((Number) l.get("qty")).intValue(), l.get("reasonCode") == null ? null : l.get("reasonCode").toString(), text));
         }
         if (ctx.requiresConfirmation(name())) return confirmations.park(ctx, name(), orderId, args, Map.of("injectionFlagged", screens.stream().anyMatch(ScreenResult::flagged)));
