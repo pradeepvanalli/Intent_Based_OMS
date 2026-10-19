@@ -36,7 +36,8 @@ public class CoreOutcomeMapper implements OutcomeMapper {
                 Math.max(1, num(p.get("packageCount")).intValue()), bool(p.get("splitAvoided"), false), strings(p.get("nodeIds")),
                 bool(p.get("storeRejected"), false), num(p.get("unitsOrdered")).intValue(), num(p.get("unitsShipped")).intValue(),
                 num(p.get("fulfillmentCost")).doubleValue(), num(p.get("orderValue")).doubleValue(),
-                str(p.getOrDefault("fulfilmentGroupId", p.get("fulfillmentGroupId"))), str(p.get("shipmentId")));
+                str(p.getOrDefault("fulfilmentGroupId", p.get("fulfillmentGroupId"))), str(p.get("shipmentId")),
+                num(p.get("orderUnits")).intValue(), p.get("firstAttempt") instanceof Boolean b ? b : null);
             // A return is an outcome for the order it came back from (the event carries orderId): grading sets
             // fraudConfirmed (FD-06) and the refund is the loss when it was abuse.
             // One outcome per return: rmaId keys the merge of its disposition and refund events (OutcomeObserver).

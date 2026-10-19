@@ -31,16 +31,28 @@ public sealed interface OutcomeData {
      * {@code shipmentId} ({@code packageCount} is then the plan's package count, for information). Without
      * {@code shipmentId} (older rows) the record describes the whole order and {@code packageCount} is its package
      * count. A zero figure means the producer did not report it, and the matching reward term stays unscored.
+     * {@code orderUnits} is every unit of the order (backordered and cancelled ones included: the fill denominator of an
+     * order-level episode; 0 when not reported) and {@code firstAttempt} says the parcel's group came from the order's
+     * first sourcing, not from a re-sourcing after a reject, shortage or backorder (the first-attempt fill).
      */
     @JsonIgnoreProperties(ignoreUnknown = true)
     record FulfillmentOutcome(int packageCount, boolean splitFeasibleButAvoided, java.util.List<String> nodeIds, boolean storeRejected,
                               int unitsOrdered, int unitsShipped, double fulfillmentCost, double orderValue,
-                              String fulfilmentGroupId, String shipmentId) implements OutcomeData {
+                              String fulfilmentGroupId, String shipmentId, int orderUnits, Boolean firstAttempt) implements OutcomeData {
         /** An order-level outcome (no parcel or group identity). */
         public FulfillmentOutcome(int packageCount, boolean splitFeasibleButAvoided, java.util.List<String> nodeIds, boolean storeRejected,
                                   int unitsOrdered, int unitsShipped, double fulfillmentCost, double orderValue) {
             this(packageCount, splitFeasibleButAvoided, nodeIds, storeRejected, unitsOrdered, unitsShipped, fulfillmentCost, orderValue, null, null);
         }
+
+        /** A parcel outcome without the order's unit count or attempt (older rows). */
+        public FulfillmentOutcome(int packageCount, boolean splitFeasibleButAvoided, java.util.List<String> nodeIds, boolean storeRejected,
+                                  int unitsOrdered, int unitsShipped, double fulfillmentCost, double orderValue, String fulfilmentGroupId, String shipmentId) {
+            this(packageCount, splitFeasibleButAvoided, nodeIds, storeRejected, unitsOrdered, unitsShipped, fulfillmentCost, orderValue, fulfilmentGroupId, shipmentId, 0, null);
+        }
+
+        /** From the first sourcing attempt; an older row that did not say counts as one. */
+        public boolean fromFirstAttempt() { return firstAttempt == null || firstAttempt; }
     }
 
     /**

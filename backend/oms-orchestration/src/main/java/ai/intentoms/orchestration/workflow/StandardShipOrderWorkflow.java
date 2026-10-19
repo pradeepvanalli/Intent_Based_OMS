@@ -156,7 +156,7 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         evt.put("lines", shippedByLine);
         evt.put("captured", capture.get("captured"));
         evt.put("allShipped", allShipped);
-        evt.putAll(outcomeFacts(fresh, group, nodeId, shipLines, shipment.id()));
+        evt.putAll(outcomeFacts(fresh, group, nodeId, shipLines, shipment.id(), firstAttempt(fresh, group)));
         if (!groupsDone.isEmpty()) s.markGroups(order.id(), groupsDone, "shipped", null);
         s.appendOrderEvent(order.id(), "order.shipped", evt);
         notifier.notify(order.id(), "email", "shipped", "Your order has shipped", "Shipment " + shipment.tracking() + " (" + shipment.carrier() + ") with " + shipLines.size() + " line(s)",
@@ -178,9 +178,11 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
      * so a consumer counts them once per group / order however many parcels a group ships in, and counts parcels by
      * distinct {@code shipmentId}. {@code packageCount} is how many live packages the order's plan has (customer
      * preference learning reads it as the split the customer saw); {@code storeRejected} says some node rejected part of
-     * the order before it shipped; {@code splitAvoided} is a multi-line order planned as one package.
+     * the order before it shipped; {@code splitAvoided} is a multi-line order planned as one package. {@code orderUnits}
+     * is every unit ordered (the fill denominator, backordered and cancelled units included) and {@code firstAttempt}
+     * says the parcel's group is from the order's first plan.
      */
-    static Map<String, Object> outcomeFacts(Order order, FulfilmentGroup group, String nodeId, List<ShipmentRecord.Line> shipLines, String shipmentId) {
+    static Map<String, Object> outcomeFacts(Order order, FulfilmentGroup group, String nodeId, List<ShipmentRecord.Line> shipLines, String shipmentId, boolean firstAttempt) {
         List<FulfilmentGroup> live = order.fulfilmentGroups().stream().filter(g -> !Set.of("rejected", "cancelled").contains(String.valueOf(g.status()).toLowerCase(java.util.Locale.ROOT))).toList();
         int plannedPackages = Math.max(1, live.size());
         int unitsShipped = shipLines.stream().mapToInt(ShipmentRecord.Line::qty).sum();
@@ -196,10 +198,22 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         m.put("storeRejected", order.fulfilmentGroups().stream().anyMatch(g -> "rejected".equalsIgnoreCase(g.status())));
         m.put("unitsOrdered", Math.max(unitsPlanned, unitsShipped));
         m.put("unitsShipped", unitsShipped);
+        // §7 fill: every unit the customer ordered, backordered and cancelled ones included, and whether this parcel
+        // comes from the order's first plan (not from a re-sourcing after a reject, a shortage or a backorder).
+        m.put("orderUnits", order.lines().stream().mapToInt(OrderLine::qty).sum());
+        m.put("firstAttempt", firstAttempt);
         m.put("fulfillmentCost", group == null || group.estimatedCost() == null ? 0.0 : group.estimatedCost().amount().doubleValue());
         m.put("orderValue", order.totals() == null || order.totals().grandTotal() == null ? 0.0 : order.totals().grandTotal().amount().doubleValue());
         m.put("lineIds", shipLines.stream().map(ShipmentRecord.Line::lineId).distinct().toList());
         return m;
+    }
+
+    /** The group was planned by the order's first sourcing (its first {@code order.sourced}), not by a later re-sourcing. */
+    private boolean firstAttempt(Order order, FulfilmentGroup group) {
+        if (group == null) return true;
+        List<Map<String, Object>> sourced = s.orderEvents(order.id(), "order.sourced");
+        if (sourced.isEmpty() || !(sourced.get(0).get("fulfilmentGroupIds") instanceof List<?> first) || first.isEmpty()) return true;
+        return first.stream().map(String::valueOf).anyMatch(group.id()::equals);
     }
 
     /** Every allocation of the group is covered by units in the group's own parcels. */

@@ -133,6 +133,26 @@ class RewardCalculatorTest {
         assertThat(RewardCalculator.needsOrderValue(List.of(out(new OutcomeData.ContactOutcome("cs", "wismo", false))))).as("no loss, nothing to look up").isFalse();
     }
 
+    @Test void anOrderLevelFillCountsBackorderedAndCancelledUnits() {
+        // 5 units ordered; one group planned 3 and shipped them; 2 units backordered then cancelled, never in a group.
+        var parcel = out(new OutcomeData.FulfillmentOutcome(1, false, List.of("n"), false, 3, 3, 5.0, 100.0, "fg1", "sh1", 5, true));
+        assertThat(RewardCalculator.components(List.of(parcel), new RewardCalculator.Scope(0, true)).get("fill")).isCloseTo(0.6, within(1e-9));
+        assertThat(RewardCalculator.components(List.of(parcel), RewardCalculator.Scope.NONE).get("fill")).as("a group's own episode: its group").isEqualTo(1.0);
+        // Older rows that did not report the order's units keep the per-group denominator.
+        var legacy = out(new OutcomeData.FulfillmentOutcome(1, false, List.of("n"), false, 3, 3, 5.0, 100.0, "fg1", "sh1"));
+        assertThat(RewardCalculator.components(List.of(legacy), new RewardCalculator.Scope(0, true)).get("fill")).isEqualTo(1.0);
+    }
+
+    @Test void firstAttemptFillCountsOnlyUnitsFromTheFirstSourcing() {
+        var first = out(new OutcomeData.FulfillmentOutcome(2, false, List.of("a"), true, 2, 2, 5.0, 100.0, "fg1", "sh1", 4, true));
+        var resourced = out(new OutcomeData.FulfillmentOutcome(2, false, List.of("b"), true, 2, 2, 5.0, 100.0, "fg2", "sh2", 4, false));
+        Map<String, Double> c = RewardCalculator.components(List.of(first, resourced), new RewardCalculator.Scope(0, true));
+        assertThat(c.get("fill")).isEqualTo(1.0);
+        assertThat(c.get(RewardCalculator.FILL_FIRST_ATTEMPT)).isCloseTo(0.5, within(1e-9));
+        assertThat(RewardCalculator.components(List.of(out(new OutcomeData.ContactOutcome("cs", "wismo", false))))).doesNotContainKey(RewardCalculator.FILL_FIRST_ATTEMPT);
+        assertThat(RewardCalculator.weight(ObjectiveWeights.preset("balanced"), RewardCalculator.FILL_FIRST_ATTEMPT)).as("not weighted").isZero();
+    }
+
     @Test void penaltyTermsAreScaledAgainstTheTenantBaselineAndKeepTheirRawValue() {
         Map<String, Double> c = new java.util.LinkedHashMap<>(Map.of("fill", 1.0, "cost", 0.06, "split", 0.5, "cx", 0.0));
         Map<String, Double> n = RewardCalculator.normalise(c, Map.of("cost", 0.12, "split", 0.25));

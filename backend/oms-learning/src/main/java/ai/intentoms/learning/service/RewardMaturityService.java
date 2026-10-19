@@ -103,7 +103,8 @@ public class RewardMaturityService {
         Set<String> scored = RewardCalculator.scoredTerms(outs);
         boolean mature = true;
         double orderValue = RewardCalculator.needsOrderValue(outs) ? outcomes.orderValueForEpisode(ep.episodeId(), ep.orderId()).orElse(0.0) : 0.0;
-        Map<String, Double> components = new LinkedHashMap<>(RewardCalculator.normalise(RewardCalculator.components(outs, orderValue), baselineScales()));
+        RewardCalculator.Scope scope = new RewardCalculator.Scope(orderValue, ep.fulfillmentGroupId() == null && ep.lineId() == null);
+        Map<String, Double> components = new LinkedHashMap<>(RewardCalculator.normalise(RewardCalculator.components(outs, scope), baselineScales()));
         for (String term : RewardCalculator.TERMS) {
             if (RewardCalculator.weight(weights, term) == 0) continue;
             boolean windowClosed = !ep.createdAt().plus(windows.forTerm(term)).isAfter(now);

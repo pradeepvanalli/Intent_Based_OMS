@@ -16,7 +16,9 @@ import java.util.Set;
  * <p>Every term is normalised to [0,1] before the weights apply, so a weight means the same thing for every tenant:
  * <ul>
  *   <li>fill = units shipped / units ordered, where units ordered are counted once per fulfilment group (a group that
- *       ships in two parcels does not double its denominator);</li>
+ *       ships in two parcels does not double its denominator) and, for an episode about the whole order, are every unit
+ *       ordered, so backordered, unsourced and cancelled units count against it. {@code fill_first_attempt} (not
+ *       weighted) counts only the units shipped from the order's first sourcing;</li>
  *   <li>otd = share of delivered fulfilment groups that arrived on time and not lost;</li>
  *   <li>cost = fulfilment cost / order value, cost counted once per group, capped at 1;</li>
  *   <li>split = extra parcels: 0 for one parcel, 0.5 for two, 1 for three or more. Every parcel beyond the first counts;
@@ -35,16 +37,26 @@ public final class RewardCalculator {
     private RewardCalculator() {}
 
     public static final List<String> TERMS = List.of("fill", "otd", "cost", "split", "fraud", "cx", "inv");
-
-    public static Map<String, Double> components(List<OutcomeRecord> outcomes) { return components(outcomes, 0.0); }
+    /** Unweighted component: fill counting only the units the order's first sourcing shipped. */
+    public static final String FILL_FIRST_ATTEMPT = "fill_first_attempt";
 
     /**
-     * As {@link #components(List)}, with the order's value to fall back on when no outcome reports one: an episode
-     * opened after shipment never sees {@code order.shipped}, and a loss there must still be a share of the order
-     * (audit A4), not the whole of it.
+     * What the reward needs to know about the episode itself. {@code orderValue}: the order's value to fall back on when
+     * no outcome reports one (an episode opened after shipment never sees {@code order.shipped}, and a loss there must
+     * still be a share of the order, audit A4). {@code wholeOrder}: the episode is about the whole order (no group, no
+     * line), so its fill counts every unit ordered, backordered and cancelled ones included.
      */
-    public static Map<String, Double> components(List<OutcomeRecord> outcomes, double fallbackOrderValue) {
-        double shipped = 0, orderValue = 0, fraudLoss = 0, contacts = 0;
+    public record Scope(double orderValue, boolean wholeOrder) {
+        public static final Scope NONE = new Scope(0.0, false);
+    }
+
+    public static Map<String, Double> components(List<OutcomeRecord> outcomes) { return components(outcomes, Scope.NONE); }
+
+    public static Map<String, Double> components(List<OutcomeRecord> outcomes, double fallbackOrderValue) { return components(outcomes, new Scope(fallbackOrderValue, false)); }
+
+    public static Map<String, Double> components(List<OutcomeRecord> outcomes, Scope scope) {
+        double shipped = 0, shippedFirstAttempt = 0, orderValue = 0, fraudLoss = 0, contacts = 0;
+        int orderUnits = 0;
         Map<String, OutcomeData.ReturnOutcome> returns = new LinkedHashMap<>();
         Map<String, Integer> unitsByGroup = new LinkedHashMap<>();
         Map<String, Double> costByGroup = new LinkedHashMap<>();
@@ -61,6 +73,8 @@ public final class RewardCalculator {
                     costByGroup.merge(group, f.fulfillmentCost(), Math::max);
                     if (f.shipmentId() != null) parcels.add(f.shipmentId()); else legacyPackages += Math.max(1, f.packageCount());
                     shipped += f.unitsShipped();
+                    if (f.fromFirstAttempt()) shippedFirstAttempt += f.unitsShipped();
+                    orderUnits = Math.max(orderUnits, f.orderUnits());
                     orderValue = Math.max(orderValue, f.orderValue());
                 }
                 // One loss per return however many of its events were recorded (older rows were stored per event).
@@ -71,8 +85,9 @@ public final class RewardCalculator {
             }
         }
         for (OutcomeData.ReturnOutcome r : returns.values()) if (r.fraudConfirmed()) fraudLoss += r.refundAmount();
-        if (orderValue <= 0) orderValue = Math.max(0.0, fallbackOrderValue);
+        if (orderValue <= 0) orderValue = Math.max(0.0, scope.orderValue());
         double units = unitsByGroup.values().stream().mapToInt(Integer::intValue).sum();
+        if (scope.wholeOrder()) units = Math.max(units, orderUnits);
         double cost = costByGroup.values().stream().mapToDouble(Double::doubleValue).sum();
         int packages = parcels.size() + legacyPackages;
         Map<String, Double> c = new LinkedHashMap<>();
@@ -83,6 +98,8 @@ public final class RewardCalculator {
         c.put("fraud", fraudLoss <= 0 ? 0.0 : orderValue > 0 ? clamp(fraudLoss / orderValue) : 1.0);
         c.put("cx", clamp(contacts));
         c.put("inv", invRelief == null ? 0.0 : invRelief);
+        // §7 "first attempt": the units the first sourcing shipped, over the same denominator. Not weighted.
+        if (units > 0) c.put(FILL_FIRST_ATTEMPT, clamp(shippedFirstAttempt / units));
         return c;
     }
 
