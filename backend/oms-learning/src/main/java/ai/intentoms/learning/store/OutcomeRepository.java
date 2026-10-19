@@ -31,10 +31,13 @@ public class OutcomeRepository {
             .param("created", Timestamp.from(o.createdAt())).update() == 1;
     }
 
-    /** Replaces the payload of one outcome (a return's events merged into its single outcome). */
+    /**
+     * Replaces the payload of one outcome (a return's events merged into its single outcome). {@code created_at} moves
+     * to now: the outcome changed, and the reward sweep recomputes an episode whose outcomes are newer than its reward.
+     */
     public void updatePayload(String outcomeId, OutcomeData payload) {
-        jdbc.sql("update outcome set payload = :payload where tenant_id = :t and outcome_id = :id")
-            .param("payload", Jsonb.of(payload)).param("t", TenantContext.require()).param("id", outcomeId).update();
+        jdbc.sql("update outcome set payload = :payload, created_at = greatest(created_at, :now) where tenant_id = :t and outcome_id = :id")
+            .param("payload", Jsonb.of(payload)).param("now", Timestamp.from(Instant.now())).param("t", TenantContext.require()).param("id", outcomeId).update();
     }
 
     /**

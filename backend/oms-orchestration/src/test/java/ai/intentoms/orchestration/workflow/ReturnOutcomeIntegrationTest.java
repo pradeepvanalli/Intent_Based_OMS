@@ -69,6 +69,9 @@ class ReturnOutcomeIntegrationTest extends OrchestrationTestBase {
         drive(ReturnWorkflow.TYPE, rma.rmaId(), x -> WorkflowStatus.WAITING_SIGNAL.equals(x.status()) && engine.timeline(x.id()).stream().anyMatch(t -> "received".equals(t.name()) && "consumed".equals(t.status())));
         inbound.wms("DC-NJ", Map.of("eventId", "a2-insp", "type", "inspected", "rmaId", rma.rmaId(), "condition", "wrong_item", "note", "a different hoodie came back"));
         drive(ReturnWorkflow.TYPE, rma.rmaId(), x -> WorkflowStatus.isTerminal(x.status()) || WorkflowStatus.WAITING_TASK.equals(x.status()) || returns.getRma(rma.rmaId()).refunded());
+        // Score once while the return is part way through, so the final sweep must pick up the merged outcome.
+        drainOutbox();
+        rewards.sweepOnce();
         ReturnRma inspected = returns.getRma(rma.rmaId());
         if (!inspected.refunded()) returns.refund(rma.rmaId(), SYSTEM);
         // A person sets the disposition after the automatic one.
