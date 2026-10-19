@@ -29,6 +29,7 @@ class EpisodePipelineIntegrationTest extends PostgresTestBase {
     @Autowired OutcomeRepository outcomes;
     @Autowired OutcomeObserver observer;
     @Autowired RewardMaturityService rewards;
+    @Autowired ai.intentoms.learning.api.EpisodeController episodeApi;
 
     private Event delivered(String id, String orderId) {
         return new Event(id, TenantContext.require(), "order", orderId, 1, "order.delivered", Map.of("onTime", true, "lateByHours", 0),
@@ -64,5 +65,10 @@ class EpisodePipelineIntegrationTest extends PostgresTestBase {
         assertThat(after.status()).isEqualTo(EpisodeStatus.PROVISIONAL);
         assertThat(after.reward()).isNotNull();
         assertThat(after.rewardComponents()).containsEntry("otd", 1.0);
+
+        // The read API shows each episode of the order with the outcome that landed on it.
+        var views = episodeApi.forOrder(order);
+        assertThat(views).hasSize(2);
+        assertThat(views).allSatisfy(v -> assertThat(v.outcomes()).extracting(o -> o.payload().getClass().getSimpleName()).containsExactly("DeliveryOutcome"));
     }
 }
