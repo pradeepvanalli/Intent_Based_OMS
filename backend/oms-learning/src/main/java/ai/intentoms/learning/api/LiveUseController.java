@@ -41,8 +41,11 @@ public class LiveUseController {
     private final LiveParameterRepository live;
     private final ParameterResolver resolver;
     private final AuthorizationService authz;
+    private final ai.intentoms.learning.promotion.PromotionService promotion;
 
-    public LiveUseController(ProposalRepository proposals, LearnerRegistry registry, LiveParameterRepository live, ParameterResolver resolver, AuthorizationService authz) {
+    public LiveUseController(ProposalRepository proposals, LearnerRegistry registry, LiveParameterRepository live, ParameterResolver resolver, AuthorizationService authz,
+                             ai.intentoms.learning.promotion.PromotionService promotion) {
+        this.promotion = promotion;
         this.proposals = proposals;
         this.registry = registry;
         this.live = live;
@@ -92,10 +95,13 @@ public class LiveUseController {
         return proposals.get(p.proposalId());
     }
 
+    /** Switches a family off at once; the proposal that switched it on is closed as rolled back (defect 27). */
     @PostMapping("/{family}/revoke")
     @RequiresPermission(Permissions.LEARNING_ADMIN)
     public Map<String, Object> revoke(@PathVariable String family) {
-        boolean changed = resolver.revoke(family, authz.requirePrincipal().actorRef());
+        String by = authz.requirePrincipal().actorRef();
+        boolean changed = resolver.revoke(family, by);
+        if (changed) promotion.liveUseRevoked(family, ai.intentoms.platform.ledger.Actor.parse(by));
         return Map.of("family", family, "revoked", changed);
     }
 }

@@ -33,6 +33,8 @@ class PromotionRollbackIntegrationTest extends DecisionFabricTestBase {
     @Autowired LearningBaselineRepository baselines;
 
     private static final Actor HUMAN = Actor.parse("user:approver");
+    /** These tests exercise how each change type is applied and rolled back, not the gate (see PromotionGuardTest). */
+    private static final String OVERRIDE = "test: exercising application and rollback, not the evidence gate";
 
     @Test
     void thresholdPromotionPublishesANewVersionAndRollbackRestoresThePreviousOne() {
@@ -41,7 +43,7 @@ class PromotionRollbackIntegrationTest extends DecisionFabricTestBase {
         Proposal p = proposal("system:band_threshold", new ArtifactRef("decision", name), v1, PolicyChangeset.RiskTier.T1, ProposalStatus.APPROVED,
             new PolicyChange.ThresholdChange(name, "act", 0.8, 0.75));
 
-        promotion.promote(p.proposalId(), HUMAN);
+        promotion.promote(p.proposalId(), HUMAN, OVERRIDE);
 
         int v2 = liveVersion(name);
         assertThat(v2).isGreaterThan(v1);
@@ -64,7 +66,7 @@ class PromotionRollbackIntegrationTest extends DecisionFabricTestBase {
         int v1 = liveVersion(name);
         Proposal p = proposal("system:band_threshold", new ArtifactRef("decision", name), v1, PolicyChangeset.RiskTier.T1, ProposalStatus.APPROVED,
             new PolicyChange.ThresholdChange(name, "act", 0.8, 0.72));
-        promotion.promote(p.proposalId(), HUMAN);
+        promotion.promote(p.proposalId(), HUMAN, OVERRIDE);
         // A finished shadow (or any other version) retired after the promotion.
         var other = studio.createDraft(name, probeYaml(name, null).replace("confidence_gte: 0.8", "confidence_gte: 0.66"));
         definitions.setStatus(name, other.version(), "retired", null);
@@ -82,7 +84,7 @@ class PromotionRollbackIntegrationTest extends DecisionFabricTestBase {
             new PolicyChange.RuleAdd(name, "input.order.channel == 'marketplace'", "review", "marketplace_review"),
             new PolicyChange.RuleRetire(name, "never_fires", "never fired"));
 
-        promotion.promote(p.proposalId(), HUMAN);
+        promotion.promote(p.proposalId(), HUMAN, OVERRIDE);
 
         var rules = live(name).rules();
         assertThat(rules).extracting(r -> r.id()).contains("big_order").doesNotContain("never_fires");
@@ -98,7 +100,7 @@ class PromotionRollbackIntegrationTest extends DecisionFabricTestBase {
         String name = installProbe("f4_fields");
         Proposal p = proposal("system:provider_routing", new ArtifactRef("decision", name), liveVersion(name), PolicyChangeset.RiskTier.T1, ProposalStatus.APPROVED,
             new PolicyChange.ParameterChange("fallbackProvider", null, "heuristic"), new PolicyChange.ParameterChange("timeoutMs", 800, 900));
-        promotion.promote(p.proposalId(), HUMAN);
+        promotion.promote(p.proposalId(), HUMAN, OVERRIDE);
         assertThat(live(name).fallbackProvider()).isEqualTo("heuristic");
         assertThat(live(name).timeoutMs()).isEqualTo(900);
     }
@@ -111,7 +113,7 @@ class PromotionRollbackIntegrationTest extends DecisionFabricTestBase {
         Proposal p = proposal("system:sourcing_policy_bandit", new ArtifactRef("config", key), 0, PolicyChangeset.RiskTier.T1, ProposalStatus.APPROVED,
             new PolicyChange.WeightChange(key, "cost", 0.5, 0.4));
 
-        promotion.promote(p.proposalId(), HUMAN);
+        promotion.promote(p.proposalId(), HUMAN, OVERRIDE);
 
         Map<String, Object> w = config.getMap(key);
         assertThat(((Number) w.get("cost")).doubleValue()).isEqualTo(0.4);
@@ -128,12 +130,12 @@ class PromotionRollbackIntegrationTest extends DecisionFabricTestBase {
         String key = "autonomy.allowed_actions_test_" + Instant.now().toEpochMilli();
         Proposal add = proposal("system:author", new ArtifactRef("config", key), 0, PolicyChangeset.RiskTier.T1, ProposalStatus.APPROVED,
             new PolicyChange.AllowListChange(key, "reroute_carrier", true));
-        promotion.promote(add.proposalId(), HUMAN);
+        promotion.promote(add.proposalId(), HUMAN, OVERRIDE);
         assertThat(config.getList(key)).containsExactly("reroute_carrier");
 
         Proposal refund = proposal("system:author", new ArtifactRef("config", key), 0, PolicyChangeset.RiskTier.T1, ProposalStatus.APPROVED,
             new PolicyChange.AllowListChange(key, "refund", true));
-        assertThatThrownBy(() -> promotion.promote(refund.proposalId(), HUMAN)).isInstanceOf(ConflictException.class).hasMessageContaining("never autonomous");
+        assertThatThrownBy(() -> promotion.promote(refund.proposalId(), HUMAN, OVERRIDE)).isInstanceOf(ConflictException.class).hasMessageContaining("never autonomous");
         assertThat(config.getList(key)).containsExactly("reroute_carrier");
 
         promotion.rollback(add.proposalId(), HUMAN, null);
@@ -146,7 +148,7 @@ class PromotionRollbackIntegrationTest extends DecisionFabricTestBase {
         Proposal p = proposal("system:node_reliability", new ArtifactRef("parameter", "live:" + family), 0, PolicyChangeset.RiskTier.T0, ProposalStatus.APPROVED,
             new PolicyChange.ParameterChange(family, Map.of("enabled", false), Map.of("enabled", true, "min", 0.0, "max", 0.5, "maxStep", 0.1)));
 
-        promotion.promote(p.proposalId(), HUMAN);
+        promotion.promote(p.proposalId(), HUMAN, OVERRIDE);
         assertThat(parameters.isLive(family)).isTrue();
         assertThat(parameters.resolve(family, 0.2, 0.9)).isCloseTo(0.3, org.assertj.core.data.Offset.offset(1e-9)); // max 0.5, then max step 0.1 from 0.2
 
@@ -160,10 +162,10 @@ class PromotionRollbackIntegrationTest extends DecisionFabricTestBase {
         String name = installProbe("f4_stack");
         Proposal first = proposal("system:band_threshold", new ArtifactRef("decision", name), liveVersion(name), PolicyChangeset.RiskTier.T1, ProposalStatus.APPROVED,
             new PolicyChange.ThresholdChange(name, "act", 0.8, 0.78));
-        promotion.promote(first.proposalId(), HUMAN);
+        promotion.promote(first.proposalId(), HUMAN, OVERRIDE);
         Proposal second = proposal("system:band_threshold", new ArtifactRef("decision", name), liveVersion(name), PolicyChangeset.RiskTier.T1, ProposalStatus.APPROVED,
             new PolicyChange.ThresholdChange(name, "act", 0.78, 0.76));
-        promotion.promote(second.proposalId(), HUMAN);
+        promotion.promote(second.proposalId(), HUMAN, OVERRIDE);
 
         assertThatThrownBy(() -> promotion.rollback(first.proposalId(), HUMAN, null)).isInstanceOf(ConflictException.class).hasMessageContaining("roll back the later change first");
         promotion.rollback(second.proposalId(), HUMAN, null);
@@ -178,7 +180,7 @@ class PromotionRollbackIntegrationTest extends DecisionFabricTestBase {
         for (int i = 0; i < 10; i++) insertRecord(name, v1, before.plusSeconds(i), "approve", 0.9, 40, null, null, "system:test");
         Proposal p = proposal("system:band_threshold", new ArtifactRef("decision", name), v1, PolicyChangeset.RiskTier.T1, ProposalStatus.APPROVED,
             new PolicyChange.ThresholdChange(name, "act", 0.8, 0.76));
-        promotion.promote(p.proposalId(), HUMAN);
+        promotion.promote(p.proposalId(), HUMAN, OVERRIDE);
         int v2 = liveVersion(name);
         Instant after = Instant.now().plusMillis(50);
         for (int i = 0; i < 10; i++) {

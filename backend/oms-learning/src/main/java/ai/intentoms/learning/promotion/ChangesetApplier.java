@@ -79,6 +79,63 @@ public final class ChangesetApplier {
         return edits.isEmpty() ? yaml : DefinitionEditor.apply(yaml, edits);
     }
 
+    /** Tolerance on a weight's {@code from} versus its current value (the learner rounds what it read). */
+    static final double FROM_TOLERANCE = 5e-4;
+    /** How far a weight vector that names every weight may be from summing to 1 before it is refused. */
+    static final double SUM_TOLERANCE = 0.02;
+
+    /**
+     * The new value of a tenant config key after applying every change of a changeset at once (defect 6). Weight changes
+     * are applied as one vector edit: each named weight is set to its {@code to}, the weights the changeset leaves alone
+     * are rescaled together so the map still sums to 1, and every {@code from} must match the value it replaces. When
+     * the changeset names every weight, their {@code to}s must already sum to 1 (within 0.02) and are normalised.
+     * {@code current} may be null (key not stored); {@code defaults} then supplies the unnamed weights.
+     */
+    @SuppressWarnings("unchecked")
+    public static Object applyAllToConfig(String key, Object current, List<PolicyChange> changes, Object defaults) {
+        List<PolicyChange.WeightChange> weights = new ArrayList<>();
+        Object value = current;
+        for (PolicyChange c : changes) {
+            if (c instanceof PolicyChange.WeightChange wc) weights.add(wc);
+            else value = applyToConfig(key, value, c);
+        }
+        if (weights.isEmpty()) return value;
+        Map<String, Object> base = value instanceof Map<?, ?> cm ? new LinkedHashMap<>((Map<String, Object>) cm)
+            : defaults instanceof Map<?, ?> dm ? new LinkedHashMap<>((Map<String, Object>) dm) : new LinkedHashMap<>();
+        Map<String, Double> named = new LinkedHashMap<>();
+        for (PolicyChange.WeightChange wc : weights) {
+            if (named.containsKey(wc.weightKey())) throw new ValidationException("Weight " + key + "." + wc.weightKey() + " is changed twice in one proposal");
+            Object existing = base.get(wc.weightKey());
+            if (existing instanceof Number n && Math.abs(n.doubleValue() - wc.from()) > FROM_TOLERANCE) {
+                throw new ValidationException("Weight " + key + "." + wc.weightKey() + " is " + n + ", not " + wc.from() + " as the proposal assumed; re-draft it");
+            }
+            if (wc.to() < 0) throw new ValidationException("Weight " + key + "." + wc.weightKey() + " cannot be negative");
+            named.put(wc.weightKey(), wc.to());
+        }
+        double namedSum = named.values().stream().mapToDouble(Double::doubleValue).sum();
+        double othersNow = 0;
+        for (var e : base.entrySet()) if (!named.containsKey(e.getKey()) && e.getValue() instanceof Number n) othersNow += n.doubleValue();
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (othersNow > 0) {
+            double othersTarget = 1.0 - namedSum;
+            if (othersTarget < 0) throw new ValidationException("The weights this proposal sets for " + key + " add up to " + round(namedSum) + ", leaving nothing for the others");
+            for (var e : base.entrySet()) {
+                if (named.containsKey(e.getKey())) out.put(e.getKey(), round(named.get(e.getKey())));
+                else if (e.getValue() instanceof Number n) out.put(e.getKey(), round(n.doubleValue() * othersTarget / othersNow));
+                else out.put(e.getKey(), e.getValue());
+            }
+            named.forEach((k, v) -> out.putIfAbsent(k, round(v)));
+        } else {
+            if (Math.abs(namedSum - 1.0) > SUM_TOLERANCE) {
+                throw new ValidationException("The weights for " + key + " would add up to " + round(namedSum) + " instead of 1"
+                    + (base.isEmpty() ? "; the tenant has no stored " + key + " and no default is known, so the proposal must list every weight" : ""));
+            }
+            for (var e : base.entrySet()) if (!named.containsKey(e.getKey())) out.put(e.getKey(), e.getValue());
+            named.forEach((k, v) -> out.put(k, round(v / namedSum)));
+        }
+        return out;
+    }
+
     /** The new value of a tenant config key after applying one change. {@code current} may be null (key absent). */
     @SuppressWarnings("unchecked")
     public static Object applyToConfig(String key, Object current, PolicyChange change) {

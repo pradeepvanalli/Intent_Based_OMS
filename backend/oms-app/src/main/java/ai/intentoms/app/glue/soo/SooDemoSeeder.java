@@ -78,6 +78,8 @@ public class SooDemoSeeder {
     public static final String MARKER = "learning.demo_seed";
     public static final int VERSION = 1;
     static final String SEED = "system:demo-seed";
+    /** Seeded promotions have no live evidence behind them; the EX-07 gate records this reason as the override. */
+    static final String SEEDED_OVERRIDE = "Demo reference data: seeded promotion with no live evidence";
     static final String STRATEGY = "user:strategy";
     static final String ADMIN = "user:admin";
 
@@ -338,7 +340,7 @@ public class SooDemoSeeder {
         evaluate(p);
         if (!promote) return;
         approve(id, ADMIN);
-        promotion.promote(id, Actor.parse(ADMIN));
+        promotion.promote(id, Actor.parse(ADMIN), SEEDED_OVERRIDE);
     }
 
     /** PROMOTED decision change with rollback available: the node score acts a little sooner (replay shows confirm-band orders shipped later). */
@@ -353,7 +355,7 @@ public class SooDemoSeeder {
             PolicyChangeset.RiskTier.T1, "system:band_threshold", hyp);
         evaluate(p);
         approve(PROP_SOURCING_THRESHOLD, STRATEGY);
-        promotion.promote(PROP_SOURCING_THRESHOLD, Actor.parse(ADMIN));
+        promotion.promote(PROP_SOURCING_THRESHOLD, Actor.parse(ADMIN), SEEDED_OVERRIDE);
         ids.put("promotedDecision", PROP_SOURCING_THRESHOLD);
     }
 
@@ -371,7 +373,7 @@ public class SooDemoSeeder {
             "Weigh cost a little more in the sourcing plan score", PolicyChangeset.RiskTier.T1, "system:sourcing_weights", hyp);
         evaluate(p);
         approve(PROP_WEIGHTS, STRATEGY);
-        promotion.promote(PROP_WEIGHTS, Actor.parse(ADMIN));
+        promotion.promote(PROP_WEIGHTS, Actor.parse(ADMIN), SEEDED_OVERRIDE);
         promotion.rollback(PROP_WEIGHTS, Actor.parse(ADMIN), "On-time delivery slipped 2 points in the first week; reverting while we look at store nodes");
         ids.put("rolledBack", PROP_WEIGHTS);
     }

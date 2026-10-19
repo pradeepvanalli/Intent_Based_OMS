@@ -54,6 +54,7 @@ class ExplainabilityIntegrationTest extends PostgresTestBase {
     private Proposal promoted(String decision, double from, double to, String approvedBy, Instant at) {
         Proposal p = LearningFixtures.threshold(decision, from, to, "system:band_threshold", null);
         proposals.insert(p);
+        proposals.markEvaluated(p.proposalId(), Map.of("liftEstimate", 0.01), at.minusSeconds(120));
         if (approvedBy != null) proposals.approve(p.proposalId(), approvedBy, at.minusSeconds(60));
         proposals.promote(p.proposalId(), at);
         return p;
@@ -121,6 +122,7 @@ class ExplainabilityIntegrationTest extends PostgresTestBase {
         Proposal b = LearningFixtures.threshold("metrics_" + Ids.shortId(), 0.8, 0.82, "system:override_to_rule", null);
         proposals.insert(a);
         proposals.insert(b);
+        proposals.markEvaluated(a.proposalId(), Map.of("liftEstimate", 0.01), Instant.now());
         proposals.promote(a.proposalId(), Instant.now());
         proposals.rollback(a.proposalId(), "guardrail breach", Instant.now());
 

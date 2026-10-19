@@ -44,6 +44,11 @@ public class LearningEvents {
     public void learnerPaused(String learnerKey, Actor actor, Map<String, Object> payload) { append("learner:" + learnerKey, "learner.paused", actor, payload); }
     public void learnerResumed(String learnerKey, Actor actor, Map<String, Object> payload) { append("learner:" + learnerKey, "learner.resumed", actor, payload); }
     public void tenantKillSwitch(Actor actor, Map<String, Object> payload) { append("tenant-kill-switch", "learning.kill_switch_changed", actor, payload); }
+    /** GV-03 global level: recorded in the acting tenant's ledger, since the switch itself is tenant-independent. */
+    public void globalKillSwitch(Actor actor, Map<String, Object> payload) { append("global-kill-switch", "learning.global_kill_switch_changed", actor, payload); }
+    public void learnerBudgetChanged(String learnerKey, Actor actor, Map<String, Object> payload) { append("learner:" + learnerKey, "learner.budget_changed", actor, payload); }
+    /** §5: a rejected or rolled-back change returns to its hypothesis as evidence against it. */
+    public void hypothesisCounterEvidence(String hypothesisId, Actor actor, Map<String, Object> payload) { append(hypothesisId, "hypothesis.counter_evidence", actor, payload); }
     public void liveParameterChanged(String parameter, Actor actor, Map<String, Object> payload) { append("parameter:" + parameter, "parameter.live_changed", actor, payload); }
 
     public void digestPublished(String digestId, Actor actor, Map<String, Object> payload) { append(digestId, "learning.digest_published", actor, payload); }
