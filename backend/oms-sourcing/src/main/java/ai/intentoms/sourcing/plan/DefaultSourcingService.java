@@ -230,7 +230,8 @@ public class DefaultSourcingService implements SourcingService {
             List<String> reasons = new ArrayList<>();
             reasons.add(refused ? "re-sourced after reject at " + rejectedNodes + ": " + reason
                 : "re-sourced away from " + rejectedNodes + " without a node penalty, the node did not refuse: " + reason);
-            // OC-02: the re-sourcing decision is about the rejected group, so its episode is that group's.
+            // OC-02: the re-sourcing decision is about the rejected group, so its episode is keyed by that group; the outcomes
+            // it earns are those of the replacement groups it plans (order.sourced names them, GroupLineage joins them).
             SourcingResult result = sourceInternal(updated, rejectedNodes, actor, reasons, rejectedIds.iterator().next());
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("reason", reason == null ? "" : reason);
@@ -437,6 +438,12 @@ public class DefaultSourcingService implements SourcingService {
         payload.put("contributionMargin", plan.pnl().contributionMargin());
         payload.put("meetsFloor", plan.meetsMarginFloor());
         payload.put("decisionRecordId", recordId == null ? "" : recordId);
+        // OC-02: every decision that shaped this plan, so the groups it creates carry their lineage (GroupLineage).
+        List<String> planners = new ArrayList<>();
+        if (recordId != null) planners.add(recordId);
+        if (plan.explain().get("splitAcceptability") instanceof Map<?, ?> split && split.get("recordId") != null && !String.valueOf(split.get("recordId")).isBlank())
+            planners.add(String.valueOf(split.get("recordId")));
+        payload.put("decisionRecordIds", planners);
         payload.put("softScores", run.soft().byNode());
         payload.put("score", plan.score());
         payload.put("unsourcedLineIds", plan.unsourcedLineIds());

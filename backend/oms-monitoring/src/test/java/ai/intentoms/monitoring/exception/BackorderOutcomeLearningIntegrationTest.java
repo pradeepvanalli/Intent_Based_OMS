@@ -150,6 +150,40 @@ class BackorderOutcomeLearningIntegrationTest extends MonitoringTestBase {
     @Autowired ai.intentoms.platform.ledger.OutboxRelay outbox;
     @Autowired ai.intentoms.learning.store.EpisodeRepository episodes;
 
+    /**
+     * OC-02 on the live path (audit: no live episode had a line id, because a line had to stay backordered for days before
+     * the SLA breach ran the decision): the line is decided as soon as it is backordered, on its own decision point; the
+     * SLA breach later re-evaluates that same point, it does not open a second episode.
+     */
+    @Test
+    void aLineIsDecidedOnItsOwnDecisionPointAsSoonAsItIsBackordered() {
+        Order o = backorderedOrder();
+        Map<String, Object> p = new LinkedHashMap<>();
+        p.put("entityType", "order_line");
+        p.put("entityId", o.id() + ":L1");
+        p.put("from", "awaiting_sourcing");
+        p.put("to", "backordered");
+        p.put("trigger", "decision.sourcing_plan");
+        subscriber.on(new Event("evt_" + o.id() + "_tr", TENANT, "order", o.id(), 5, "order.transitioned", p, Actor.system("workflow"), null, o.id(), Map.of(), Instant.now()));
+        List<DecisionRecord> decided = records.forSubject("order", o.id()).stream().filter(r -> BackorderFeatures.DECISION.equals(r.decision())).toList();
+        assertThat(decided).singleElement().satisfies(d -> {
+            assertThat(ai.intentoms.learning.model.DecisionPoints.lineId(d)).isEqualTo("L1");
+            assertThat(d.input()).containsEntry("orderId", o.id());
+        });
+        int guard = 0;
+        while (outbox.drainBatch() > 0 && guard++ < 50) { /* deliver decision.evaluated to the episode assembler */ }
+        ai.intentoms.platform.tenant.TenantContext.set(TENANT);
+        var episode = episodes.findByDecisionId(decided.get(0).id()).orElseThrow();
+        assertThat(episode.lineId()).isEqualTo("L1");
+        assertThat(episode.orderId()).isEqualTo(o.id());
+
+        DecisionRecord later = breach(o);
+        guard = 0;
+        while (outbox.drainBatch() > 0 && guard++ < 50) { }
+        ai.intentoms.platform.tenant.TenantContext.set(TENANT);
+        assertThat(episodes.find(episode.episodeId()).orElseThrow().lastDecisionId()).as("the breach re-evaluates the line's point").isEqualTo(later.id());
+    }
+
     /** OC-02: each backordered line's decision is its own decision point, so its episode carries the line and the order. */
     @Test
     void theBackorderDecisionOpensTheLinesEpisode() {

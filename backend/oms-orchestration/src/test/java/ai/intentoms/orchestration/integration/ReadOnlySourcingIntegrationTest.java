@@ -83,4 +83,43 @@ class ReadOnlySourcingIntegrationTest extends OrchestrationTestBase {
         });
         assertThat(orderEpisode(o).lastDecisionId()).as("the order-level sourcing episode is not repointed").isEqualTo(before.lastDecisionId());
     }
+
+    @Autowired ai.intentoms.learning.store.OutcomeRepository outcomes;
+
+    private List<String> outcomeTypes(Episode e) {
+        return outcomes.forEpisode(e.episodeId()).stream().map(r -> r.payload().getClass().getSimpleName()).toList();
+    }
+
+    /**
+     * OC-02 as the audit reproduced it (A-N1): a store rejects, the workflow re-sources, the replacement ships and is
+     * delivered. The re-sourcing decision chose the node that shipped, so its episode (keyed by the group it replaced)
+     * earns the shipment and delivery; the original order-level choice, whose node refused, does not get the credit.
+     */
+    @Test
+    void theReSourcingEpisodeEarnsTheReplacementsOutcomesAndTheFailedChoiceDoesNot() {
+        Order o = sourcedOrder();
+        Episode original = orderEpisode(o);
+        FulfilmentGroup rejected = o.fulfilmentGroups().get(0);
+        inbound.wms(rejected.nodeId(), wmsEvent("rej-" + o.id(), "store_rejected", o.id(), java.util.Map.of("reason", "no staff")));
+        drive(StandardShipOrderWorkflow.TYPE, o.id(), w -> WorkflowStatus.WAITING_SIGNAL.equals(w.status()) && "await_fulfilment".equals(w.currentStep())
+            && w.vars().get("cycle") instanceof Number n && n.intValue() >= 1);
+        drainOutbox();
+        List<FulfilmentGroup> replacements = orders.get(o.id()).fulfilmentGroups().stream()
+            .filter(g -> !"rejected".equalsIgnoreCase(g.status()) && !"cancelled".equalsIgnoreCase(g.status())).toList();
+        assertThat(replacements).isNotEmpty().noneMatch(g -> g.id().equals(rejected.id()));
+
+        for (FulfilmentGroup g : replacements) {
+            inbound.wms(g.nodeId(), wmsEvent("ship-" + g.id(), "shipped", o.id(), java.util.Map.of("fulfilmentGroupId", g.id(), "carrier", "UPS", "service", "ground", "tracking", "T-" + g.id())));
+        }
+        driveToStep(StandardShipOrderWorkflow.TYPE, o.id(), WorkflowStatus.WAITING_SIGNAL, "await_delivery");
+        for (FulfilmentGroup g : replacements) inbound.carrier(java.util.Map.of("eventId", "del-" + g.id(), "type", "delivered", "orderId", o.id(), "tracking", "T-" + g.id()));
+        driveToTerminal(StandardShipOrderWorkflow.TYPE, o.id());
+        drainOutbox();
+        drainOutbox();
+
+        Episode resourcing = episodes.forOrder(o.id()).stream().filter(e -> DECISION.equals(e.decisionName()) && rejected.id().equals(e.fulfillmentGroupId())).findFirst().orElseThrow();
+        assertThat(outcomeTypes(resourcing)).as("outcomes of the re-sourcing episode").contains("FulfillmentOutcome", "DeliveryOutcome");
+        assertThat(outcomeTypes(orderEpisode(o))).as("outcomes of the original, failed choice " + original.episodeId())
+            .doesNotContain("FulfillmentOutcome", "DeliveryOutcome");
+    }
 }
