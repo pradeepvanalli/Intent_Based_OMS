@@ -127,6 +127,7 @@ export function servedWhy(reason: string | null | undefined, source: string | nu
     if (r.includes('minimum') || r.includes('maximum')) return 'used, kept inside the allowed range';
     return 'used';
   }
+  if (r.includes('holdout')) return 'not used: this customer is in the comparison group that keeps the standard values';
   if (r.includes('not promoted')) return 'not used: not switched on for live decisions yet';
   if (r.includes('l0') || r.includes('observe')) return 'not used: this learner is only watching';
   if (r.includes('no learned value')) return 'not used: nothing learned yet';
