@@ -4,6 +4,8 @@ import { TENANT } from '../support/roles';
 test.describe('Sign in', () => {
   test('a demo user signs in and lands on the Control Tower', async ({ page }) => {
     await page.goto('/login');
+    // The tenant field is a text box until the tenant list has loaded, then a list; decide once the page has settled.
+    await page.waitForLoadState('networkidle');
     const tenant = page.getByLabel('Tenant');
     if (await tenant.evaluate((el) => el.tagName === 'SELECT')) await tenant.selectOption(TENANT); else await tenant.fill(TENANT);
     await page.getByLabel('User').fill('ops');
