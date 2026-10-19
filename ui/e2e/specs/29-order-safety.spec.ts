@@ -127,9 +127,13 @@ test.describe('Order safety (API)', () => {
       const ids = await Promise.all(Array.from({ length: 6 }, () => createOrder(admin, {
         lines: [{ lineId: '1', sku, qty: 1, unitPrice: { amount: 120.0, currency: 'USD' } }],
       })));
+      // Settled means past reservation: waiting for fulfilment (or finished) on a live group, or backordered, or failed.
+      // A group exists from the moment an order is planned, before its reservation runs, so a planned-but-not-yet-reserved
+      // order is not counted as holding the unit.
       const settled = async (id: string) => {
         const v = await view(admin, id);
-        return v.fulfilmentGroups.some((g) => !/rejected|cancelled/i.test(g.status)) || /cancelled|backorder/.test(v.order.status) || /COMPENSATED|FAILED/.test(v.workflow?.status ?? '');
+        const pastReservation = /WAITING_SIGNAL|COMPLETED/.test(v.workflow?.status ?? '') && v.fulfilmentGroups.some((g) => !/rejected|cancelled/i.test(g.status));
+        return pastReservation || /cancelled|backorder/.test(v.order.status) || /COMPENSATED|FAILED/.test(v.workflow?.status ?? '');
       };
       await expect.poll(async () => (await Promise.all(ids.map(settled))).every(Boolean), { timeout: 90_000, message: 'every racing order sourced or settled' }).toBe(true);
 
@@ -148,6 +152,10 @@ test.describe('Order safety (API)', () => {
       // At most one order can hold the last unit; the rest were sourced elsewhere first, or lost it at reservation and were re-sourced.
       const atNode = (await Promise.all(ids.map((id) => view(admin, id)))).filter((v) => v.fulfilmentGroups.some((g) => g.nodeId === node && !/rejected|cancelled/i.test(g.status))).length;
       expect(atNode).toBeLessThanOrEqual(1);
+      // The invariant behind A1: the node never promises more than it holds.
+      const after = await ok<Atp>(admin.get(`/api/v1/inventory/${sku}/nodes/${node}`));
+      expect(after.reserved + after.allocated, `${node} reserved ${after.reserved} + allocated ${after.allocated} of ${after.onHand} on hand`).toBeLessThanOrEqual(after.onHand);
+      expect(after.available).toBeGreaterThanOrEqual(0);
       test.info().annotations.push({ type: 'A1', description: `${resourced} of ${ids.length} orders lost the last unit at reservation and were re-sourced` });
     } finally {
       const now = await ok<Atp>(admin.get(`/api/v1/inventory/${sku}/nodes/${node}`));
