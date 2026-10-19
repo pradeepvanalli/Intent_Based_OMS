@@ -3,6 +3,11 @@ import { apiAs } from '../support/api';
 import { ok, uid } from '../support/data';
 import { toast } from '../support/ui';
 
+/** How the UI names an actor (mirrors copy.ts personName). */
+const person = (ref: string): string => ref === 'system:demo-seed' ? 'demo data'
+  : ref.startsWith('system:demo-seed.') ? `${ref.slice('system:demo-seed.'.length) === 'strategy' ? 'strategy lead' : ref.slice('system:demo-seed.'.length)} (demo)`
+  : ref.replace(/^(user|system):/, '');
+
 type Objective = { version: number; status: string; weights: Record<string, number>; constraints: Record<string, unknown>; createdBy: string; approvedBy?: string; sourceText?: string; draftMethod?: string };
 
 /**
@@ -16,13 +21,13 @@ test.describe('Settings', () => {
     const live = await ok<Objective>(api.get('/api/v1/learning/objective'));
     const history = await ok<Objective[]>(api.get('/api/v1/learning/objective/history', { params: { limit: 50 } }));
     const v1 = history.find((h) => h.version === 1);
-    expect(v1?.createdBy, 'seeded v1 drafted by the strategy lead').toBe('user:strategy');
-    expect(v1?.approvedBy, 'and approved by a different person').toBe('user:admin');
+    expect(v1?.createdBy, 'seeded v1 drafted by the demo strategy lead').toBe('system:demo-seed.strategy');
+    expect(v1?.approvedBy, 'and approved by a different (demo) person').toBe('system:demo-seed.admin');
 
     const page = await pageAs('strategy');
     await page.goto('/learning?tab=settings');
     await expect(page.getByText(`In use: version ${live.version}`)).toBeVisible();
-    await expect(page.getByText(new RegExp(`approved by ${live.approvedBy!.replace(/^user:/, '')}`)).first()).toBeVisible();
+    await expect(page.getByText(`approved by ${person(live.approvedBy!)}`, { exact: false }).first()).toBeVisible();
     await expect(page.getByText('No automatic changes during:')).toBeVisible();
     await expect(page.getByRole('meter', { name: 'Deliver on time weight' })).toBeVisible();
   });

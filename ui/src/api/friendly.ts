@@ -32,6 +32,11 @@ export function friendlyError(p: ProblemDetail): FriendlyError {
     }
     case p.status === 404:
       return { title: 'Not found', message: human ?? 'It may have been removed, or the link is out of date.', technical };
+    case p.code === 'proposal_cooling_down': {
+      // Defect 26: the same change was rolled back recently; say so in words even when the server's sentence is long.
+      const days = typeof p.cooldownDays === 'number' ? p.cooldownDays : undefined;
+      return { title: 'Rolled back recently', message: human ?? `The same change was rolled back recently, so it can't be proposed again${days ? ` for ${days} days` : ''} without different evidence.`, technical };
+    }
     case p.status === 409:
       return { title: 'This could not be done right now', message: human ?? 'Something changed while you were working. Refresh and try again.', technical };
     case p.status === 429:

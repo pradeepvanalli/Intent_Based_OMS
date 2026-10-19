@@ -68,9 +68,9 @@ test.describe('Changes', () => {
     await strategy.goto('/learning?tab=changes');
     await strategy.getByRole('button', { name: 'Propose live use' }).click();
     const form = dialog(strategy, 'Propose using a learned value live');
-    await form.getByLabel('Learned value').selectOption({ label: 'Penalty for nodes that reject orders — from Node reliability' });
-    await form.getByLabel('Lowest allowed').fill('0.1');
-    await form.getByLabel('Highest allowed').fill('2');
+    await form.getByLabel('Learned value').selectOption({ label: 'Prefer aged stock when costs are close — from Stock age' });
+    await form.getByLabel('Lowest allowed').fill('0');
+    await form.getByLabel('Highest allowed').fill('1');
     await form.getByLabel('Biggest step from standard').fill('0.5');
     await form.getByLabel('Why (optional)').fill(marker);
     await form.getByRole('button', { name: 'Draft proposal' }).click();
@@ -82,7 +82,7 @@ test.describe('Changes', () => {
       return !!mine;
     }).toBe(true);
     const id = mine!.proposalId;
-    expect(mine!.changeset.target.name).toBe('live:sourcing.reject_penalty');
+    expect(mine!.changeset.target.name).toBe('live:sourcing.aged_stock_tiebreak');
 
     // The author sees why they cannot approve; the server refuses too.
     const own = await openChange(strategy, id);
@@ -107,7 +107,7 @@ test.describe('Changes', () => {
     await waive.getByLabel('Why go live anyway?').fill('Shadow run not possible for a live-use family; e2e suite');
     await waive.getByRole('button', { name: 'Go live anyway' }).click();
     await expect(toast(admin, 'Live now')).toBeVisible();
-    await expect.poll(async () => (await liveParameters(adminApi)).find((p) => p.parameter === 'sourcing.reject_penalty')?.status).toBe('LIVE');
+    await expect.poll(async () => (await liveParameters(adminApi)).find((p) => p.parameter === 'sourcing.aged_stock_tiebreak')?.status).toBe('LIVE');
 
     await drawer.getByRole('button', { name: 'Roll back' }).click();
     const reason = dialog(admin, 'Roll back this change');
@@ -118,7 +118,7 @@ test.describe('Changes', () => {
     const after = await proposal(adminApi, id);
     expect(after.status).toBe('ROLLED_BACK');
     expect(after.approvedBy).toBe('user:admin');
-    await expect.poll(async () => (await liveParameters(adminApi)).find((p) => p.parameter === 'sourcing.reject_penalty')?.status).toBe('REVOKED');
+    await expect.poll(async () => (await liveParameters(adminApi)).find((p) => p.parameter === 'sourcing.aged_stock_tiebreak')?.status).toBe('REVOKED');
   });
 
   test('a change can be rejected with a reason', async ({ pageAs }) => {

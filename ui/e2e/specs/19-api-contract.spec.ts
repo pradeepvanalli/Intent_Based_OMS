@@ -90,7 +90,7 @@ test.describe('Learning REST contract', () => {
     const strategy = await apiAs('strategy');
     const admin = await apiAs('admin');
     // A family with no live use yet, so rolling back its promotion switches live use off again.
-    const p = await proposeLiveUse(strategy, { family: 'monitoring.warn_early_threshold', learnerKey: 'warn_early', min: 0.3, max: 0.9, maxStep: 0.1, reason: `e2e contract ${uid()}` });
+    const p = await proposeLiveUse(strategy, { family: 'inventory.inbound_reliability', learnerKey: 'inventory_inbound_reliability', min: 0.3, max: 1, maxStep: 0.1, reason: `e2e contract ${uid()}` });
     expect(p).toMatchObject({ status: 'DRAFT', tier: 'T1', createdBy: 'user:strategy' });
     const evaluated = await ok<Proposal>(admin.post(`${L}/proposals/${p.proposalId}/evaluate`));
     expect(evaluated.evaluationReport?.method).toBeTruthy();
@@ -98,11 +98,11 @@ test.describe('Learning REST contract', () => {
     expect((await ok<Proposal>(admin.post(`${L}/proposals/${p.proposalId}/approve`, { data: {} }))).status).toBe('APPROVED');
     expect((await ok<Proposal>(admin.post(`${L}/proposals/${p.proposalId}/promote`, { data: { overrideReason: 'live-use families cannot be replayed; e2e contract test' } }))).status).toBe('PROMOTED');
     const liveNow = await ok<Array<{ parameter: string; status: string }>>(admin.get(`${L}/live-parameters`));
-    expect(liveNow.find((x) => x.parameter === 'monitoring.warn_early_threshold')?.status).toBe('LIVE');
+    expect(liveNow.find((x) => x.parameter === 'inventory.inbound_reliability')?.status).toBe('LIVE');
     const rolled = await ok<Proposal>(admin.post(`${L}/promotions/${p.proposalId}/rollback`, { data: { reason: 'e2e contract rollback' } }));
     expect(rolled).toMatchObject({ status: 'ROLLED_BACK', rolledBackReason: 'e2e contract rollback' });
     const live = await ok<Array<{ parameter: string; status: string }>>(admin.get(`${L}/live-parameters`));
-    expect(live.find((x) => x.parameter === 'monitoring.warn_early_threshold')?.status).toBe('REVOKED');
+    expect(live.find((x) => x.parameter === 'inventory.inbound_reliability')?.status).toBe('REVOKED');
 
     const q = await proposeLiveUse(strategy, { family: 'promise.buffer_days', learnerKey: 'promise_buffer', reason: `e2e contract reject ${uid()}` });
     expect((await ok<Proposal>(admin.post(`${L}/proposals/${q.proposalId}/reject`, { data: { reason: 'not now' } })))).toMatchObject({ status: 'REJECTED', rejectedReason: 'not now' });

@@ -13,7 +13,7 @@ import { fmtDateTime, fmtNum, fmtPct, humanize, relTime, valueLabel } from '../.
 import { toast } from '../../lib/toast';
 import { useSession } from '../../auth/session';
 import { DemoBadge, InfoTip, ReasonDialog, Technical } from './Bits';
-import { METHOD_WORDS, POSTAL_REASON_CODES, STATUS_TONE, STATUS_WORDS, TIER_WORDS, VERDICT, authorName, changeSentence, decisionLabel, familyName, isPostalScoped, proposalTitle, replayPhrase } from './copy';
+import { METHOD_WORDS, POSTAL_REASON_CODES, STATUS_TONE, STATUS_WORDS, TIER_WORDS, VERDICT, authorName, changeSentence, decisionLabel, familyName, isPostalScoped, proposalTitle, replayPhrase, personName } from './copy';
 
 type Dialogs = 'approve' | 'reject' | 'rollback' | 'override' | null;
 
@@ -90,7 +90,7 @@ function CardBody({ card, names }: { card: ChangeCard; names: Map<string, string
           <div className="section-title">Since the last approved version <InfoTip text="Small automatic changes add up. This shows everything that changed since a person last approved this policy, and where it lands if this change goes live." /></div>
           <p className="small" style={{ margin: 0 }}>
             {card.cumulative.baseline?.approvedBy
-              ? <>Last approved by <b>{card.cumulative.baseline.approvedBy.replace(/^user:/, '')}</b> {relTime(card.cumulative.baseline.approvedAt)}.</>
+              ? <>Last approved by <b>{personName(card.cumulative.baseline.approvedBy)}</b> {relTime(card.cumulative.baseline.approvedAt)}.</>
               : <>No change to this policy has been approved yet; the original version is the baseline.</>}
             {' '}{card.cumulative.automaticPromotionsSinceBaseline > 0 ? `${card.cumulative.automaticPromotionsSinceBaseline} automatic change${card.cumulative.automaticPromotionsSinceBaseline === 1 ? '' : 's'} since then.` : 'No automatic changes since then.'}
           </p>
@@ -104,10 +104,10 @@ function CardBody({ card, names }: { card: ChangeCard; names: Map<string, string
         <div className="subtle-list small">
           <div>Suggested {fmtDateTime(p.createdAt)}</div>
           {p.evaluatedAt && <div>Tested on past decisions {fmtDateTime(p.evaluatedAt)}</div>}
-          {p.approvedAt && <div>Approved by {p.approvedBy?.replace(/^user:/, '')} {fmtDateTime(p.approvedAt)}</div>}
+          {p.approvedAt && <div>Approved by {personName(p.approvedBy)} {fmtDateTime(p.approvedAt)}</div>}
           {p.promotedAt && <div>Went live {fmtDateTime(p.promotedAt)}</div>}
           {card.promotionNote && (
-            <div data-testid="promotion-note">Went live without full evidence: {card.promotionNote.by.replace(/^user:/, '')} wrote "{card.promotionNote.reason}"
+            <div data-testid="promotion-note">Went live without full evidence: {personName(card.promotionNote.by)} wrote "{card.promotionNote.reason}"
               {card.promotionNote.waived.length > 0 && <span className="muted"> (waived: {card.promotionNote.waived.join('; ')})</span>}</div>
           )}
           {p.rejectedAt && <div>Rejected {fmtDateTime(p.rejectedAt)}{p.rejectedReason ? `: ${p.rejectedReason}` : ''}</div>}

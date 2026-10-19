@@ -10,6 +10,7 @@ import { useSession } from '../../auth/session';
 import { fmtDate, fmtDateTime, relTime } from '../../lib/format';
 import { toast } from '../../lib/toast';
 import { DemoBadge, InfoTip, Meter, Technical } from './Bits';
+import { personName } from './copy';
 
 const TERMS: { key: keyof ObjectiveWeights; label: string; hint: string }[] = [
   { key: 'fill', label: 'Ship everything ordered', hint: 'Reward for shipping every unit that was ordered' },
@@ -50,7 +51,7 @@ export function ObjectiveSettings({ canAdmin }: { canAdmin: boolean }) {
       {history.data && history.data.length > 1 && (
         <details>
           <summary className="small">Earlier versions ({history.data.length})</summary>
-          <div className="subtle-list small mt2">{history.data.map((h) => <div key={h.version} className="row-between"><span>Version {h.version} · {h.status.toLowerCase()}</span><span className="muted">{h.approvedBy ? `approved by ${h.approvedBy.replace(/^user:/, '')} ${fmtDate(h.approvedAt)}` : `drafted ${fmtDate(h.createdAt)}`}</span></div>)}</div>
+          <div className="subtle-list small mt2">{history.data.map((h) => <div key={h.version} className="row-between"><span>Version {h.version} · {h.status.toLowerCase()}</span><span className="muted">{h.approvedBy ? `approved by ${personName(h.approvedBy)} ${fmtDate(h.approvedAt)}` : `drafted ${fmtDate(h.createdAt)}`}</span></div>)}</div>
         </details>
       )}
     </div>
@@ -64,7 +65,7 @@ function LiveObjective({ p }: { p: ObjectiveProfile }) {
     <div className="col gap2">
       <div className="row-between wrap">
         {p.version > 0
-          ? <span className="small">In use: <b>version {p.version}</b>{p.approvedBy && <> · approved by {p.approvedBy.replace(/^user:/, '')} {relTime(p.approvedAt)}</>}</span>
+          ? <span className="small">In use: <b>version {p.version}</b>{p.approvedBy && <> · approved by {personName(p.approvedBy)} {relTime(p.approvedAt)}</>}</span>
           : <span className="small">Nothing approved yet, so the <b>balanced</b> default is in use.</span>}
         <DemoBadge by={p.createdBy} />
       </div>
@@ -137,7 +138,7 @@ function DraftCard({ d, live, canAdmin }: { d: ObjectiveProfile; live?: Objectiv
     <div className="finding" data-testid={`objective-draft-${d.version}`}>
       <div className="row-between wrap gap2">
         <span className="title">Draft version {d.version}</span>
-        <span className="row gap2"><span className="xs muted">by {d.createdBy.replace(/^user:/, '')} {relTime(d.createdAt)}</span><DemoBadge by={d.createdBy} /></span>
+        <span className="row gap2"><span className="xs muted">by {personName(d.createdBy)} {relTime(d.createdAt)}</span><DemoBadge by={d.createdBy} /></span>
       </div>
       {d.sourceText && <div className="small">“{d.sourceText}”</div>}
       {changed.length === 0 ? <span className="small muted">Same weights as the version in use.</span> : (

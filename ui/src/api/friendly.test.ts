@@ -14,6 +14,14 @@ describe('friendlyError', () => {
     expect(f.message).toBe('Cannot promote: inside a tenant freeze window');
   });
 
+  it('explains a change that is cooling down after a rollback', () => {
+    const short = friendlyError({ status: 409, code: 'proposal_cooling_down', detail: 'The same change to decision:fulfilment_intent was rolled back on 2026-10-01 (late deliveries); it cannot be proposed again for 30 days without different evidence', cooldownDays: 30 });
+    expect(short.title).toBe('Rolled back recently');
+    expect(short.message).toContain('rolled back on 2026-10-01');
+    const long = friendlyError({ status: 409, code: 'proposal_cooling_down', detail: `The same change was rolled back (${'x'.repeat(240)})`, cooldownDays: 30 });
+    expect(long.message).toBe("The same change was rolled back recently, so it can't be proposed again for 30 days without different evidence.");
+  });
+
   it('names the missing permission', () => {
     expect(friendlyError({ status: 403, detail: 'Missing permission learning.admin' }).message).toContain('learning.admin');
   });
