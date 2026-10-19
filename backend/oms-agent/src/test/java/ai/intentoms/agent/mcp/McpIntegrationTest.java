@@ -234,6 +234,7 @@ class McpIntegrationTest extends AgentTestBase {
         var p = new ai.intentoms.learning.model.Proposal(Ids.prefixed("prop"), cs, h.hypothesisId(), ai.intentoms.learning.model.PolicyChangeset.RiskTier.T2,
             ai.intentoms.learning.model.ProposalStatus.DRAFT, null, null, "system:band_threshold", now, now, null, null, null, null, null, null, null, null);
         proposalRepository.insert(p);
+        proposalRepository.markEvaluated(p.proposalId(), Map.of("liftEstimate", 0.01), now); // a draft is tested before approval
         proposalRepository.approve(p.proposalId(), "user:admin", now);
         learningEvents.proposalApproved(p.proposalId(), ai.intentoms.platform.ledger.Actor.parse("user:admin"), Map.of("target", "decision:return_risk"));
         proposalRepository.promote(p.proposalId(), now);
