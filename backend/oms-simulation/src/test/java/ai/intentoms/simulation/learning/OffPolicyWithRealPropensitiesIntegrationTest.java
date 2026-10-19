@@ -67,6 +67,8 @@ class OffPolicyWithRealPropensitiesIntegrationTest extends PostgresTestBase {
     @Autowired EpisodeRepository episodes;
     @Autowired ProposalRepository proposals;
     @Autowired TenantConfigStore config;
+    @Autowired ai.intentoms.learning.experiment.ExperimentManager experiments;
+    @Autowired ai.intentoms.learning.governance.ParameterResolver parameters;
 
     private String tenant;
 
@@ -155,6 +157,37 @@ class OffPolicyWithRealPropensitiesIntegrationTest extends PostgresTestBase {
         double ipsEstimate = ((Number) ips.get("proposedRewardEstimate")).doubleValue();
         assertThat(ipsEstimate).as("an IPS estimate built from real propensities").isGreaterThan(0.0);
         assertThat(((Number) report.get("sampleSize")).intValue()).isEqualTo(400);
+    }
+
+    /**
+     * EX-04 meets EX-01: a subject in the persistent holdout stays on the baseline, so it never draws; its record logs the
+     * certain arm (propensity 1) and says why, so an evaluator and a reader can tell it from a missing draw. Every other
+     * acting record draws and logs the true probability.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void aHeldOutSubjectDoesNotDrawAndItsRecordSaysSo() {
+        String name = install("explore", "T0");
+        config.set(ExplorationFloor.KEY_PREFIX + name, 0.1);
+        experiments.ensureHoldout(0.5, "user:tester");
+        int held = 0, drew = 0;
+        for (int i = 0; i < 40; i++) {
+            DecisionRecord r = decide(name, i);
+            if (!DecisionResult.ACT.equals(r.action())) continue;
+            Map<String, Object> x = (Map<String, Object>) r.details().get("exploration");
+            assertThat(x).as("every acting record says whether it drew").isNotNull();
+            if (parameters.inHoldout("order:" + r.subjectId())) {
+                held++;
+                assertThat(x).containsEntry("reason", "holdout").containsEntry("explored", false);
+                assertThat(r.propensity()).isEqualTo(1.0);
+            } else {
+                drew++;
+                assertThat(x).doesNotContainKey("reason");
+                assertThat(r.propensity()).isLessThan(1.0);
+            }
+        }
+        assertThat(held).as("some subjects fell in the 50% holdout").isPositive();
+        assertThat(drew).as("some subjects drew").isPositive();
     }
 
     @Test

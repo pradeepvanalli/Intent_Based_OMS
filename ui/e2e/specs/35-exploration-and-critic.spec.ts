@@ -3,8 +3,8 @@ import { apiAs } from '../support/api';
 import { ok, proposal, uid } from '../support/data';
 
 type Exception = { id: string; type: string; classificationRecordId?: string };
-type Exploration = { share: number; explored: boolean; normalArm: string; applied: string; propensity: number };
-type Record_ = { id: string; decision: string; layer: string; value: unknown; chosenArm?: string; propensity: number; details?: { exploration?: Exploration; modelAnswer?: unknown } };
+type Exploration = { share: number; explored: boolean; normalArm: string; applied: string; propensity: number; reason?: string };
+type Record_ = { id: string; decision: string; layer: string; band: string; value: unknown; chosenArm?: string; propensity: number; details?: { exploration?: Exploration; modelAnswer?: unknown } };
 type Critic = { verdict: 'LOOKS_SAFE' | 'NEEDS_CHANGES' | 'RISKY'; risks: string[]; source: string };
 type Evaluated = { criticReview?: Critic; evaluationReport?: { ips?: { confidenceInterval?: { upper: number } }; rewards?: { matureShare?: number } } };
 
@@ -22,12 +22,22 @@ test.describe('EX-01 and XP-02', () => {
       expect(e.classificationRecordId, 'raised without a type, so it was classified').toBeTruthy();
       logged.push(await ok<Record_>(ops.get(`/api/v1/decision-records/${e.classificationRecordId}`)));
     }
-    const acted = logged.filter((r) => r.layer === 'L1_SYSTEM_ONE');
-    expect(acted.length, 'classifications the model answered').toBeGreaterThan(0);
+    const acted = logged.filter((r) => r.layer === 'L1_SYSTEM_ONE' && r.band === 'ACT');
+    expect(acted.length, 'classifications the model answered and acted on').toBeGreaterThan(0);
+    // The demo tenant keeps a holdout slice on the baseline (EX-04); a held-out subject does not draw, logs the certain
+    // arm (propensity 1) and says so. Every other acting classification draws and logs the true probability.
+    const drew = acted.filter((r) => r.details?.exploration?.reason !== 'holdout');
+    expect(drew.length, 'at least one classification outside the holdout').toBeGreaterThan(0);
     for (const r of acted) {
+      const x = r.details?.exploration;
+      expect(x, `${r.id} says whether it drew`).toMatchObject({ share: 0.1, applied: r.chosenArm });
+      if (x!.reason === 'holdout') {
+        expect(r.propensity, `${r.id} is held out, so its arm was certain`).toBe(1);
+        expect(x!.explored).toBe(false);
+        continue;
+      }
       expect(r.propensity, `${r.id} logs a real propensity`).toBeLessThan(1);
-      expect(r.details?.exploration).toMatchObject({ share: 0.1, applied: r.chosenArm });
-      if (r.details!.exploration!.explored) expect(r.details!.modelAnswer).toBe(r.details!.exploration!.normalArm);
+      if (x!.explored) expect(r.details!.modelAnswer).toBe(x!.normalArm);
       else expect(r.propensity).toBeCloseTo(0.9, 6);
     }
   });

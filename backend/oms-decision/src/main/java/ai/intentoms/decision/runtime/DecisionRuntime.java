@@ -629,7 +629,7 @@ public class DecisionRuntime implements DecisionService {
         List<String> arms = armsOf(ev.def, ev.input, ev.details, ev.value, chosen);
         Optional<DecisionLearningHooks.Exploration> x = safely(() -> hooks().explore(ev.def.name(), ev.def.tier(), List.copyOf(arms), chosen, routingKey(ev.opts)), Optional.empty());
         if (x.isEmpty() || x.get().applied() == null || x.get().propensity() <= 0 || x.get().propensity() > 1) return;
-        applyExploration(ev, chosen, x.get().applied(), x.get().propensity(), x.get().share(), x.get().seed());
+        applyExploration(ev, chosen, x.get().applied(), x.get().propensity(), x.get().share(), x.get().seed(), x.get().reason());
     }
 
     /** NF-04: a replay re-applies the arm the recorded decision explored, so it reproduces what was applied. */
@@ -640,14 +640,15 @@ public class DecisionRuntime implements DecisionService {
         double p = x.get("propensity") instanceof Number n ? n.doubleValue() : 1.0;
         double share = x.get("share") instanceof Number n ? n.doubleValue() : 0.0;
         long seed = x.get("seed") instanceof Number n ? n.longValue() : 0L;
-        applyExploration(ev, String.valueOf(ev.value), String.valueOf(x.get("applied")), p, share, seed);
+        applyExploration(ev, String.valueOf(ev.value), String.valueOf(x.get("applied")), p, share, seed, null);
     }
 
-    private void applyExploration(Eval ev, String chosen, String applied, double propensity, double share, long seed) {
+    private void applyExploration(Eval ev, String chosen, String applied, double propensity, double share, long seed, String reason) {
         boolean explored = !applied.equals(chosen);
         Map<String, Object> info = new LinkedHashMap<>();
         info.put("share", share);
         info.put("explored", explored);
+        if (reason != null) info.put("reason", reason);
         info.put("normalArm", chosen);
         info.put("applied", applied);
         info.put("propensity", propensity);

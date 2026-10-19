@@ -59,8 +59,9 @@ public class ExplorationFloor {
     public Optional<DecisionLearningHooks.Exploration> explore(String decision, Tier tier, List<String> arms, String chosen, String routingKey) {
         double share = share(decision, tier);
         if (share <= 0 || chosen == null || arms == null) return Optional.empty();
-        if (!governance.learningOn()) return Optional.empty();
-        if (routingKey != null && parameters.inHoldout(routingKey)) return Optional.empty();
+        // No draw, but the record says so: a held-out subject stays on the baseline (EX-04) and logs the certain arm.
+        if (!governance.learningOn()) return Optional.of(new DecisionLearningHooks.Exploration(chosen, 1.0, share, 0L, "learning_off"));
+        if (routingKey != null && parameters.inHoldout(routingKey)) return Optional.of(new DecisionLearningHooks.Exploration(chosen, 1.0, share, 0L, "holdout"));
         List<String> others = arms.stream().filter(a -> a != null && !a.equals(chosen)).distinct().toList();
         if (others.isEmpty()) return Optional.empty();
         long seed = RANDOM.nextLong();

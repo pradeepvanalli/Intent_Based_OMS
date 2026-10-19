@@ -50,8 +50,13 @@ public interface DecisionLearningHooks {
      */
     default Optional<Exploration> explore(String decision, ai.intentoms.decision.model.Tier tier, List<String> arms, String chosen, String routingKey) { return Optional.empty(); }
 
-    /** The arm to apply, its true probability, the exploration share and the seed of the draw (stored for replay). */
-    record Exploration(String applied, double propensity, double share, long seed) {
+    /**
+     * The arm to apply, its true probability, the exploration share and the seed of the draw (stored for replay). When
+     * the decision could have explored but did not draw, {@code reason} says why ({@code holdout}: the subject is kept
+     * on the baseline, EX-04; {@code learning_off}: a kill switch), so the record is not mistaken for a missing draw.
+     */
+    record Exploration(String applied, double propensity, double share, long seed, String reason) {
+        public Exploration(String applied, double propensity, double share, long seed) { this(applied, propensity, share, seed, null); }
         public boolean explored(String chosen) { return applied != null && !applied.equals(chosen); }
     }
 
