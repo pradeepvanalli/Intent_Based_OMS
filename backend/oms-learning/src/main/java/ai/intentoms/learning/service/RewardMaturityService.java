@@ -90,11 +90,19 @@ public class RewardMaturityService {
         return n;
     }
 
+    private Map<String, Double> baselineScales() {
+        RewardBaselineService b = baseline == null ? null : baseline.getIfAvailable();
+        return b == null ? Map.of() : b.current();
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.beans.factory.ObjectProvider<RewardBaselineService> baseline;
+
     void process(Episode ep, ObjectiveWeights weights, MaturityWindows windows, Instant now) {
         List<OutcomeRecord> outs = outcomes.forEpisode(ep.episodeId());
         Set<String> scored = RewardCalculator.scoredTerms(outs);
         boolean mature = true;
-        Map<String, Double> components = new LinkedHashMap<>(RewardCalculator.components(outs));
+        Map<String, Double> components = new LinkedHashMap<>(RewardCalculator.normalise(RewardCalculator.components(outs), baselineScales()));
         for (String term : RewardCalculator.TERMS) {
             if (RewardCalculator.weight(weights, term) == 0) continue;
             boolean windowClosed = !ep.createdAt().plus(windows.forTerm(term)).isAfter(now);

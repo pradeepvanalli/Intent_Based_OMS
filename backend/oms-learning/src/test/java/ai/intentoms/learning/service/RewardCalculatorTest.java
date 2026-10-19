@@ -101,4 +101,14 @@ class RewardCalculatorTest {
             .get("fraud")).isZero();
         assertThat(RewardCalculator.components(List.of(shipped, out(new OutcomeData.ReturnOutcome("wrong_item", "restock", true, 40.0)))).get("fraud")).isCloseTo(0.4, within(1e-9));
     }
+
+    @Test void penaltyTermsAreScaledAgainstTheTenantBaselineAndKeepTheirRawValue() {
+        Map<String, Double> c = new java.util.LinkedHashMap<>(Map.of("fill", 1.0, "cost", 0.06, "split", 0.5, "cx", 0.0));
+        Map<String, Double> n = RewardCalculator.normalise(c, Map.of("cost", 0.12, "split", 0.25));
+        assertThat(n.get("cost")).isCloseTo(0.5, within(1e-9));
+        assertThat(n.get("cost_raw")).isEqualTo(0.06);
+        assertThat(n.get("split")).isEqualTo(1.0); // capped at 1
+        assertThat(n.get("fill")).isEqualTo(1.0);  // rate terms are not scaled
+        assertThat(RewardCalculator.normalise(c, Map.of())).isSameAs(c);
+    }
 }

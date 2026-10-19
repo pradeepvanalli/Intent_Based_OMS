@@ -95,6 +95,22 @@ public final class RewardCalculator {
         return s;
     }
 
+    /**
+     * §7 normalisation against the tenant's baseline: each scaled penalty term becomes {@code min(1, raw / scale)},
+     * with the raw value kept as {@code <term>_raw}. Terms without a scale are left as they are.
+     */
+    public static Map<String, Double> normalise(Map<String, Double> components, Map<String, Double> scales) {
+        if (scales == null || scales.isEmpty()) return components;
+        Map<String, Double> out = new LinkedHashMap<>(components);
+        scales.forEach((term, scale) -> {
+            Double raw = components.get(term);
+            if (raw == null || scale == null || scale <= 0) return;
+            out.put(term + "_raw", raw);
+            out.put(term, Math.min(1.0, raw / scale));
+        });
+        return out;
+    }
+
     public static double compute(Map<String, Double> components, ObjectiveWeights w) {
         return w.fill() * components.getOrDefault("fill", 0.0)
             + w.otd() * components.getOrDefault("otd", 0.0)

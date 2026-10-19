@@ -42,6 +42,8 @@ public class LearningController {
     private final ai.intentoms.learning.governance.LiveParameterRepository liveParameters;
     private final ai.intentoms.learning.service.CoverageMonitor coverage;
     private final ai.intentoms.platform.config.TenantConfigStore config;
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.beans.factory.ObjectProvider<ai.intentoms.learning.service.RewardBaselineService> rewardBaseline;
     private final List<ai.intentoms.learning.governance.GovernedLearner> learnerBeans;
     private final ai.intentoms.learning.service.RewardMaturityService rewardMaturity;
     private final ai.intentoms.learning.promotion.PromotionService promotion;
@@ -161,7 +163,8 @@ public class LearningController {
             case "coverage" -> { coverage.sweepOnce(); yield coverage.latest(); }
             case "auto-promote" -> promotion.sweepOnce();
             case "guardrails" -> guardrails.sweepOnce();
-            default -> throw new ValidationException("Unknown job '" + job + "' (reward-maturity, coverage, auto-promote, guardrails)");
+            case "reward-baseline" -> rewardBaseline.getObject().recompute();
+            default -> throw new ValidationException("Unknown job '" + job + "' (reward-maturity, coverage, auto-promote, guardrails, reward-baseline)");
         };
         return Map.of("job", job, "result", result);
     }
