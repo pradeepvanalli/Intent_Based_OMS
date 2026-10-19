@@ -28,6 +28,20 @@ public class LaneDeliverySampleRepository {
             .param("base", baseOnTime).param("o", orderId).param("n", nodeId).update() == 1;
     }
 
+    /** One delivery on a lane: on time or not, the probability the order was told and the one before lane calibration. */
+    public record Sample(boolean onTime, Double stated, Double base) {}
+
+    /** CX-01: a lane's most recent deliveries, oldest first, so a report can learn on the earlier ones and measure on the later. */
+    public List<Sample> recentSamples(String laneKey, int limit) {
+        List<Sample> newestFirst = jdbc.sql("""
+            select on_time, stated_on_time, base_on_time from lane_delivery_sample where tenant_id = :t and lane_key = :k order by observed_at desc limit :lim
+            """).param("t", TenantContext.require()).param("k", laneKey).param("lim", limit)
+            .query((rs, i) -> new Sample(rs.getBoolean("on_time"), (Double) rs.getObject("stated_on_time"), (Double) rs.getObject("base_on_time"))).list();
+        List<Sample> out = new java.util.ArrayList<>(newestFirst);
+        java.util.Collections.reverse(out);
+        return out;
+    }
+
     /** Most recent transit-day samples for a lane, newest first, capped so this stays O(1)-ish even on a busy lane. */
     public List<Double> recentTransitDays(String laneKey, int limit) {
         String t = TenantContext.require();

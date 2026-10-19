@@ -34,9 +34,12 @@ public class OutcomeObserver implements EventSubscriber {
     private final OutcomeRepository outcomes;
     private final Map<String, List<OutcomeMapper>> byType = new LinkedHashMap<>();
 
-    public OutcomeObserver(EpisodeRepository episodes, OutcomeRepository outcomes, List<OutcomeMapper> mappers) {
+    private final GroupLineage lineage;
+
+    public OutcomeObserver(EpisodeRepository episodes, OutcomeRepository outcomes, List<OutcomeMapper> mappers, GroupLineage lineage) {
         this.episodes = episodes;
         this.outcomes = outcomes;
+        this.lineage = lineage;
         for (OutcomeMapper m : mappers) for (String t : m.eventTypes()) byType.computeIfAbsent(t, k -> new ArrayList<>()).add(m);
     }
 
@@ -66,8 +69,11 @@ public class OutcomeObserver implements EventSubscriber {
         if (orderId != null) episodes.forOrder(orderId).forEach(ep -> targets.put(ep.episodeId(), ep));
         if (e.aggregateType() != null && !"order".equals(e.aggregateType()))
             episodes.forSubject(e.aggregateType(), e.aggregateId()).forEach(ep -> targets.put(ep.episodeId(), ep));
+        // OC-02 (A-N1): a group's outcome belongs to the decision point that planned the group (GroupLineage).
+        Map<String, Object> p = e.payload() == null ? Map.of() : e.payload();
+        Map<String, Boolean> planned = lineage.owners(orderId, p.getOrDefault("fulfilmentGroupId", p.get("fulfillmentGroupId")), targets.values());
         for (Episode ep : targets.values()) {
-            if (ep.status() == EpisodeStatus.MATURE || !concerns(e, ep)) continue;
+            if (ep.status() == EpisodeStatus.MATURE || !planned.getOrDefault(ep.episodeId(), concerns(e, ep))) continue;
             if (data instanceof OutcomeData.ReturnOutcome r && r.rmaId() != null && mergeIntoReturn(ep, r)) continue;
             if (outcomes.insert(OutcomeRecord.of(Ids.prefixed("out"), ep.episodeId(), data, e.occurredAt(), e.id(), Instant.now()))) episodes.outcomeChanged(ep.episodeId());
         }

@@ -182,8 +182,9 @@ class FulfilmentLearningIntegrationTest extends PostgresTestBase {
             assertThat(rec.details()).containsEntry("bucket", "web|ship_as_available|2-3|z1|none|any");
             Episode ep = Episode.open(Ids.prefixed("epi"), rec.id(), SourcingPolicyBandit.DECISION_NAME, order, null, null, 1, "order", order, Instant.now());
             episodes.upsertDecisionPoint(ep);
-            episodes.updateStatusAndReward(episodes.findByDecisionId(rec.id()).orElseThrow().episodeId(), EpisodeStatus.PROVISIONAL,
-                "ship_complete".equals(choice.policy()) ? 0.9 : 0.4, Map.of("otd", 1.0), null);
+            // B3-4: only matured rewards can make an arm greedy, so these are final.
+            episodes.updateStatusAndReward(episodes.findByDecisionId(rec.id()).orElseThrow().episodeId(), EpisodeStatus.MATURE,
+                "ship_complete".equals(choice.policy()) ? 0.9 : 0.4, Map.of("otd", 1.0), Instant.now());
         }
         assertThat(banditRewards.sweepOnce()).isGreaterThan(0);
         LearnedFact bucket = facts.active(SubjectType.SEGMENT, SourcingPolicyBandit.bucketSubject("web|ship_as_available|2-3|z1|none|any"), FactKey.SOURCING_POLICY_PROPENSITY).orElseThrow();

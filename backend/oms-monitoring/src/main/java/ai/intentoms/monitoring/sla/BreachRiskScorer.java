@@ -252,24 +252,16 @@ public class BreachRiskScorer implements RiskLookup {
         return Json.sha256(material);
     }
 
-    /** Score from the decision: the main value, else the {@code breach_risk} answer, else the L0 default (2). */
     /**
      * Score to store. A confident answer (act band) is used as is; when the decision only recommends (confirm band on
      * T1 with no L2 verdict) the deterministic default supplied by the runtime is used, so an unconfident model never
-     * marks the whole pipeline at risk (NFR-05 degraded mode keeps the control tower meaningful).
+     * marks the whole pipeline at risk (NFR-05 degraded mode keeps the control tower meaningful). The rule lives in
+     * {@link WarnEarlyThresholdLearner#effectiveScore} so the warn-early learner reads the very score this gate acts on
+     * (CX-03, audit B3-6).
      */
     static int scoreOf(DecisionResult res) {
-        double v = Double.NaN;
-        Object fallback = res.details() == null ? null : res.details().get("confirmFallback");
-        if (!res.acts() && fallback instanceof Map<?, ?> fb && fb.get("defaultValue") instanceof Number d) v = d.doubleValue();
-        else if (res.value() instanceof Number n) v = n.doubleValue();
-        else if (res.value() instanceof String s) { try { v = Double.parseDouble(s); } catch (NumberFormatException ignored) { } }
-        if (Double.isNaN(v)) {
-            Answer a = res.answers().get("breach_risk");
-            if (a != null) v = a.asDouble();
-        }
-        if (Double.isNaN(v)) v = 1;
-        return (int) Math.max(0, Math.min(4, Math.round(v)));
+        Answer a = res.answers() == null ? null : res.answers().get("breach_risk");
+        return WarnEarlyThresholdLearner.effectiveScore(res.acts(), res.value(), res.details(), a == null ? null : a.asDouble());
     }
 
     Map<String, Object> buildInput(Map<String, Object> r, Instant now, double carrierOnTime) {
@@ -285,6 +277,8 @@ public class BreachRiskScorer implements RiskLookup {
             order.put("promise_hours_remaining", round1(remaining));
         }
         order.put("ship_method", r.get("ship_method") == null ? "standard" : r.get("ship_method"));
+        // CX-03: the carrier has reported an exception on one of the order's parcels (a delay, a loss, damage).
+        order.put("carrier_exception", Boolean.TRUE.equals(r.get("carrier_exception")));
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("order", order);
         input.put("node", nodeSignals((String) r.get("primary_node_id"), now));
@@ -352,6 +346,7 @@ public class BreachRiskScorer implements RiskLookup {
             double rem = ((Number) order.get("promise_hours_remaining")).doubleValue();
             out.add(rem < 0 ? "promise missed by " + round1(-rem) + "h" : "promise in " + rem + "h");
         }
+        if (Boolean.TRUE.equals(order.get("carrier_exception"))) out.add("carrier reported an exception");
         if (((Number) node.get("backlog_units")).intValue() > 0) out.add("node backlog " + node.get("backlog_units") + " units");
         if (((Number) node.get("reject_rate")).doubleValue() > 0.05) out.add("node reject rate " + node.get("reject_rate"));
         double onTime = ((Number) carrier.get("on_time_rate_7d")).doubleValue();

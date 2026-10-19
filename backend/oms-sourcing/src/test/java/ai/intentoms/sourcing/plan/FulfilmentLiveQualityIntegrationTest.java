@@ -135,37 +135,84 @@ class FulfilmentLiveQualityIntegrationTest extends SourcingTestBase {
     }
 
     /**
-     * CX-01, measured on the probability served: deliveries told 95% while 80% arrived on time are 15 points off as
-     * recorded, but once the learned -15 point correction is served the residual is 0. Lanes with fewer than
-     * {@code minSamples} deliveries are listed but do not count toward the 3-point target.
+     * CX-01, measured out of sample (audit B3-2). The "drift" lane was told 95% throughout; 90% of its older deliveries and
+     * 70% of its newer ones arrived on time. Learned on all 80 the correction is -15 points and, measured on the same 80,
+     * the residual is 0 by construction (the old report called it within target). Learned on the older half (-5) and
+     * measured on the newer half it is 20 points off, and that is what the report must say. A stable lane is within
+     * target out of sample; a lane needing +42.5 points under a +/-30 range says it is clamped; a lane whose newer half has
+     * fewer than {@code minSamples} deliveries is listed but does not count.
      */
     @Test
-    void calibrationResidualIsMeasuredOnTheServedProbabilityAndCountsOnlyWithEnoughSamples() {
-        String calibrated = LaneDeliveryLearner.laneKey("UPS", "ground", "DC-NJ", "100");
-        String off = LaneDeliveryLearner.laneKey("UPS", "ground", "DC-TX", "787");
+    void calibrationIsMeasuredOutOfSampleAndClampsAreReported() {
+        String drift = LaneDeliveryLearner.laneKey("UPS", "ground", "DC-NJ", "100");
+        String stable = LaneDeliveryLearner.laneKey("UPS", "ground", "DC-TX", "787");
+        String capped = LaneDeliveryLearner.laneKey("USPS", "ground", "ST-CHI-01", "606");
         String thin = LaneDeliveryLearner.laneKey("FDX", "ground", "DC-TX", "787");
-        deliveries(calibrated, 40, 32, 0.95);
-        deliveries(off, 30, 21, 0.90);
-        deliveries(thin, 12, 6, 0.90);
-        facts.number(SubjectType.LANE, calibrated, FactKey.LANE_CALIBRATION_OFFSET, -0.15, 40, LaneDeliveryLearner.KEY, 0.001);
-        facts.number(SubjectType.LANE, calibrated, FactKey.LANE_CALIBRATION_ERROR, -0.15, 40, LaneDeliveryLearner.KEY, 0.001);
+        deliveries(drift, 40, 36, 0.95);
+        deliveries(stable, 40, 32, 0.90);
+        deliveries(capped, 40, 37, 0.50);
+        deliveries(thin, 12, 6, 0.60);
+        sleep(5);
+        deliveries(drift, 40, 28, 0.95);
+        deliveries(stable, 40, 32, 0.90);
+        deliveries(capped, 40, 37, 0.50);
+        deliveries(thin, 12, 6, 0.60);
+        // What the lane learner writes from those same 80 deliveries.
+        facts.number(SubjectType.LANE, drift, FactKey.LANE_CALIBRATION_OFFSET, -0.15, 80, LaneDeliveryLearner.KEY, 0.001);
+        facts.number(SubjectType.LANE, drift, FactKey.LANE_CALIBRATION_ERROR, -0.15, 80, LaneDeliveryLearner.KEY, 0.001);
 
-        // Not promoted: the served probability is still 95%, 15 points above what happened.
+        // Not promoted: nothing is served, so the newer drift deliveries were 25 points below what they were told.
         factCache.invalidateAll();
-        @SuppressWarnings("unchecked") Map<String, Object> before = ((List<Map<String, Object>>) calibration.calibration(30).get("lanes")).stream()
-            .filter(m -> calibrated.equals(m.get("lane"))).findFirst().orElseThrow();
-        assertThat(before).containsEntry("residualPoints", -15.0).containsEntry("servedCorrectionPoints", 0.0).containsEntry("withinTarget", false);
+        assertThat(lane(calibration.calibration(30), drift)).containsEntry("residualPoints", -25.0).containsEntry("servedCorrectionPoints", 0.0)
+            .containsEntry("correctionSource", "STATIC").containsEntry("withinTarget", false);
 
         parameters.promote(LaneDeliveryLearner.CALIBRATION_PARAMETER, LaneDeliveryLearner.KEY, -0.3, 0.3, null, null, "test");
         factCache.invalidateAll();
         Map<String, Object> r = calibration.calibration(30);
-        assertThat(r).containsEntry("targetPoints", 3.0).containsEntry("minSamples", 30).containsEntry("lanesMeasured", 3).containsEntry("lanesCounted", 2)
-            .containsEntry("lanesWithinTarget", 1);
+        assertThat(r).containsEntry("targetPoints", 3.0).containsEntry("minSamples", 30).containsEntry("method", "out_of_sample").containsEntry("lanesMeasured", 4)
+            .containsEntry("lanesCounted", 3).containsEntry("lanesWithinTarget", 1).containsEntry("lanesClamped", 1);
+        assertThat(lane(r, drift)).containsEntry("neededCorrectionPoints", -5.0).containsEntry("servedCorrectionPoints", -5.0).containsEntry("residualPoints", -20.0)
+            .containsEntry("toldResidualPoints", -25.0).containsEntry("servedNowCorrectionPoints", -15.0).containsEntry("learnedOn", 40L).containsEntry("measuredOn", 40L)
+            .containsEntry("countsTowardTarget", true).containsEntry("withinTarget", false).doesNotContainKey("clamped");
+        assertThat(lane(r, stable)).containsEntry("residualPoints", 0.0).containsEntry("withinTarget", true);
+        assertThat(lane(r, capped)).containsEntry("neededCorrectionPoints", 42.5).containsEntry("servedCorrectionPoints", 30.0).containsEntry("residualPoints", 12.5)
+            .containsEntry("clamped", true).containsEntry("withinTarget", false);
+        assertThat(String.valueOf(lane(r, capped).get("clampReason"))).contains("above the promoted maximum");
+        assertThat(lane(r, thin)).containsEntry("samples", 24L).containsEntry("measuredOn", 12L).containsEntry("countsTowardTarget", false).containsEntry("withinTarget", false);
         @SuppressWarnings("unchecked") List<Map<String, Object>> lanes = (List<Map<String, Object>>) r.get("lanes");
-        assertThat(lanes.get(0)).containsEntry("lane", off).containsEntry("residualPoints", -20.0).containsEntry("countsTowardTarget", true).containsEntry("withinTarget", false);
-        assertThat(lanes.get(1)).containsEntry("lane", calibrated).containsEntry("residualPoints", 0.0).containsEntry("servedCorrectionPoints", -15.0)
-            .containsEntry("recordedResidualPoints", -15.0).containsEntry("learnedOffsetPoints", -15.0).containsEntry("withinTarget", true);
-        assertThat(lanes.get(2)).containsEntry("lane", thin).containsEntry("samples", 12L).containsEntry("countsTowardTarget", false).containsEntry("withinTarget", false);
+        assertThat(lanes.stream().map(m -> m.get("lane")).toList()).containsExactly(drift, capped, stable, thin);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> lane(Map<String, Object> report, String lane) {
+        return ((List<Map<String, Object>>) report.get("lanes")).stream().filter(m -> lane.equals(m.get("lane"))).findFirst()
+            .orElseThrow(() -> new AssertionError("lane " + lane + " not in " + report));
+    }
+
+    private static void sleep(long ms) { try { Thread.sleep(ms); } catch (InterruptedException e) { Thread.currentThread().interrupt(); } }
+
+    @Autowired ai.intentoms.learning.learner.NodeAssignmentRepository assignments;
+
+    /**
+     * B3-3: "no carrier known yet" is remembered for seconds, not ten minutes, so a node's first shipments start lane
+     * transit and calibration at once (a fresh database, a new node or service). Before the fix the first lookup after
+     * boot pinned "none" for ten minutes.
+     */
+    @Test
+    void aNodesFirstShipmentNamesItsCarrierWithinSeconds() {
+        String node = "N-" + Ids.shortId();
+        assertThat(lanes.carrierFor("two_day", node)).isNull();
+        String order = "ord-" + Ids.shortId();
+        assignments.record(order, node, new ai.intentoms.learning.learner.NodeAssignmentRepository.Sourced("default", null, "100", "two_day", "morning", null, 0.9, null, 0.9),
+            java.time.Instant.now());
+        assignments.recordShipped(order, node, "UPS", java.time.Instant.now());
+        long deadline = System.currentTimeMillis() + 15_000;
+        String carrier = null;
+        while (carrier == null && System.currentTimeMillis() < deadline) {
+            carrier = lanes.carrierFor("two_day", node);
+            if (carrier == null) sleep(250);
+        }
+        assertThat(carrier).as("carrier known within 15 s of the first shipment").isEqualTo("UPS");
     }
 
     /** CX-02: while the learned buffer is live, a small bounded share of promises try one day more or less, and say so. */

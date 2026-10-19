@@ -77,17 +77,20 @@ test.describe('Learning: north star, guardrails, critic, domains, fairness', () 
   test('proposing live use shows the family\'s domain and refuses a range outside it, as the server does', async ({ pageAs }) => {
     const api = await apiAs('strategy');
     const warn = (await liveDomains(api)).find((d) => d.family === 'monitoring.warn_early_threshold')!;
-    expect(warn).toMatchObject({ kind: 'NUMBER', min: 0, max: 4, maxStepLimit: 2 });
+    // B-1 residue (audit 3): the threshold runs 1-4; below 1 every order with any risk would be warned.
+    expect(warn).toMatchObject({ kind: 'NUMBER', min: 1, max: 4, maxStepLimit: 1.5 });
+    const probability = await api.post('/api/v1/learning/live-parameters/proposals', { data: { enabled: true, family: warn.family, learnerKey: 'warn_early', min: 0.3, max: 0.9, maxStep: 0.1 } });
+    expect(probability.status()).toBe(422);
+    expect(((await probability.json()) as { problems: string[] }).problems.join(' ')).toContain('a threshold below 1 would warn every order that has any risk at all');
 
-    // The server refuses the old probability-style range (B-1: 0.3-0.9 once warned every order) only by step and keeps
-    // the units honest: a max above the score's top and a step over half the domain are both named.
+    // The server keeps the units honest: a max above the score's top and a step over half the domain are both named.
     const refused = await api.post('/api/v1/learning/live-parameters/proposals', { data: { enabled: true, family: warn.family, learnerKey: 'warn_early', min: 1, max: 5, maxStep: 3 } });
     expect(refused.status()).toBe(422);
     const problem = await refused.json() as { problems: string[]; domain: { family: string } };
     expect(problem.domain.family).toBe(warn.family);
     expect(problem.problems).toEqual([
       `max 5 is outside the values ${warn.family} can take: ${warn.description}`,
-      `max step 3 is too large for ${warn.family}: one promotion may move it at most 2 (half of 0 to 4)`,
+      `max step 3 is too large for ${warn.family}: one promotion may move it at most 1.5 (half of 1 to 4)`,
     ]);
 
     const page = await pageAs('strategy');
@@ -95,7 +98,7 @@ test.describe('Learning: north star, guardrails, critic, domains, fairness', () 
     await page.getByRole('button', { name: 'Propose live use' }).click();
     const form = dialog(page, 'Propose using a learned value live');
     await form.getByLabel('Learned value').selectOption('warn_early|monitoring.warn_early_threshold');
-    await expect(form.getByTestId('live-domain')).toContainText(`Values: ${warn.description} · one change may move it at most 2`);
+    await expect(form.getByTestId('live-domain')).toContainText(`Values: ${warn.description} · one change may move it at most 1.5`);
     await expect(form.getByTestId('live-domain')).toContainText('read by sla_breach_risk');
     await form.getByLabel('Lowest allowed').fill('1');
     await form.getByLabel('Highest allowed').fill('5');

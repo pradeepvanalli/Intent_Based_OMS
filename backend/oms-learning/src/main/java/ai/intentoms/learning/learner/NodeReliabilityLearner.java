@@ -32,7 +32,8 @@ import java.util.Map;
  * tenant's static {@code sourcing.reject_penalty} scaled by how this node's reject rate compares with the fleet's
  * (a node that rejects twice as often as average gets twice the penalty, within [0.05, 0.9]). The penalty keeps
  * decaying with the 7-day half-life sourcing already applies. Live use goes through {@code ParameterResolver}
- * ({@code sourcing.reject_penalty}).
+ * ({@code sourcing.reject_penalty}). A reject is a node refusing ({@code order.resourced} with {@code nodeRejected}
+ * not false): a re-sourcing because the OMS's own reservation found the stock gone is not one.
  *
  * <p>On-time is the node's own job, an on-time pick (FS-02): the package left the node by the date sourcing set for it
  * ({@code packages[].shipBy} on {@code order.sourced}, compared with the first {@code order.shipped} from that node).
@@ -126,9 +127,21 @@ public class NodeReliabilityLearner implements EventSubscriber, GovernedLearner 
         publishFacts(nodeId, skuClass, dayPart);
     }
 
+    /**
+     * FS-02 / FS-06 (audit B3-1): a re-sourcing counts as a reject only when the node refused. Sourcing marks the ones it
+     * did not ({@code nodeRejected: false}): the OMS's own reservation losing a race for the last units, a reship, an undo.
+     * Events written before that flag existed are judged by their reason.
+     */
+    static boolean nodeRejected(Map<String, Object> payload) {
+        if (payload == null) return true;
+        if (payload.get("nodeRejected") instanceof Boolean b) return b;
+        String reason = payload.get("reason") == null ? "" : String.valueOf(payload.get("reason")).trim().toLowerCase(java.util.Locale.ROOT);
+        return !(reason.equals("insufficient_atp") || reason.equals("reship") || reason.startsWith("autonomy_undo"));
+    }
+
     private void onResourced(Event e) {
         Object rejected = e.payload() == null ? null : e.payload().get("rejectedNodes");
-        if (!(rejected instanceof List<?> list)) return;
+        if (!(rejected instanceof List<?> list) || !nodeRejected(e.payload())) return;
         List<NodeAssignmentRepository.Assignment> assigned = assignments.assignmentsFor(e.aggregateId());
         for (Object n : list) {
             String nodeId = String.valueOf(n);

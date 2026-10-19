@@ -127,19 +127,27 @@ class LiveUseFlowIntegrationTest extends PostgresTestBase {
     void liveRangesMustFitTheFamilyDomainAndClampsAreReported() {
         String family = ai.intentoms.learning.learner.WarnEarlyThresholdLearner.PARAMETER;
         as("alice");
-        assertThatThrownBy(() -> liveUse.propose(new LiveUseController.LiveUseRequest(family, "warn_early", 0.0, 10.0, 1.0, true, null)))
+        assertThatThrownBy(() -> liveUse.propose(new LiveUseController.LiveUseRequest(family, "warn_early", 1.0, 10.0, 1.0, true, null)))
             .isInstanceOf(ValidationException.class)
             .hasMessage("This range cannot be used for monitoring.warn_early_threshold: max 10 is outside the values monitoring.warn_early_threshold can take: "
-                + "SLA breach risk score (0 none, 4 certain), from 0 to 4.");
+                + "SLA breach risk score (1 some risk, 4 certain), from 1 to 4; a threshold below 1 would warn every order that has any risk at all.");
+        // B-1 residue (audit 3): the probability-scale range sits inside 0-4 but would warn every score-1 order; refused.
+        assertThatThrownBy(() -> liveUse.propose(new LiveUseController.LiveUseRequest(family, "warn_early", 0.3, 0.9, 0.1, true, null)))
+            .isInstanceOf(ValidationException.class).hasMessageContaining("min 0.3 is outside").hasMessageContaining("max 0.9 is outside")
+            .hasMessageContaining("a threshold below 1 would warn every order that has any risk at all");
         assertThatThrownBy(() -> liveUse.propose(new LiveUseController.LiveUseRequest(family, "warn_early", 1.0, 3.0, 3.0, true, null)))
-            .isInstanceOf(ValidationException.class).hasMessageContaining("max step 3 is too large for monitoring.warn_early_threshold: one promotion may move it at most 2");
+            .isInstanceOf(ValidationException.class).hasMessageContaining("max step 3 is too large for monitoring.warn_early_threshold: one promotion may move it at most 1.5");
         assertThatThrownBy(() -> liveUse.propose(new LiveUseController.LiveUseRequest("sourcing.policy_bandit", "sourcing_policy_bandit", 0.0, 1.0, null, true, null)))
             .isInstanceOf(ValidationException.class).hasMessageContaining("is an on/off switch").hasMessageContaining("leave min, max and max step empty");
         assertThat(liveUse.propose(new LiveUseController.LiveUseRequest(family, "warn_early", 1.5, 3.5, 0.5, true, null)).status()).isEqualTo(ProposalStatus.DRAFT);
-        assertThat(liveUse.domains()).anySatisfy(d -> assertThat(d).containsEntry("family", family).containsEntry("min", 0.0).containsEntry("max", 4.0)
-            .containsEntry("maxStepLimit", 2.0).containsEntry("affectedDecisions", java.util.List.of("sla_breach_risk")));
+        assertThat(liveUse.domains()).anySatisfy(d -> assertThat(d).containsEntry("family", family).containsEntry("min", 1.0).containsEntry("max", 4.0)
+            .containsEntry("maxStepLimit", 1.5).containsEntry("affectedDecisions", java.util.List.of("sla_breach_risk")));
+        // B3-5: the inventory numbers name what they change, not a decision that does not read them.
+        assertThat(liveUse.domains()).anySatisfy(d -> assertThat(d).containsEntry("family", "inventory.inbound_reliability")
+            .containsEntry("affectedDecisions", java.util.List.of()).containsKey("affects"));
 
-        // A range that was promoted anyway (the seeded 0.3-0.9) still bounds the value, but the clamp is reported.
+        // A range that was promoted anyway (an older seed's 0.3-0.9, written without the check) still bounds the value,
+        // the clamp is reported, and a probability-scale learned number is never served.
         try {
             resolver.promote(family, "warn_early", 0.3, 0.9, null, null, "test-setup");
             ParameterResolver.Resolution r = resolver.explain(family, 2.0, 2.0);
@@ -147,7 +155,7 @@ class LiveUseFlowIntegrationTest extends PostgresTestBase {
             assertThat(r.clamped()).isTrue();
             assertThat(r.reason()).isEqualTo("learned 2 is above the promoted maximum; clamped to 0.9");
             assertThat(r.describe()).containsEntry("clamped", true).containsEntry("learned", 2.0);
-            assertThat(resolver.explain(family, 2.0, 0.5).clamped()).isFalse();
+            assertThat(resolver.explain(family, 2.0, 0.5).source()).isEqualTo("STATIC");
             // A learned number outside the family's domain is never served.
             ParameterResolver.Resolution wrongUnits = resolver.explain(family, 2.0, 7.0);
             assertThat(wrongUnits.source()).isEqualTo("STATIC");

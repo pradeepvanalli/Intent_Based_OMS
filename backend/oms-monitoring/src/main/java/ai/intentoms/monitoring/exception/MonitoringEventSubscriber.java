@@ -114,9 +114,46 @@ public class MonitoringEventSubscriber implements EventSubscriber {
     }
 
     private void runBreachDecision(ExceptionRecord exc, String decision, String orderId, String lineId, String state, Map<String, Object> details) {
+        Map<String, Object> input = lineDecisionInput(orderId, lineId, state, ((Number) details.get("ageSeconds")).longValue());
+        try {
+            DecisionResult r = decisions.decide(decision, input, DecisionOptions.live(exc.aggregateType(), exc.aggregateId(), ACTOR));
+            exceptions.attachDecision(exc.id(), r, Map.of("onBreachDecision", decision));
+        } catch (RuntimeException ex) {
+            log.warn("onBreach decision {} failed for exception {}: {}", decision, exc.id(), ex.toString());
+        }
+        playbooks.run(exc.id());
+    }
+
+    public static final String BACKORDER_DECISION = "backorder_next_action";
+
+    /**
+     * OC-02 / IU-06: the backorder decision is about one line, and is made as soon as the line is backordered, not only
+     * when its backordered SLA breaches days later: what to do with this line (wait, re-source, offer a substitute,
+     * cancel) is recorded on the line's own decision point, with the order and line in its input, so its episode carries
+     * the line id and the line's outcome (kept or cancelled) joins it. It is a recommendation: nothing here acts on it
+     * (cancelling stays a person's call); the SLA breach re-evaluates the same decision point and runs the playbook.
+     */
+    void decideBackorderedLine(Event e) {
+        String entityId = str(e.payload().get("entityId"));
+        int sep = entityId == null ? -1 : entityId.indexOf(':');
+        if (sep <= 0) return;
+        String orderId = entityId.substring(0, sep), lineId = entityId.substring(sep + 1);
+        if (definitions.byStatus(BACKORDER_DECISION, "live").isEmpty()) return; // a tenant without the decision
+        try {
+            decisions.decide(BACKORDER_DECISION, lineDecisionInput(orderId, lineId, "backordered", 0), DecisionOptions.live("order", orderId, ACTOR));
+            metrics.count("oms.monitoring.backorder_decisions");
+        } catch (RuntimeException ex) {
+            log.warn("Backorder decision for line {} failed: {}", entityId, ex.toString());
+        }
+    }
+
+    static boolean enteredBackorder(Event e) {
+        return "order_line".equals(str(e.payload().get("entityType"))) && "backordered".equals(str(e.payload().get("to"))) && !"backordered".equals(str(e.payload().get("from")));
+    }
+
+    private Map<String, Object> lineDecisionInput(String orderId, String lineId, String state, long ageSeconds) {
         Optional<Order> order = orderId == null ? Optional.empty() : orders.find(orderId);
         Optional<OrderLine> line = order.flatMap(o -> lineId == null ? Optional.empty() : o.line(lineId));
-        long ageSeconds = ((Number) details.get("ageSeconds")).longValue();
         Map<String, Object> lineMap = new LinkedHashMap<>();
         lineMap.put("sku", line.map(OrderLine::sku).orElse(""));
         lineMap.put("days_backordered", Math.max(0, ageSeconds / 86_400));
@@ -134,16 +171,11 @@ public class MonitoringEventSubscriber implements EventSubscriber {
         // OC-02: the decision is about one line; its episode carries the line (and order) so outcomes join there.
         if (lineId != null) input.put("lineId", lineId);
         if (orderId != null) input.put("orderId", orderId);
-        try {
-            DecisionResult r = decisions.decide(decision, input, DecisionOptions.live(exc.aggregateType(), exc.aggregateId(), ACTOR));
-            exceptions.attachDecision(exc.id(), r, Map.of("onBreachDecision", decision));
-        } catch (RuntimeException ex) {
-            log.warn("onBreach decision {} failed for exception {}: {}", decision, exc.id(), ex.toString());
-        }
-        playbooks.run(exc.id());
+        return input;
     }
 
     void onTransitioned(Event e) {
+        if (enteredBackorder(e)) decideBackorderedLine(e);
         String trigger = str(e.payload().get("trigger"));
         if (trigger == null || !REJECT_TRIGGERS.contains(trigger)) return;
         String entityType = str(e.payload().get("entityType"));

@@ -66,7 +66,10 @@ public class OrderRiskRepository {
         String sql = """
             select o.id, o.status, o.order_type, o.channel, o.ship_method, o.primary_node_id, o.placed_at, o.grand_total, o.customer_ref,
                    coalesce(es.state, o.status) as state, coalesce(q.since, es.updated_at, o.placed_at) as since,
-                   (select min(g.promise_date) from fulfilment_group g where g.tenant_id = o.tenant_id and g.order_id = o.id) as promise_date,
+                   (select min(g.promise_date) from fulfilment_group g where g.tenant_id = o.tenant_id and g.order_id = o.id
+                           and g.status not in ('rejected', 'cancelled', 'delivered', 'picked_up')) as promise_date,
+                   exists (select 1 from event ev where ev.tenant_id = o.tenant_id and ev.aggregate_type = 'order' and ev.aggregate_id = o.id
+                           and ev.type = 'order.carrier_exception') as carrier_exception,
                    r.level as prev_level, r.scored_at, r.input_signature as prev_signature, r.score as prev_score,
                    r.reasons::text as prev_reasons, r.decision_record_id as prev_record_id
             from orders o

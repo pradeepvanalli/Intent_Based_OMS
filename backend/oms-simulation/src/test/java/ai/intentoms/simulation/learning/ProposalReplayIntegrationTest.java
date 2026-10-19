@@ -193,6 +193,16 @@ class ProposalReplayIntegrationTest extends PostgresTestBase {
             new PolicyChange.ParameterChange("live:decision.calibration", Map.of("enabled", false), Map.of("enabled", true)));
         assertThat(String.valueOf(evaluations.evaluate(curve.proposalId(), "user:tester").evaluationReport().get("reason")))
             .isEqualTo("confidence_calibrator learns decision.calibration, but no decision that reads it records outcomes, so served and static values cannot be compared");
+        // B3-5: an inventory number changes ATP or a cart's hold time; no decision reads it, so there is no decision whose
+        // outcomes could show its effect, and the report says so instead of comparing unrelated sourcing_node_score records.
+        for (String[] f : new String[][]{{"inventory.inbound_reliability", "inventory_inbound_reliability"}, {"inventory.reservation_ttl", "inventory_reservation_ttl"},
+                {"inventory.safety_stock", "inventory_safety_stock"}}) {
+            learnedSomething(f[1]);
+            Proposal inv = draft(new ArtifactRef("parameter", "live:" + f[0]), 0,
+                new PolicyChange.ParameterChange("live:" + f[0], Map.of("enabled", false), Map.of("enabled", true, "learner", f[1])));
+            assertThat(String.valueOf(evaluations.evaluate(inv.proposalId(), "user:tester").evaluationReport().get("reason")))
+                .isEqualTo(f[1] + " learns " + f[0] + ", but no decision that reads it records outcomes, so served and static values cannot be compared");
+        }
         Proposal unknown = draft(new ArtifactRef("parameter", "live:test.nobody_learns_this"), 0,
             new PolicyChange.ParameterChange("live:test.nobody_learns_this", Map.of("enabled", false), Map.of("enabled", true)));
         assertThat(String.valueOf(evaluations.evaluate(unknown.proposalId(), "user:tester").evaluationReport().get("reason"))).startsWith("no learner learns test.nobody_learns_this");
