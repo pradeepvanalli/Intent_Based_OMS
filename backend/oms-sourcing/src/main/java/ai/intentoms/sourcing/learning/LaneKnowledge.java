@@ -38,13 +38,35 @@ public class LaneKnowledge {
     private final ParameterResolver parameters;
     private final NodeAssignmentRepository assignments;
     private final TenantConfigStore config;
-    private final Cache<String, Optional<String>> carriers = Caffeine.newBuilder().expireAfterWrite(Duration.ofMinutes(10)).maximumSize(10_000).build();
+    /** How long a node's usual carrier is remembered once shipments show one. */
+    static final Duration KNOWN_CARRIER_TTL = Duration.ofMinutes(10);
+    /**
+     * B3-3: how long "no carrier known yet" is remembered. Only seconds, so lane transit and calibration start applying
+     * right after a node's first shipments (a fresh database, a new node or service) instead of ten minutes later.
+     */
+    static final Duration UNKNOWN_CARRIER_TTL = Duration.ofSeconds(5);
+    private final Cache<String, Optional<String>> carriers = Caffeine.newBuilder().maximumSize(10_000)
+        .expireAfter(new com.github.benmanes.caffeine.cache.Expiry<String, Optional<String>>() {
+            @Override public long expireAfterCreate(String key, Optional<String> carrier, long now) { return ttl(carrier).toNanos(); }
+            @Override public long expireAfterUpdate(String key, Optional<String> carrier, long now, long remaining) { return ttl(carrier).toNanos(); }
+            @Override public long expireAfterRead(String key, Optional<String> carrier, long now, long remaining) { return remaining; }
+        }).build();
+
+    private static Duration ttl(Optional<String> carrier) { return carrier.isPresent() ? KNOWN_CARRIER_TTL : UNKNOWN_CARRIER_TTL; }
 
     public LaneKnowledge(LearnedFactCache facts, ParameterResolver parameters, NodeAssignmentRepository assignments, TenantConfigStore config) {
         this.facts = facts;
         this.parameters = parameters;
         this.assignments = assignments;
         this.config = config;
+    }
+
+    /**
+     * CX-01: what the promoted range would serve for a calibration offset learned elsewhere (the out-of-sample report
+     * learns one on a lane's earlier deliveries): the value, whether the range or max step clamped it, and why.
+     */
+    public ParameterResolver.Resolution correctionFor(double learnedOffset) {
+        return parameters.explain(LaneDeliveryLearner.CALIBRATION_PARAMETER, 0.0, learnedOffset);
     }
 
     /** What transit was used and why. {@code days} excludes the node's cutoff roll-over; {@code learnedP50} may be null. */
