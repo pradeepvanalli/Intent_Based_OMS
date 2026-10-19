@@ -94,7 +94,7 @@ public class CustomerFeatures implements FeatureContributor {
         if (input.get("customer") instanceof Map<?, ?> c && c.get("ref") != null) return key(String.valueOf(c.get("ref")));
         if (input.get("customerRef") != null) return key(String.valueOf(input.get("customerRef")));
         if ("customer".equals(opts.subjectType()) && opts.subjectId() != null) return key(opts.subjectId());
-        if ("order".equals(opts.subjectType()) && opts.subjectId() != null) return evidence.customerOfOrder(opts.subjectId()).orElse(null);
+        if ("order".equals(opts.subjectType()) && opts.subjectId() != null) return evidence.customerOfOrder(opts.subjectId()).map(this::key).orElse(null);
         return null;
     }
 
