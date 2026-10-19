@@ -16,6 +16,7 @@ import ai.intentoms.learning.promotion.ChangesetApplier;
 import ai.intentoms.learning.promotion.SystemPrincipal;
 import ai.intentoms.learning.store.ExperimentRepository;
 import ai.intentoms.learning.store.ProposalRepository;
+import ai.intentoms.platform.config.TenantConfigStore;
 import ai.intentoms.platform.error.ConflictException;
 import ai.intentoms.platform.error.ValidationException;
 import ai.intentoms.platform.ids.Ids;
@@ -59,6 +60,20 @@ public class ExperimentManager {
     private static final Duration DEFAULT_SHADOW_DURATION = Duration.ofDays(3);
     private static final Duration DEFAULT_CANARY_DURATION = Duration.ofDays(7);
     private static final Duration MAX_CANARY_DURATION = Duration.ofDays(28);
+    /**
+     * D-5 (EX-03): the tenant's minimum canary duration in days, both the default and the floor a starter cannot go
+     * below (default 7; the tenant itself cannot set less than {@link #CANARY_MIN_DAYS_FLOOR}).
+     */
+    public static final String CANARY_MIN_DAYS_KEY = "learning.canary.min_duration_days";
+    static final int DEFAULT_CANARY_MIN_DAYS = 7;
+    static final int CANARY_MIN_DAYS_FLOOR = 1;
+    /**
+     * D-5 (EX-02): the tenant's minimum number of paired (or affected) decisions before a shadow can pass, both the
+     * default and the floor a starter cannot go below (default 30; never below {@link #SHADOW_MIN_RECORDS_FLOOR}).
+     */
+    public static final String SHADOW_MIN_RECORDS_KEY = "learning.shadow.min_records";
+    static final int DEFAULT_SHADOW_MIN_RECORDS = 30;
+    static final int SHADOW_MIN_RECORDS_FLOOR = 10;
 
     private final ExperimentRepository experiments;
     private final ProposalRepository proposals;
@@ -69,10 +84,12 @@ public class ExperimentManager {
     private final DecisionRecordRepository decisionRecords;
     private final ExperimentMetricsRepository metrics;
     private final ExperimentTrafficRouter router;
+    private final TenantConfigStore config;
 
     public ExperimentManager(ExperimentRepository experiments, ProposalRepository proposals, ExperimentEvents events, DecisionStudioService studio,
                              DecisionDefinitionRepository definitions, DefinitionCache definitionCache, DecisionRecordRepository decisionRecords,
-                             ExperimentMetricsRepository metrics, ExperimentTrafficRouter router) {
+                             ExperimentMetricsRepository metrics, ExperimentTrafficRouter router, TenantConfigStore config) {
+        this.config = config;
         this.experiments = experiments;
         this.proposals = proposals;
         this.events = events;
@@ -95,7 +112,7 @@ public class ExperimentManager {
         experiments.runningOn(targetRef, mode).ifPresent(e -> {
             throw new ConflictException("Experiment " + e.experimentId() + " already runs " + mode + " on " + targetRef + "; only one per artifact per slice (EX-06)");
         });
-        Map<String, Object> rule = stopRule == null ? Map.of() : stopRule;
+        Map<String, Object> rule = withTenantFloors(mode, stopRule);
         String decisionName = null;
         Integer candidate = null, baseline = null;
         double share = mode == ExperimentMode.SHADOW ? 1.0 : trafficShare;
@@ -118,8 +135,7 @@ public class ExperimentManager {
         Duration duration = rule.get("durationDays") instanceof Number d ? Duration.ofHours(Math.round(d.doubleValue() * 24))
             : mode == ExperimentMode.SHADOW ? DEFAULT_SHADOW_DURATION : DEFAULT_CANARY_DURATION;
         if (mode == ExperimentMode.CANARY) {
-            int minDays = rule.get("minDurationDays") instanceof Number m ? m.intValue() : 7;
-            if (minDays < 0) throw new ValidationException("minDurationDays cannot be negative");
+            int minDays = ((Number) rule.get("minDurationDays")).intValue();
             if (duration.compareTo(Duration.ofDays(minDays)) < 0) duration = Duration.ofDays(minDays);
         }
         Experiment e = new Experiment(Ids.prefixed("exp"), proposalId, mode, share, ExperimentStatus.RUNNING, now, now.plus(duration), rule, null, now,
@@ -157,8 +173,9 @@ public class ExperimentManager {
 
     /**
      * Ends an experiment now with its measured result (shadow verdict or canary sequential test). EX-03: a canary
-     * completes only after its minimum duration ({@code minDurationDays}, default 7), so a lucky first day cannot
-     * decide it; stop it instead if it must end sooner.
+     * completes only after its minimum duration (its {@code minDurationDays}, never less than the tenant's
+     * {@value #CANARY_MIN_DAYS_KEY}), so a lucky first day cannot decide it; stop it, or roll its change back, if it must
+     * end sooner.
      */
     public Experiment complete(String experimentId, Actor by) {
         Experiment e = experiments.get(experimentId);
@@ -166,16 +183,23 @@ public class ExperimentManager {
         if (e.mode() == ExperimentMode.HOLDOUT) throw new ConflictException("The persistent holdout does not complete; stop it explicitly");
         if (e.mode() == ExperimentMode.CANARY && !pastMinimumDuration(e, Instant.now())) {
             throw new ConflictException(String.format(java.util.Locale.ROOT, "This trial has run %.1f of its minimum %d days (EX-03); stop it instead if it has to end now",
-                Duration.between(e.startAt(), Instant.now()).toHours() / 24.0, minDurationDays(e)));
+                Duration.between(e.startAt(), Instant.now()).toHours() / 24.0, effectiveMinDurationDays(e)));
         }
         Map<String, Object> result = measure(e);
         finish(e, ExperimentStatus.COMPLETED, result, by, true);
         return experiments.get(experimentId);
     }
 
+    /**
+     * Ends an experiment without a measured result. D-5: never as COMPLETED, which only {@link #complete} reaches (it
+     * measures the experiment and enforces a canary's minimum duration), so a caller cannot hand in its own result.
+     */
     public void stop(String experimentId, ExperimentStatus status, Map<String, Object> result, Actor by) {
         Experiment e = experiments.get(experimentId);
         if (e.status() != ExperimentStatus.RUNNING) throw new ConflictException("Experiment " + experimentId + " is " + e.status());
+        if (status == ExperimentStatus.COMPLETED) {
+            throw new ValidationException("An experiment is completed only through complete, which measures it and enforces a canary's minimum duration (EX-03); stop ends it without a result");
+        }
         Map<String, Object> r = new LinkedHashMap<>(result == null ? Map.of() : result);
         r.putIfAbsent("stoppedBy", by.ref());
         finish(e, status == null || status == ExperimentStatus.RUNNING ? ExperimentStatus.STOPPED : status, r, by, true);
@@ -192,11 +216,62 @@ public class ExperimentManager {
         finish(e, ExperimentStatus.STOPPED, r, by, false);
     }
 
-    /** EX-03 minimum duration of a canary, from its stop rule (default 7 days). */
-    static int minDurationDays(Experiment e) { return intRule(e, "minDurationDays", 7); }
+    /** EX-03 minimum duration of a canary as its stop rule records it (default 7 days). */
+    static int minDurationDays(Experiment e) { return intRule(e, "minDurationDays", DEFAULT_CANARY_MIN_DAYS); }
 
-    static boolean pastMinimumDuration(Experiment e, Instant now) {
-        return !now.isBefore(e.startAt().plus(Duration.ofDays(minDurationDays(e))));
+    /**
+     * D-5: the minimum duration that applies now, never below the tenant's floor, so a canary started before the floor
+     * existed (or with {@code minDurationDays: 0}) still runs at least that long.
+     */
+    int effectiveMinDurationDays(Experiment e) { return Math.max(minDurationDays(e), canaryMinDays()); }
+
+    boolean pastMinimumDuration(Experiment e, Instant now) {
+        return !now.isBefore(e.startAt().plus(Duration.ofDays(effectiveMinDurationDays(e))));
+    }
+
+    /** The tenant's minimum canary duration ({@value #CANARY_MIN_DAYS_KEY}, default 7), never below 1 day. */
+    int canaryMinDays() { return Math.max(CANARY_MIN_DAYS_FLOOR, config.getInt(CANARY_MIN_DAYS_KEY, DEFAULT_CANARY_MIN_DAYS)); }
+
+    /** The tenant's minimum shadow sample ({@value #SHADOW_MIN_RECORDS_KEY}, default 30), never below 10. */
+    int shadowMinRecords() { return Math.max(SHADOW_MIN_RECORDS_FLOOR, config.getInt(SHADOW_MIN_RECORDS_KEY, DEFAULT_SHADOW_MIN_RECORDS)); }
+
+    /**
+     * D-5 (EX-02, EX-03): the stop rule with the tenant's floors applied. A canary's {@code minDurationDays} and a
+     * shadow's {@code minRecords} default to the tenant's minimum and are raised to it when the starter asks for less;
+     * each raise is recorded under {@code floorsApplied} so the starter sees why. Negative values are refused.
+     */
+    Map<String, Object> withTenantFloors(ExperimentMode mode, Map<String, Object> stopRule) {
+        Map<String, Object> rule = new LinkedHashMap<>(stopRule == null ? Map.of() : stopRule);
+        List<String> raised = new java.util.ArrayList<>();
+        if (mode == ExperimentMode.CANARY) {
+            int floor = canaryMinDays();
+            Object given = rule.get("minDurationDays");
+            int days = floor;
+            if (given instanceof Number n) {
+                if (n.doubleValue() < 0) throw new ValidationException("minDurationDays cannot be negative");
+                days = (int) Math.ceil(n.doubleValue());
+                if (days < floor) {
+                    raised.add(String.format(java.util.Locale.ROOT, "minimum duration raised from %s to %d days, this tenant's minimum (%s)", n, floor, CANARY_MIN_DAYS_KEY));
+                    days = floor;
+                }
+            } else if (given != null) throw new ValidationException("minDurationDays must be a number of days");
+            rule.put("minDurationDays", days);
+        } else if (mode == ExperimentMode.SHADOW) {
+            int floor = shadowMinRecords();
+            Object given = rule.get("minRecords");
+            int records = floor;
+            if (given instanceof Number n) {
+                if (n.doubleValue() < 0) throw new ValidationException("minRecords cannot be negative");
+                records = (int) Math.ceil(n.doubleValue());
+                if (records < floor) {
+                    raised.add(String.format(java.util.Locale.ROOT, "minimum sample raised from %s to %d decisions, this tenant's minimum (%s)", n, floor, SHADOW_MIN_RECORDS_KEY));
+                    records = floor;
+                }
+            } else if (given != null) throw new ValidationException("minRecords must be a number of decisions");
+            rule.put("minRecords", records);
+        }
+        if (!raised.isEmpty()) rule.put("floorsApplied", raised);
+        return rule;
     }
 
     private void finish(Experiment e, ExperimentStatus status, Map<String, Object> result, Actor by, boolean reopenProposal) {
@@ -239,7 +314,7 @@ public class ExperimentManager {
     Map<String, Object> shadowResult(Experiment e) {
         Map<String, Object> c = metrics.shadowComparison(e.decisionName(), e.candidateVersion(), e.startAt());
         long paired = num(c.get("paired"));
-        int minRecords = intRule(e, "minRecords", 30);
+        int minRecords = Math.max(intRule(e, "minRecords", DEFAULT_SHADOW_MIN_RECORDS), shadowMinRecords()); // D-5: never below the tenant floor
         double maxEscalationIncrease = doubleRule(e, "maxEscalationIncrease", 0.05);
         double shadowEsc = paired == 0 ? 0 : num(c.get("shadow_escalations")) / (double) paired;
         double liveEsc = paired == 0 ? 0 : num(c.get("live_escalations")) / (double) paired;
@@ -270,7 +345,7 @@ public class ExperimentManager {
     Map<String, Object> learnedValueShadowResult(Experiment e) {
         Map<String, Object> c = metrics.learnedValueShadow(e.startAt());
         long affected = num(c.get("decisions_affected"));
-        int minRecords = intRule(e, "minRecords", 30);
+        int minRecords = Math.max(intRule(e, "minRecords", DEFAULT_SHADOW_MIN_RECORDS), shadowMinRecords()); // D-5: never below the tenant floor
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("passed", affected >= minRecords);
         r.put("reason", affected >= minRecords ? "learned values were available for enough live decisions" : "only " + affected + " live decisions had a learned value to compare (need " + minRecords + ")");

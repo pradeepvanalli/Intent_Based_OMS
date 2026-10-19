@@ -86,8 +86,11 @@ class ExperimentLifecycleIntegrationTest extends DecisionFabricTestBase {
         int v1 = liveVersion(name);
         Proposal p = proposal("system:band_threshold", new ArtifactRef("decision", name), v1, PolicyChangeset.RiskTier.T1, ProposalStatus.EVALUATED,
             new PolicyChange.ThresholdChange(name, "act", 0.8, 0.5));
-        // minDurationDays 0: this test completes the canary at once; the 7-day default is covered below.
-        Experiment e = experiments.start(p.proposalId(), ExperimentMode.CANARY, 0.5, Map.of("minPerArm", 5, "minDurationDays", 0), TESTER);
+        // D-5: a canary runs at least the tenant's minimum (7 days by default; asking for 0 is raised to it), so this test
+        // moves the start back past it before completing; the floors are covered by CanaryFloorsAndSequentialStopIntegrationTest.
+        Experiment e = experiments.start(p.proposalId(), ExperimentMode.CANARY, 0.5, Map.of("minPerArm", 5), TESTER);
+        jdbc.sql("update experiment set start_at = :s where experiment_id = :id")
+            .param("s", java.sql.Timestamp.from(e.startAt().minus(Duration.ofDays(7)).minusSeconds(60))).param("id", e.experimentId()).update();
         assertThat(proposals.get(p.proposalId()).status()).isEqualTo(ProposalStatus.CANARY);
         assertThat(definitions.find(name, e.candidateVersion()).orElseThrow().definition().status()).isEqualTo("draft"); // never published
 
