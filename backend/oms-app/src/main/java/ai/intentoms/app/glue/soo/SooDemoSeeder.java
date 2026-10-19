@@ -453,7 +453,8 @@ public class SooDemoSeeder {
         if (max != null) to.put("max", max);
         if (maxStep != null) to.put("maxStep", maxStep);
         Proposal p = draft(id, new ArtifactRef("parameter", "live:" + family), 0,
-            List.of(new PolicyChange.ParameterChange("live:" + family, Map.of("enabled", false), to)), reason, PolicyChangeset.RiskTier.T1, STRATEGY, null);
+            List.of(new PolicyChange.ParameterChange("live:" + family, Map.of("enabled", false), to)), reason,
+            ai.intentoms.learning.promotion.LiveUseTier.of(family, definitions), STRATEGY, null); // D-3: payment_risk / appeasement families are T2
         evaluate(p);
         if (!promote) return true;
         approve(id, ADMIN);

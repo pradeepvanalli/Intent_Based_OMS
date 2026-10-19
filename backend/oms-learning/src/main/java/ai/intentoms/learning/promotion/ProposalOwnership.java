@@ -19,11 +19,13 @@ import java.util.Set;
  * weekly budget apply:
  * <ol>
  *   <li>live use ({@code parameter:live:<family>}): the {@code learner} the change names, else the learner that feeds the family;</li>
- *   <li>a learner's own draft ({@code system:<learner>}, or {@code system:demo-seed.<learner>} for seeded ones);</li>
- *   <li>a draft by a person, the template or LLM author: the learner whose job the change is (threshold moves, rule
- *       retirement, new rules, sourcing weights, provider routes, the learned fact a parameter change moves).</li>
+ *   <li>any other change: the learner whose job the change is (threshold moves, rule retirement, new rules, sourcing
+ *       weights, provider routes, the learned fact a parameter change moves), whoever drafted it;</li>
+ *   <li>a learner's own draft of a change no learner owns ({@code system:<learner>}, or {@code system:demo-seed.<learner>}).</li>
  * </ol>
- * Only a change no learner owns falls back to tier rules and the tenant's per-target weekly budget.
+ * D-4: when one learner drafts a change another learner owns (the band tuner moving a fraud decision's threshold), both
+ * learners' states apply and the stricter wins ({@link #governors}). Only a change no learner owns or drafted falls back
+ * to tier rules and the tenant's per-target weekly budget.
  */
 @Component
 public class ProposalOwnership {
@@ -52,7 +54,10 @@ public class ProposalOwnership {
 
     public ProposalOwnership(LearnerRegistry registry) { this.registry = registry; }
 
-    /** The governing learner's key, or empty when no learner owns the change. */
+    /**
+     * The governing learner's key, or empty when no learner owns the change. D-4: the target's owner governs, whoever
+     * drafted the change; a learner's draft is governed by that learner only when no learner owns the target.
+     */
     public Optional<String> owner(Proposal p) {
         String family = liveFamily(p);
         if (family != null) {
@@ -61,17 +66,31 @@ public class ProposalOwnership {
             if (named != null && registered(String.valueOf(named))) return Optional.of(String.valueOf(named));
             return registry.descriptors().stream().filter(d -> d.liveParameters().contains(family)).map(LearnerDescriptor::key).findFirst();
         }
+        Optional<String> target = byTarget(p);
+        if (target.isPresent()) return target;
         String author = authorLearner(p.createdBy());
-        if (author != null && registered(author)) return Optional.of(author);
-        return byTarget(p);
+        return author != null && registered(author) ? Optional.of(author) : Optional.empty();
+    }
+
+    /**
+     * D-4: every learner whose governance applies to the change, the governing owner first, then the learner that drafted
+     * it when that is a different one. The promotion gate applies the stricter of their states: either one switched off
+     * or paused blocks the change.
+     */
+    public List<String> governors(Proposal p) {
+        Set<String> out = new LinkedHashSet<>();
+        owner(p).ifPresent(out::add);
+        String author = authorLearner(p.createdBy());
+        if (author != null && registered(author)) out.add(author);
+        return List.copyOf(out);
     }
 
     /** How the owner was found, for the change card and NF-09 attribution: "learner", "live-use", "target" or "none". */
     public String ownedBy(Proposal p) {
         if (liveFamily(p) != null) return owner(p).isPresent() ? "live-use" : "none";
+        if (byTarget(p).isPresent()) return "target";
         String author = authorLearner(p.createdBy());
-        if (author != null && registered(author)) return "learner";
-        return byTarget(p).isPresent() ? "target" : "none";
+        return author != null && registered(author) ? "learner" : "none";
     }
 
     /** EX-05: the decisions whose guardrails show whether this promoted change hurt. */
@@ -86,7 +105,7 @@ public class ProposalOwnership {
             registry.descriptors().stream().filter(d -> d.liveParameters().contains(family)).forEach(d -> out.addAll(d.outcomeDecisions()));
         }
         if ("config".equals(type) && name.startsWith(PROVIDER_ROUTE_PREFIX)) out.add(name.substring(PROVIDER_ROUTE_PREFIX.length()));
-        owner(p).flatMap(registry::descriptor).ifPresent(d -> out.addAll(d.outcomeDecisions()));
+        for (String learner : governors(p)) registry.descriptor(learner).ifPresent(d -> out.addAll(d.outcomeDecisions()));
         return List.copyOf(out);
     }
 

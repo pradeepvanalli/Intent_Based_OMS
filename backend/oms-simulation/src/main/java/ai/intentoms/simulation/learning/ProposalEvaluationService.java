@@ -117,6 +117,12 @@ public class ProposalEvaluationService {
             }
         }
         ArtifactRef target = proposal.changeset().target();
+        // D-2 (GV-02): a decision change drafted against another version, or from a value no longer live, is not re-tested.
+        if ("decision".equals(target.type())) {
+            definitions.byStatus(target.name(), "live").stream().findFirst()
+                .map(r -> ai.intentoms.learning.promotion.LiveBase.of(r.definition()).staleness(proposal.changeset()))
+                .ifPresent(stale -> { throw new ai.intentoms.platform.error.ConflictException("Cannot evaluate " + proposalId + ": this change is out of date: " + stale); });
+        }
         Map<String, Object> report = switch (target.type()) {
             case "decision" -> evaluateDecision(proposal, target.name());
             case "config", "parameter" -> evaluateNonDecision(proposal, target);

@@ -126,6 +126,67 @@ class PromotionGuardTest {
         assertThat(PromotionGuard.evaluate(four, ctx(noLimit, null, 0, 1)).verdict()).isEqualTo(PromotionGuard.Verdict.AUTO_PROMOTE);
     }
 
+    // ---------------------------------------------------------------- D-2: against the live artifact, D-3: tier floor
+
+    private static PromotionGuard.Context ctx(LearnerState l, LiveBase live, PolicyChangeset.RiskTier floor) {
+        return new PromotionGuard.Context(l, List.of(), Instant.now(), null, 0, 5, live, floor);
+    }
+
+    @Test void aChangeDraftedAgainstAnotherVersionOrValueIsRefusedEvenWithAReason() {
+        LiveBase live = new LiveBase("decision:x", 3, Map.of("band:act", 0.80), null, null, null);
+        LearnerState l3 = learner(AutonomyLevel.L3_AUTONOMOUS, true);
+        // Drafted from 0.75 (an older version's value) while 0.80 is live: stale, whatever the base version says.
+        var staleFrom = proposal(new ArtifactRef("decision", "x"), List.of(new PolicyChange.ThresholdChange("x", "act", 0.75, 0.70)),
+            PolicyChangeset.RiskTier.T0, ProposalStatus.APPROVED, withShadow(positiveLift(), true), Review.Verdict.LOOKS_SAFE);
+        var manual = PromotionGuard.evaluateManualPromote(staleFrom, ctx(l3, live, null), "a written reason that is long enough");
+        assertThat(manual.verdict()).isEqualTo(PromotionGuard.Verdict.BLOCKED);
+        assertThat(manual.reason()).contains("re-draft against the live version").contains("0.75").contains("0.8");
+        assertThat(PromotionGuard.evaluate(staleFrom, ctx(l3, live, null)).verdict()).isEqualTo(PromotionGuard.Verdict.BLOCKED);
+        // Drafted against version 3 while version 4 is live: stale even though the value happens to match.
+        LiveBase v4 = new LiveBase("decision:x", 4, Map.of("band:act", 0.80), null, null, null);
+        var current = proposal(new ArtifactRef("decision", "x"), List.of(new PolicyChange.ThresholdChange("x", "act", 0.80, 0.78)),
+            PolicyChangeset.RiskTier.T0, ProposalStatus.APPROVED, withShadow(positiveLift(), true), Review.Verdict.LOOKS_SAFE);
+        assertThat(PromotionGuard.evaluateManualPromote(current, ctx(l3, v4, null), null).reason()).contains("version 3").contains("version 4 is live");
+        // Against the version it was drafted on it goes through.
+        assertThat(PromotionGuard.evaluate(current, ctx(l3, live, null)).verdict()).isEqualTo(PromotionGuard.Verdict.AUTO_PROMOTE);
+    }
+
+    @Test void theStepIsMeasuredFromTheLiveValueNotTheProposalsFrom() {
+        LearnerState noLimit = new LearnerState("band_threshold", AutonomyLevel.L3_AUTONOMOUS, true, 5, null, null, "system", Instant.now());
+        var cs = new PolicyChangeset(new ArtifactRef("decision", "x"), 0, List.of(new PolicyChange.ThresholdChange("x", "act", 0.75, 0.70)), null, PolicyChangeset.RiskTier.T1);
+        assertThat(PromotionGuard.stepViolation(cs, noLimit)).isNull(); // 0.05 on its own terms
+        String fromLive = PromotionGuard.stepViolation(cs, noLimit, new LiveBase("decision:x", 3, Map.of("band:act", 0.80), null, null, null));
+        assertThat(fromLive).contains("0.1000").contains("from its live value 0.8000").contains("GV-02");
+    }
+
+    @Test void movingAnExistingLiveRangeIsAStepThatNeedsAReason() {
+        LearnerState l3 = new LearnerState("fraud_signals", AutonomyLevel.L3_AUTONOMOUS, true, 5, null, null, "system", Instant.now());
+        LiveBase liveRange = LiveBase.ofLiveRange("fraud.signal_risk", 0.0, 0.4); // limit: half of 0..1
+        java.util.function.Function<Double, Proposal> widen = max -> proposal(new ArtifactRef("parameter", "live:fraud.signal_risk"),
+            List.of(new PolicyChange.ParameterChange("live:fraud.signal_risk", Map.of("enabled", true, "min", 0.0, "max", 0.4),
+                Map.of("enabled", true, "learner", "fraud_signals", "min", 0.0, "max", max, "maxStep", 0.1))),
+            PolicyChangeset.RiskTier.T1, ProposalStatus.APPROVED, withShadow(positiveLift(), true), Review.Verdict.LOOKS_SAFE);
+        var big = PromotionGuard.evaluateManualPromote(widen.apply(1.0), ctx(l3, liveRange, null), null);
+        assertThat(big.verdict()).isEqualTo(PromotionGuard.Verdict.NEEDS_OVERRIDE);
+        assertThat(big.waivable()).anyMatch(w -> w.contains("live range of fraud.signal_risk by 0.6") && w.contains("GV-02"));
+        assertThat(PromotionGuard.evaluateManualPromote(widen.apply(1.0), ctx(l3, liveRange, null), "pilot asked for the full range this week").verdict())
+            .isEqualTo(PromotionGuard.Verdict.AUTO_PROMOTE);
+        assertThat(PromotionGuard.concerns(widen.apply(0.8), ctx(l3, liveRange, null))).noneMatch(w -> w.contains("live range"));
+        // Switching a family on for the first time (nothing live) has no range to move.
+        assertThat(PromotionGuard.concerns(widen.apply(1.0), ctx(l3, LiveBase.none(), null))).noneMatch(w -> w.contains("live range"));
+    }
+
+    @Test void aTierFloorTurnsAStoredT1IntoAT2ThatAlwaysNeedsApproval() {
+        var p = proposal(new ArtifactRef("parameter", "live:fraud.signal_risk"),
+            List.of(new PolicyChange.ParameterChange("live:fraud.signal_risk", Map.of("enabled", false), Map.of("enabled", true, "learner", "fraud_signals", "min", 0.0, "max", 1.0, "maxStep", 0.1))),
+            PolicyChangeset.RiskTier.T1, ProposalStatus.EVALUATED, withShadow(positiveLift(), true), Review.Verdict.LOOKS_SAFE);
+        LearnerState l3 = new LearnerState("fraud_signals", AutonomyLevel.L3_AUTONOMOUS, true, 5, null, null, "system", Instant.now());
+        assertThat(PromotionGuard.evaluate(p, ctx(l3, LiveBase.none(), null)).verdict()).isEqualTo(PromotionGuard.Verdict.AUTO_PROMOTE);
+        var floored = PromotionGuard.evaluate(p, ctx(l3, LiveBase.none(), PolicyChangeset.RiskTier.T2));
+        assertThat(floored.verdict()).isEqualTo(PromotionGuard.Verdict.NEEDS_APPROVAL);
+        assertThat(floored.reason()).contains("T2 always requires approval").contains("treated as T2");
+    }
+
     @Test void theWeeklyBudgetIsPerTargetAndCountsEveryPromotion() {
         var p = proposal(PolicyChangeset.RiskTier.T0, ProposalStatus.EVALUATED, withShadow(positiveLift(), true), Review.Verdict.LOOKS_SAFE);
         var spent = ctx(learner(AutonomyLevel.L3_AUTONOMOUS, true), null, 1, 1);

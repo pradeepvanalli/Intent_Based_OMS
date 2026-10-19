@@ -44,9 +44,11 @@ public class LiveUseController {
     private final ParameterResolver resolver;
     private final AuthorizationService authz;
     private final ai.intentoms.learning.promotion.PromotionService promotion;
+    private final ai.intentoms.decision.definition.DecisionDefinitionRepository definitions;
 
     public LiveUseController(ProposalRepository proposals, LearnerRegistry registry, LiveParameterRepository live, ParameterResolver resolver, AuthorizationService authz,
-                             ai.intentoms.learning.promotion.PromotionService promotion) {
+                             ai.intentoms.learning.promotion.PromotionService promotion, ai.intentoms.decision.definition.DecisionDefinitionRepository definitions) {
+        this.definitions = definitions;
         this.promotion = promotion;
         this.proposals = proposals;
         this.registry = registry;
@@ -96,10 +98,12 @@ public class LiveUseController {
         String reason = r.reason() == null || r.reason().isBlank()
             ? (enable ? "Use " + d.displayName() + "'s learned value for " + r.family() + " in live decisions" : "Stop using " + r.family() + " in live decisions")
             : r.reason();
+        // D-3 (EX-07): as risky as the riskiest decision the family feeds (payment_risk and appeasement are T2), never below T1.
+        PolicyChangeset.RiskTier tier = ai.intentoms.learning.promotion.LiveUseTier.of(r.family(), definitions);
         PolicyChangeset cs = new PolicyChangeset(new ArtifactRef("parameter", "live:" + r.family()), 0,
-            List.of(new PolicyChange.ParameterChange("live:" + r.family(), from, to)), reason, PolicyChangeset.RiskTier.T1);
+            List.of(new PolicyChange.ParameterChange("live:" + r.family(), from, to)), reason, tier);
         Instant now = Instant.now();
-        Proposal p = new Proposal(Ids.prefixed("prop"), cs, null, PolicyChangeset.RiskTier.T1, ProposalStatus.DRAFT, null, null,
+        Proposal p = new Proposal(Ids.prefixed("prop"), cs, null, tier, ProposalStatus.DRAFT, null, null,
             authz.requirePrincipal().actorRef(), now, now, null, null, null, null, null, null, null, null);
         proposals.insert(p);
         return proposals.get(p.proposalId());

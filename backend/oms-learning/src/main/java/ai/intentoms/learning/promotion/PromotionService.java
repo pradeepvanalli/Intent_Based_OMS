@@ -15,6 +15,7 @@ import ai.intentoms.learning.model.LearnedFact;
 import ai.intentoms.learning.model.LearnerState;
 import ai.intentoms.learning.model.ObjectiveProfile;
 import ai.intentoms.learning.model.PolicyChange;
+import ai.intentoms.learning.model.PolicyChangeset;
 import ai.intentoms.learning.model.Proposal;
 import ai.intentoms.learning.model.ProposalStatus;
 import ai.intentoms.learning.model.SubjectType;
@@ -190,7 +191,27 @@ public class PromotionService {
         String target = p.changeset().target().toString();
         int promotedThisWeek = proposals.promotionsOfTargetSince(target, Instant.now().minus(Duration.ofDays(7)));
         int budget = registry.descriptor(learner.learnerKey()).isPresent() ? learner.maxPromotionsPerWeek() : Math.max(0, config.getInt(TARGET_BUDGET_KEY, 1));
-        return new PromotionGuard.Context(learner, FreezeWindows.toGuardWindows(freeze), Instant.now(), governance.offReason(), promotedThisWeek, budget);
+        String family = LiveUseTier.familyOf(p.changeset());
+        PolicyChangeset.RiskTier floor = family == null ? null : LiveUseTier.of(family, definitions);
+        return new PromotionGuard.Context(learner, FreezeWindows.toGuardWindows(freeze), Instant.now(), governance.offReason(), promotedThisWeek, budget,
+            liveBase(p), floor);
+    }
+
+    /**
+     * D-2: what is live now for the proposal's target: the live decision definition, or the range a learned family is
+     * live with. The gate refuses a stale decision change and measures every step from these values.
+     */
+    private LiveBase liveBase(Proposal p) {
+        ArtifactRef target = p.changeset().target();
+        if ("decision".equals(target.type())) {
+            return definitions.byStatus(target.name(), "live").stream().findFirst().map(r -> LiveBase.of(r.definition())).orElse(LiveBase.none());
+        }
+        String family = LiveUseTier.familyOf(p.changeset());
+        if (family != null) {
+            return liveParameters.find(family).filter(LiveParameterRepository.LiveParameter::live)
+                .map(lp -> LiveBase.ofLiveRange(family, lp.min(), lp.max())).orElse(LiveBase.none());
+        }
+        return LiveBase.none();
     }
 
     private void apply(Proposal p, LearnerState learner, String reason, Actor by, Map<String, Object> override) {
@@ -225,6 +246,9 @@ public class PromotionService {
             throw new ConflictException("Proposal " + p.proposalId() + " mixes changes that do not apply to decision " + decisionName);
         }
         DecisionDefinition live = liveDefinition(decisionName);
+        // D-2: checked again against the definition being replaced, so a change that went stale after the gate ran is never applied.
+        String stale = LiveBase.of(live).staleness(p.changeset());
+        if (stale != null) throw new ConflictException("Cannot promote " + p.proposalId() + ": this change is out of date: " + stale);
         String candidateYaml = ChangesetApplier.applyToDecision(live.yaml(), changes);
         return SystemPrincipal.call(() -> {
             DecisionDefinition draft = decisionStudio.createDraft(decisionName, candidateYaml);
@@ -445,14 +469,31 @@ public class PromotionService {
     // ------------------------------------------------------------------ helpers
 
     /**
-     * N5: the state of the learner that owns the proposal's target ({@link ProposalOwnership}), whoever drafted it, so
-     * that learner's autonomy, kill switch, pause and budget apply. Only a change no learner owns gets the tier-only
-     * default (L1 and the tenant's per-target budget).
+     * N5 + D-4: the governance that applies to the proposal. The learner that owns its target governs
+     * ({@link ProposalOwnership#owner}), and when another learner drafted it, that learner's state applies too and the
+     * stricter wins: either one switched off or paused blocks the change (the result names the blocking learner), and
+     * the lower autonomy, the smaller weekly budget and the smaller max step apply. Only a change no learner owns or
+     * drafted gets the tier-only default (L1 and the tenant's per-target budget).
      */
     private LearnerState learnerFor(Proposal p) {
-        var owner = ownership.owner(p);
-        if (owner.isPresent()) return learners.getOrCreate(owner.get());
-        return new LearnerState(learnerKeyOf(p), AutonomyLevel.L1_RECOMMEND, true, Integer.MAX_VALUE, null, null, "system", Instant.now(), null);
+        List<String> keys = ownership.governors(p);
+        if (keys.isEmpty()) return new LearnerState(learnerKeyOf(p), AutonomyLevel.L1_RECOMMEND, true, Integer.MAX_VALUE, null, null, "system", Instant.now(), null);
+        LearnerState governing = learners.getOrCreate(keys.get(0));
+        for (String other : keys.subList(1, keys.size())) governing = stricter(governing, learners.getOrCreate(other));
+        return governing;
+    }
+
+    /** D-4: the stricter of two learners' governance, keyed by the one that blocks when either does. */
+    static LearnerState stricter(LearnerState governing, LearnerState other) {
+        String key = governing.learnerKey();
+        if (governing.enabled() && !other.enabled()) key = other.learnerKey();
+        else if (governing.enabled() && !governing.paused() && other.paused()) key = other.learnerKey();
+        AutonomyLevel level = other.autonomyLevel().compareTo(governing.autonomyLevel()) < 0 ? other.autonomyLevel() : governing.autonomyLevel();
+        Double maxStep = governing.maxStep();
+        if (maxStep == null || (other.maxStep() != null && other.maxStep() < maxStep)) maxStep = other.maxStep();
+        String paused = governing.pausedReason() != null ? governing.pausedReason() : other.pausedReason();
+        return new LearnerState(key, level, governing.enabled() && other.enabled(), Math.min(governing.maxPromotionsPerWeek(), other.maxPromotionsPerWeek()),
+            maxStep, governing.lastRunAt(), governing.updatedBy(), governing.updatedAt(), paused);
     }
 
     /** The key of the learner governing this proposal, or the bare author when no learner owns its target. */

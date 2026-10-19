@@ -55,13 +55,28 @@ public final class PromotionGuard {
      * What the gate knows besides the proposal. {@code learningOffReason} is non-null while the global or tenant kill
      * switch is on. {@code targetPromotionsThisWeek} counts every promotion of the same target in the last 7 days;
      * {@code targetBudgetPerWeek} is the governing learner's {@code maxPromotionsPerWeek} (default 1).
+     * {@code live} (D-2) is what is live now for the target: a stale change is refused and every step is measured from
+     * the live value. {@code tierFloor} (D-3) is the lowest tier the change may be treated as, whatever tier it was
+     * stored with (live use of a family is as risky as the riskiest decision it feeds).
      */
     public record Context(LearnerState learner, List<FreezeWindow> freezeWindows, Instant now, String learningOffReason,
-                          int targetPromotionsThisWeek, int targetBudgetPerWeek) {
+                          int targetPromotionsThisWeek, int targetBudgetPerWeek, LiveBase live, PolicyChangeset.RiskTier tierFloor) {
         public Context {
             freezeWindows = freezeWindows == null ? List.of() : freezeWindows;
             targetBudgetPerWeek = Math.max(0, targetBudgetPerWeek);
+            live = live == null ? LiveBase.none() : live;
         }
+
+        public Context(LearnerState learner, List<FreezeWindow> freezeWindows, Instant now, String learningOffReason,
+                       int targetPromotionsThisWeek, int targetBudgetPerWeek) {
+            this(learner, freezeWindows, now, learningOffReason, targetPromotionsThisWeek, targetBudgetPerWeek, null, null);
+        }
+    }
+
+    /** D-3: the tier the gate applies, the higher of the stored tier and the context's floor. */
+    public static PolicyChangeset.RiskTier effectiveTier(Proposal p, Context ctx) {
+        PolicyChangeset.RiskTier stored = p.tier() == null ? PolicyChangeset.RiskTier.T1 : p.tier();
+        return ctx.tierFloor() != null && ctx.tierFloor().compareTo(stored) > 0 ? ctx.tierFloor() : stored;
     }
 
     /** GV-02's example: a threshold (or any other 0..1 value) moves at most 0.05 per promotion unless the learner's own max step says otherwise. */
@@ -78,9 +93,10 @@ public final class PromotionGuard {
         if (isPostalCodeScoped(p.changeset())) return Result.needsApproval("postal-code-scoped restriction always needs a reason code and human review (GV-07)");
         if (p.status() != ProposalStatus.EVALUATED && p.status() != ProposalStatus.APPROVED) return Result.blocked("proposal is " + p.status() + ", not evaluated or approved");
 
-        PolicyChangeset.RiskTier tier = p.tier();
-        if (tier == PolicyChangeset.RiskTier.T3) return Result.blocked("T3 decisions are never autonomous (requirements doc EX-07)");
-        if (tier == PolicyChangeset.RiskTier.T2) return Result.needsApproval("T2 always requires approval (requirements doc EX-07)");
+        PolicyChangeset.RiskTier tier = effectiveTier(p, ctx);
+        String raised = tier != p.tier() ? " (it feeds a " + tier + " decision, so it is treated as " + tier + ")" : "";
+        if (tier == PolicyChangeset.RiskTier.T3) return Result.blocked("T3 decisions are never autonomous (requirements doc EX-07)" + raised);
+        if (tier == PolicyChangeset.RiskTier.T2) return Result.needsApproval("T2 always requires approval (requirements doc EX-07)" + raised);
         String sensitive = neverAutonomous(p.changeset());
         if (sensitive != null) return Result.needsApproval(sensitive);
         AutonomyLevel level = ctx.learner().autonomyLevel();
@@ -96,7 +112,7 @@ public final class PromotionGuard {
         if (shadowOk == null) return Result.needsApproval(tier + " promotes automatically only after replay and a shadow run (EX-07); no shadow run has completed yet");
         if (!shadowOk) return Result.needsApproval("the shadow run did not pass");
         if (p.criticReview() != null && p.criticReview().verdict() == Review.Verdict.RISKY) return Result.needsApproval("critic review verdict is RISKY");
-        String step = stepViolation(p.changeset(), ctx.learner());
+        String step = stepViolation(p.changeset(), ctx.learner(), ctx.live());
         if (step != null) return Result.needsApproval(step);
         String budget = budgetViolation(p, ctx);
         if (budget != null) return Result.needsApproval(budget);
@@ -118,7 +134,7 @@ public final class PromotionGuard {
         Result hard = hardStops(p, ctx);
         if (hard != null) return hard;
         if (p.status() != ProposalStatus.APPROVED) return Result.blocked("proposal must be APPROVED before a person can promote it (it is " + p.status() + ")");
-        if (p.tier() == PolicyChangeset.RiskTier.T3) return Result.blocked("T3 decisions are never autonomous, including by manual promotion of an auto-drafted change");
+        if (effectiveTier(p, ctx) == PolicyChangeset.RiskTier.T3) return Result.blocked("T3 decisions are never autonomous, including by manual promotion of an auto-drafted change");
 
         List<String> concerns = concerns(p, ctx);
         if (concerns.isEmpty()) return Result.auto("approved by a person; evidence and budget checks passed");
@@ -146,7 +162,7 @@ public final class PromotionGuard {
         if (ips != null) out.add(ips);
         if (Boolean.FALSE.equals(shadowOk)) out.add("the shadow run did not pass");
         if (p.criticReview() != null && p.criticReview().verdict() == Review.Verdict.RISKY) out.add("the critic review flagged it as risky");
-        String step = stepViolation(p.changeset(), ctx.learner());
+        String step = stepViolation(p.changeset(), ctx.learner(), ctx.live());
         if (step != null) out.add(step);
         String budget = budgetViolation(p, ctx);
         if (budget != null) out.add(budget);
@@ -164,23 +180,36 @@ public final class PromotionGuard {
         if (learner.paused()) return Result.blocked("learner '" + learner.learnerKey() + "' is paused: " + learner.pausedReason());
         String refused = refusedOutright(p.changeset());
         if (refused != null) return Result.blocked(refused);
+        // D-2: a change drafted against another version, or from a value that is no longer live, is never applied.
+        String stale = ctx.live().staleness(p.changeset());
+        if (stale != null) return Result.blocked("this change is out of date: " + stale);
         return null;
     }
 
-    /** GV-02: the largest numeric move that exceeds its limit, described for a person; null when every move fits. */
-    static String stepViolation(PolicyChangeset cs, LearnerState learner) {
+    /** GV-02 with each move measured from the change's own {@code from} (no live value known). */
+    static String stepViolation(PolicyChangeset cs, LearnerState learner) { return stepViolation(cs, learner, LiveBase.none()); }
+
+    /**
+     * GV-02: the largest numeric move that exceeds its limit, described for a person; null when every move fits. D-2: a
+     * move is measured from the live value when it is known, not from the {@code from} the proposal was drafted with, and
+     * moving an existing live range of a learned family counts as a step too.
+     */
+    static String stepViolation(PolicyChangeset cs, LearnerState learner, LiveBase live) {
         Double learnerLimit = learner == null ? null : learner.maxStep();
         for (PolicyChange c : cs.changes()) {
             double[] fromTo = numericFromTo(c);
             if (fromTo == null) continue;
+            Double liveFrom = live == null ? null : live.liveFrom(c);
+            if (liveFrom != null) fromTo = new double[]{liveFrom, fromTo[1]};
             double step = Math.abs(fromTo[1] - fromTo[0]);
             boolean bounded = fromTo[0] >= 0 && fromTo[0] <= 1 && fromTo[1] >= 0 && fromTo[1] <= 1;
             Double limit = learnerLimit != null ? learnerLimit : bounded ? DEFAULT_MAX_STEP : null;
             if (limit != null && step > limit + 1e-9) {
-                return String.format(Locale.ROOT, "it moves %s by %.4f, more than the max step of %.4f (GV-02)", label(c), step, limit);
+                String measured = liveFrom != null ? String.format(Locale.ROOT, " from its live value %.4f", liveFrom) : "";
+                return String.format(Locale.ROOT, "it moves %s by %.4f%s, more than the max step of %.4f (GV-02)", label(c), step, measured, limit);
             }
         }
-        return null;
+        return live == null ? null : live.rangeStepViolation(cs);
     }
 
     /** GV-02: at most {@code targetBudgetPerWeek} promotions of one target per week. */
