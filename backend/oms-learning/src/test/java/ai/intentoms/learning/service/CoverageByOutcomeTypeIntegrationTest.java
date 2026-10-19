@@ -61,7 +61,7 @@ class CoverageByOutcomeTypeIntegrationTest extends PostgresTestBase {
     @Test
     void losingOneOutcomeFeedPausesTheLearnersEvenWhileOtherOutcomesKeepArriving() {
         Instant before = Instant.now().minus(Duration.ofDays(20));
-        Instant recent = Instant.now().minus(Duration.ofDays(6));
+        Instant recent = Instant.now().minus(Duration.ofDays(9)); // older than the per-type lag (3 + 4 days)
         for (int i = 0; i < 30; i++) episode(before, "FulfillmentOutcome", "ContactOutcome");
         for (int i = 0; i < 30; i++) episode(recent, "ContactOutcome"); // delivery webhooks stopped
 

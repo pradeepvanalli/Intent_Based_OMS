@@ -17,6 +17,7 @@ import { ChangesTab } from './ChangesTab';
 import { ExperimentsTab } from './ExperimentsTab';
 import { SettingsTab } from './SettingsTab';
 import './learning.css';
+import { personName } from './copy';
 
 const REFRESH = 30000;
 const TABS = ['overview', 'learners', 'changes', 'experiments', 'settings'] as const;
@@ -69,7 +70,7 @@ export default function LearningConsole() {
 
       {ks?.globalKillSwitch && (
         <div className="callout danger" role="status" data-testid="global-kill-switch">
-          <span className="grow"><b>Learning is stopped for every tenant</b> {ks.globalSource === 'property' ? 'by server configuration' : `by ${ks.globalSetBy?.replace(/^user:/, '') ?? 'the platform operator'}`}{ks.globalSetAt ? ` ${relTime(ks.globalSetAt)}` : ''}. Nothing is promoted and live decisions use their standard values.</span>
+          <span className="grow"><b>Learning is stopped for every tenant</b> {ks.globalSource === 'property' ? 'by server configuration' : `by ${personName(ks.globalSetBy) ?? 'the platform operator'}`}{ks.globalSetAt ? ` ${relTime(ks.globalSetAt)}` : ''}. Nothing is promoted and live decisions use their standard values.</span>
           {ks.canSetGlobal && ks.globalSource !== 'property' && <Button size="sm" variant="primary" loading={restartGlobal.isPending} onClick={() => restartGlobal.mutate()}>Restart learning</Button>}
         </div>
       )}

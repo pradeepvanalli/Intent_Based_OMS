@@ -55,6 +55,8 @@ public class SooDemoHistory {
     static final String ACTOR = "system:demo-seed";
     static final int ORDERS = 360;
     static final int TAIL = 40;
+    /** Customers in the demo history; large enough that the 5% holdout holds a usable number of them. */
+    static final int CUSTOMERS = 300;
     static final String ORDER_PREFIX = "demo-hist-";
     static final List<String> NODES = List.of("DC-NJ", "DC-NV", "DC-TX", "ST-CHI-01", "ST-LA-02", "ST-AUS-03", "3PL-ATL");
     static final double[] NODE_WEIGHT = {0.26, 0.18, 0.16, 0.1, 0.1, 0.08, 0.12};
@@ -84,16 +86,16 @@ public class SooDemoHistory {
     private final Map<String, Integer> recordCount = new TreeMap<>();
     /** Whether the order being generated belongs to a holdout customer (decisions tagged, outcomes at baseline). */
     private boolean holdoutOrder;
+    /** The running holdout experiment the history is tagged with. */
+    private String holdoutExperimentId;
+    /** Holdout and exception-check counts of the last run, for the seed marker. */
+    private int holdoutOrders;
+    private int exceptionRecords;
 
-    /** Demo holdout tag on decision records; the seeder points the running holdout experiment at this history. */
-    static final String HOLDOUT_TAG = "demo-holdout";
-
-    /**
-     * XP-01 needs a holdout to compare against: a sticky ~8% of demo customers stand for customers routed to the
-     * pre-learning baseline. Their outcomes are drawn at baseline rates (no learned node reliability, no tuned breach
-     * threshold, no split avoidance), so the Overview's lift report has something to show. Labelled demo data.
-     */
-    static boolean holdoutCustomer(String customer) { return Math.floorMod(customer.hashCode() * 31 + 7, 100) < 8; }
+    /** T0 demo: exception classification acts from 0.50; the seeded proposal raises it to 0.55. */
+    static final double EXCEPTION_ACT = 0.50;
+    static final double EXCEPTION_PROPOSED_ACT = 0.55;
+    static final List<String> EXCEPTION_TYPES = List.of("address", "inventory_short", "carrier_delay", "payment", "store_reject", "system", "other", "unclear");
 
     public SooDemoHistory(DecisionRecordRepository records, DecisionDefinitionRepository definitions, EpisodeRepository episodes, OutcomeRepository outcomes,
                           NodeReliabilityLearner nodeReliability, LaneDeliveryLearner laneTransit, CiPreferenceLearner customerPreferences, FraudLabelCapture fraudLabels) {
@@ -104,7 +106,7 @@ public class SooDemoHistory {
         this.learnersFed = List.of(nodeReliability, laneTransit, customerPreferences, fraudLabels);
     }
 
-    public record Result(Map<String, Integer> recordsByDecision, int episodes, int outcomes, int learnerEvents) {}
+    public record Result(Map<String, Integer> recordsByDecision, int episodes, int outcomes, int learnerEvents, int holdoutOrders, int exceptionRecords) {}
 
     /** One synthetic order and everything that happened to it. */
     record Order(String id, Instant at, String customer, String channel, String shipMethod, String orderType, String node, String secondNode, String skuClass,
@@ -112,26 +114,41 @@ public class SooDemoHistory {
                  Instant shippedAt, Instant deliveredAt, LocalDate eta, boolean wismo, boolean chargeback, boolean cod, boolean refused, boolean returned,
                  boolean storeRejected) {}
 
-    /** Generates the history for the current tenant. Call once per tenant (the seeder's marker guarantees that). */
-    public Result generate(Instant now) {
+    /**
+     * Generates the history for the current tenant. Call once per tenant (the seeder's marker guarantees that).
+     *
+     * <p>XP-01 needs a holdout to compare against. Holdout membership comes from the live router itself
+     * ({@code inHoldout}, sticky per customer for the running holdout experiment), so seeded and live traffic agree on
+     * who is held out. A holdout customer's decisions are tagged with that experiment and its outcomes are drawn at
+     * baseline rates (no learned node reliability, no tuned breach threshold, no split avoidance). Labelled demo data.
+     */
+    public Result generate(Instant now, java.util.function.Predicate<String> inHoldout, String holdoutExperimentId) {
         recordCount.clear();
         episodeCount = 0;
         outcomeCount = 0;
         eventCount = 0;
+        holdoutOrders = 0;
+        exceptionRecords = 0;
+        this.holdoutExperimentId = holdoutExperimentId;
         Random rnd = new Random(20261019L);
         Map<String, Integer> versions = new LinkedHashMap<>();
-        for (String d : List.of("sourcing_node_score", "sla_breach_risk", "payment_risk", "rto_risk", "return_risk", "address_risk")) versions.put(d, liveVersion(d));
+        for (String d : List.of("sourcing_node_score", "sla_breach_risk", "payment_risk", "rto_risk", "return_risk", "address_risk", "exception_classify")) versions.put(d, liveVersion(d));
 
         for (int i = 0; i < TAIL + ORDERS; i++) {
             // A short tail older than every maturity window (so some episodes are MATURE), then 90 days of recent history.
             double ageDays = i < TAIL ? 135.0 - i : 90.0 - 88.0 * (i - TAIL) / ORDERS + rnd.nextDouble() * 0.25;
             Order o = order(i, now.minus(Duration.ofMinutes(Math.round(ageDays * 1440))), ageDays, rnd);
-            holdoutOrder = holdoutCustomer(o.customer());
+            holdoutOrder = holdoutExperimentId != null && inHoldout.test(o.customer());
+            if (holdoutOrder) holdoutOrders++;
             if (holdoutOrder && o.packages() == 1 && rnd.nextDouble() < 0.25) o = split(o);
 
             double snsConf = 0.55 + rnd.nextDouble() * 0.44;
             double slaConf = 0.5 + rnd.nextDouble() * 0.49;
-            o = shapeOutcome(o, snsConf, slaConf, holdoutOrder, rnd);
+            // About half of orders hit an exception that is classified; nearly a third of those land just above the act threshold.
+            double excDraw = rnd.nextDouble();
+            Double excConf = rnd.nextDouble() < 0.5 ? (excDraw < 0.3 ? EXCEPTION_ACT + rnd.nextDouble() * (EXCEPTION_PROPOSED_ACT - EXCEPTION_ACT)
+                : excDraw < 0.35 ? 0.35 + rnd.nextDouble() * 0.15 : EXCEPTION_PROPOSED_ACT + rnd.nextDouble() * 0.44) : null;
+            o = shapeOutcome(o, snsConf, slaConf, excConf, holdoutOrder, rnd);
             if (o.delivered() && o.deliveredAt().isAfter(now.minus(Duration.ofHours(1)))) o = inTransit(o);
             int slaScore = o.onTime() ? rnd.nextInt(2) : 2 + rnd.nextInt(3);
 
@@ -141,6 +158,7 @@ public class SooDemoHistory {
             orderEpisodes.add(paymentRisk(o, versions.get("payment_risk"), rnd));
             if (rnd.nextDouble() < 0.7) orderEpisodes.add(bandit(o, rnd));
             if (o.cod()) orderEpisodes.add(rtoRisk(o, versions.get("rto_risk"), rnd));
+            if (excConf != null) orderEpisodes.add(exceptionClassify(o, excConf, versions.get("exception_classify"), rnd));
             boolean addressChecked = ageDays >= 3 && ageDays <= 14 ? rnd.nextDouble() < 0.9 : rnd.nextDouble() < 0.12;
             String addressEpisode = addressChecked ? addressRisk(o, versions.get("address_risk"), rnd) : null;
 
@@ -152,7 +170,7 @@ public class SooDemoHistory {
         }
         holdoutOrder = false;
         returnGroups(versions.get("return_risk"), now);
-        return new Result(Map.copyOf(recordCount), episodeCount, outcomeCount, eventCount);
+        return new Result(Map.copyOf(recordCount), episodeCount, outcomeCount, eventCount, holdoutOrders, exceptionRecords);
     }
 
     private Order order(int i, Instant at, double ageDays, Random rnd) {
@@ -175,7 +193,7 @@ public class SooDemoHistory {
         boolean refused = cod && rnd.nextDouble() < 0.18;
         boolean chargeback = !cod && rnd.nextDouble() < 0.025;
         boolean returned = !refused && rnd.nextDouble() < 0.3;
-        String customer = String.format(Locale.ROOT, "cust-demo-%03d", 1 + rnd.nextInt(160));
+        String customer = String.format(Locale.ROOT, "cust-demo-%03d", 1 + rnd.nextInt(CUSTOMERS));
         return new Order(id, at, customer, CHANNELS.get(rnd.nextInt(CHANNELS.size())), shipMethod, orderType, node, second,
             SKU_CLASSES.get(rnd.nextInt(SKU_CLASSES.size())), carrier, ZIP3.get(rnd.nextInt(ZIP3.size())), packages, units, value, cost,
             delivered, true, 0, shippedAt, null, eta, false, chargeback, cod, refused, returned, storeRejected);
@@ -184,11 +202,13 @@ public class SooDemoHistory {
     /**
      * Whether the order arrived on time, from the node's and carrier's reliability, a store reject, and the decisions:
      * a node score held in the confirm band waited for a person (later), a breach score that acted on its own with low
-     * confidence missed more, and one a person re-promised did a little better.
+     * confidence missed more, and one a person re-promised did a little better. An exception classified just above the
+     * act threshold (0.50-0.55) was often the wrong type, so its playbook did not fix the order (the T0 demo proposal).
      */
-    private static Order shapeOutcome(Order o, double snsConf, double slaConf, boolean holdout, Random rnd) {
+    private static Order shapeOutcome(Order o, double snsConf, double slaConf, Double excConf, boolean holdout, Random rnd) {
         double p = NODE_ON_TIME.get(o.node()) * CARRIER_FACTOR.get(o.carrier()) - (o.storeRejected() ? 0.2 : 0);
         if (holdout) p -= 0.12; // baseline: sourcing without learned node reliability or lane transit times
+        if (excConf != null && excConf >= EXCEPTION_ACT && excConf < EXCEPTION_PROPOSED_ACT) p -= 0.75;
         if (snsConf >= 0.5 && snsConf < 0.80) p -= 0.25;
         if (slaConf >= 0.80 && slaConf < 0.86) p -= 0.45;
         if (slaConf < 0.80) p += 0.04;
@@ -218,6 +238,58 @@ public class SooDemoHistory {
     }
 
     // ------------------------------------------------------------------ decisions
+
+    /** T0 exception classification for an order that hit an exception: classified from 0.50, "unclear" (triage) below. */
+    private String exceptionClassify(Order o, double conf, int version, Random rnd) {
+        String truth = o.storeRejected() ? "store_reject" : !o.onTime() ? "carrier_delay" : o.refused() ? "address" : rnd.nextDouble() < 0.5 ? "inventory_short" : "system";
+        boolean acts = conf >= EXCEPTION_ACT;
+        boolean nearThreshold = acts && conf < EXCEPTION_PROPOSED_ACT;
+        String value = !acts ? "unclear" : nearThreshold && rnd.nextDouble() < 0.7 ? "other" : truth;
+        Map<String, Object> input = exceptionInput(o.id(), truth, o.channel());
+        String id = recordId("exception_classify", o.id());
+        insert(id, "exception_classify", version, "order", o.id(), o.id(), Layer.L1_SYSTEM_ONE, acts ? Band.ACT : Band.ESCALATE, value, round4(conf), input, List.of(),
+            acts ? List.of() : List.of("low_confidence"), details("T0", Map.of()), Map.of(), o.at().plus(Duration.ofHours(1)), EXCEPTION_TYPES, value, 1.0);
+        exceptionRecords++;
+        return episode(id, "exception_classify", version, o, "order", o.id(), o.at().plus(Duration.ofHours(1)));
+    }
+
+    static Map<String, Object> exceptionInput(String orderId, String type, String channel) {
+        Map<String, Object> exception = new LinkedHashMap<>();
+        exception.put("source", "carrier_delay".equals(type) ? "carrier_webhook" : "store_reject".equals(type) ? "wms" : "workflow");
+        exception.put("code", type.toUpperCase(Locale.ROOT));
+        exception.put("message", "Order " + orderId + ": " + type.replace('_', ' '));
+        return Map.of("exception", exception, "order", Map.of("channel", channel, "status", "released"));
+    }
+
+    /**
+     * Shadow evidence for the T0 demo proposal (EX-02): {@code n} exception checks evaluated live on the current version
+     * and, in shadow, on the candidate version, as the decision runtime records them while a shadow experiment runs.
+     * Same input, same subject, a second apart, so the experiment's own paired comparison measures them.
+     */
+    public int pairShadow(int liveVersion, int shadowVersion, Instant at, int n) {
+        Random rnd = new Random(20261020L);
+        int pairs = 0;
+        for (int i = 0; i < n; i++) {
+            double conf = i == 7 ? EXCEPTION_ACT + 0.02 : 0.6 + rnd.nextDouble() * 0.39; // one near-threshold case: the candidate sends it to triage
+            String type = EXCEPTION_TYPES.get(rnd.nextInt(6));
+            String subject = "demo-shadow-" + String.format(Locale.ROOT, "%03d", i + 1);
+            Map<String, Object> input = exceptionInput(subject, type, CHANNELS.get(i % CHANNELS.size()));
+            Instant when = at.plusMillis(i * 50L);
+            boolean liveActs = conf >= EXCEPTION_ACT, shadowActs = conf >= EXCEPTION_PROPOSED_ACT;
+            Map<String, Object> d = details("T0", Map.of());
+            records.insert(new DecisionRecord("dr-demo-shadow-live-" + subject, "exception_classify", liveVersion, Mode.LIVE, "exception", subject, subject, Layer.L1_SYSTEM_ONE,
+                liveActs ? Band.ACT : Band.ESCALATE, "act", liveActs ? type : "unclear", Map.of(), round4(conf), "heuristic", "demo-history", Json.sha256(input), input, input,
+                List.of(), List.of(), 3, 0.0, 0, false, null, ACTOR, d, null, null, null, null, Map.of(), when, input, EXCEPTION_TYPES, liveActs ? type : "unclear", 1.0, liveVersion));
+            Map<String, Object> sd = new LinkedHashMap<>(d);
+            sd.put("mode", "SHADOW");
+            records.insert(new DecisionRecord("dr-demo-shadow-cand-" + subject, "exception_classify", shadowVersion, Mode.SHADOW, "exception", subject, subject, Layer.L1_SYSTEM_ONE,
+                shadowActs ? Band.ACT : Band.ESCALATE, "act", shadowActs ? type : "unclear", Map.of(), round4(conf), "heuristic", "demo-history", Json.sha256(input), input, input,
+                List.of(), List.of(), 3, 0.0, 0, false, null, ACTOR, sd, null, null, null, null, Map.of(), when.plusMillis(20), input, EXCEPTION_TYPES,
+                shadowActs ? type : "unclear", 1.0, shadowVersion));
+            pairs++;
+        }
+        return pairs;
+    }
 
     private String sourcingNodeScore(Order o, double conf, int version) {
         Map<String, Object> input = new LinkedHashMap<>();
@@ -467,7 +539,7 @@ public class SooDemoHistory {
         if (tier != null) d.put("tier", tier);
         d.put("mode", "LIVE");
         d.put("demoData", true);
-        if (holdoutOrder) d.put("experiment", Map.of("experimentId", HOLDOUT_TAG, "arm", "holdout"));
+        if (holdoutOrder && holdoutExperimentId != null) d.put("experiment", Map.of("experimentId", holdoutExperimentId, "arm", "holdout"));
         if (!topK.isEmpty()) d.put("topK", topK);
         return d;
     }

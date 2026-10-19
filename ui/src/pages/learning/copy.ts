@@ -175,18 +175,35 @@ export function proposalTitle(p: Proposal): string {
   return p.changeset.changes.length > 1 ? `${s} (+${p.changeset.changes.length - 1} more)` : s;
 }
 
+/** An actor reference as a person would read it: "user:alice" → "alice", a seeded actor → "admin (demo)". */
+export function personName(ref: string | null | undefined): string | undefined {
+  if (!ref) return undefined;
+  if (ref === 'system:demo-seed') return 'demo data';
+  if (ref.startsWith('system:demo-seed.')) {
+    const who = ref.slice('system:demo-seed.'.length);
+    return `${who === 'strategy' ? 'strategy lead' : who} (demo)`;
+  }
+  return ref.replace(/^(user|system):/, '');
+}
+
 /** Who drafted it, as a person would say it. */
 export function authorName(createdBy: string | null | undefined, learnerNames: Map<string, string>): string {
   if (!createdBy) return 'unknown';
   if (createdBy === 'system:demo-seed') return 'demo data';
+  if (createdBy.startsWith('system:demo-seed.')) {
+    // Seeded on behalf of a person or a learner: say who, and that it is demo data.
+    const who = createdBy.slice('system:demo-seed.'.length);
+    const name = learnerNames.get(who) ?? (who === 'strategy' ? 'strategy lead' : who);
+    return `${name} (demo)`;
+  }
   if (createdBy === 'system:author') return 'the AI change drafter';
   const key = createdBy.replace(/^system:/, '');
   if (learnerNames.has(key)) return learnerNames.get(key)!;
   return createdBy.replace(/^(user|system):/, '');
 }
 
-/** Seeded reference data: written by the demo seeder, or a proposal the seeder created under a learner's name. */
-export const isDemo = (by: string | null | undefined, id?: string | null): boolean => by === 'system:demo-seed' || !!id?.startsWith('prop_demo_');
+/** Seeded reference data: anything a demo-seed actor wrote ({@code system:demo-seed}, {@code system:demo-seed.<who>}), or a seeded proposal id. */
+export const isDemo = (by: string | null | undefined, id?: string | null): boolean => !!by?.startsWith('system:demo-seed') || !!id?.startsWith('prop_demo_');
 
 /** Mirrors the server's GV-07 rule: a change scoped to postal codes needs a reason code to approve. */
 export function isPostalScoped(p: Proposal): boolean {

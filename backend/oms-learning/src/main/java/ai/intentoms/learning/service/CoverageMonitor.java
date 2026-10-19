@@ -52,6 +52,9 @@ public class CoverageMonitor {
     @Value("${oms.learning.coverage-threshold:0.8}") private double threshold;
     @Value("${oms.learning.coverage-window-days:14}") private int windowDays;
     @Value("${oms.learning.coverage-lag-days:3}") private int lagDays;
+    /** Extra lag for the per-type check: a delivery lands days after the shipment, so recent orders still in transit
+     * must not read as "delivery outcomes stopped arriving". */
+    @Value("${oms.learning.coverage-type-extra-lag-days:4}") private int typeExtraLagDays = 4;
     @Value("${oms.learning.coverage-min-episodes:20}") private int minEpisodes;
 
     public CoverageMonitor(EpisodeRepository episodes, LearnerRegistry registry, LearnerGovernance governance, DecisionRecordRepository decisionRecords, Metrics metrics,
@@ -135,7 +138,7 @@ public class CoverageMonitor {
             }
             if (coverage < threshold) metrics.count("oms.learning.coverage.breach", "decision", decision);
             String label = decision;
-            for (var t : typeCoverage(decision, since, observedBefore).entrySet()) {
+            for (var t : typeCoverage(decision, since, observedBefore.minus(Duration.ofDays(typeExtraLagDays))).entrySet()) {
                 lastTypeCoverage.put(TenantContext.require() + "|" + decision + "|" + t.getKey(), t.getValue());
                 if (t.getValue() < coverage) { coverage = t.getValue(); label = decision + " (" + t.getKey() + ")"; }
             }

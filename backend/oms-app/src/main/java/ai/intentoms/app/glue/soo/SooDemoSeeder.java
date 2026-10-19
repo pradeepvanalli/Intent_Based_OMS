@@ -12,23 +12,18 @@ import ai.intentoms.learning.model.ArtifactRef;
 import ai.intentoms.learning.model.AutonomyLevel;
 import ai.intentoms.learning.model.Direction;
 import ai.intentoms.learning.model.ExperimentMode;
-import ai.intentoms.learning.model.FactKey;
 import ai.intentoms.learning.model.Hypothesis;
-import ai.intentoms.learning.model.LearnedFact;
 import ai.intentoms.learning.model.ObjectiveProfile;
 import ai.intentoms.learning.model.ObjectiveWeights;
 import ai.intentoms.learning.model.PolicyChange;
 import ai.intentoms.learning.model.PolicyChangeset;
 import ai.intentoms.learning.model.Proposal;
 import ai.intentoms.learning.model.ProposalStatus;
-import ai.intentoms.learning.model.SubjectType;
-import ai.intentoms.learning.model.TypedValue;
 import ai.intentoms.learning.promotion.PromotionService;
 import ai.intentoms.learning.service.CoverageMonitor;
 import ai.intentoms.learning.service.ObjectiveService;
 import ai.intentoms.learning.service.RewardMaturityService;
 import ai.intentoms.learning.store.HypothesisRepository;
-import ai.intentoms.learning.store.LearnedFactRepository;
 import ai.intentoms.learning.store.ProposalRepository;
 import ai.intentoms.orchestration.seed.DemoSeedCompletedEvent;
 import ai.intentoms.platform.config.TenantConfigStore;
@@ -67,21 +62,26 @@ import java.util.concurrent.ConcurrentHashMap;
  * rewards come from {@link RewardMaturityService}, evaluation reports from the real off-policy evaluator, promotions and
  * rollbacks from {@link PromotionService} (so rollback snapshots exist), the canary and holdout from
  * {@link ExperimentManager}, the paused learner from {@link CoverageMonitor} finding a real coverage gap, the batch
- * learners' hypotheses and drafts from running them, and the objective from the draft-then-approve flow. People are
- * the demo users: {@code user:strategy} drafts and {@code user:admin} approves (never the same person). Rows the
- * seeder writes itself carry the actor {@code system:demo-seed}; the tenant-config marker {@code learning.demo_seed}
- * lists every seeded id so the UI can badge them as demo data.
+ * learners' hypotheses and drafts from running them, and the objective from the draft-then-approve flow.
+ *
+ * <p>Every governance step it takes runs as a clearly labelled demo actor, never a real user: {@code
+ * system:demo-seed.strategy} drafts, {@code system:demo-seed.admin} approves and promotes (so author-cannot-approve still
+ * holds), and a proposal a learner would have written is authored by {@code system:demo-seed.<learner>}. Decision
+ * records the seeder writes carry {@code system:demo-seed}; the tenant-config marker {@code learning.demo_seed} lists
+ * every seeded id. The UI badges all of these as demo data, and guardrail monitors ignore them.
  */
 @Component
 public class SooDemoSeeder {
     private static final Logger log = LoggerFactory.getLogger(SooDemoSeeder.class);
     public static final String MARKER = "learning.demo_seed";
-    public static final int VERSION = 1;
+    public static final int VERSION = 2;
     static final String SEED = "system:demo-seed";
     /** Seeded promotions have no live evidence behind them; the EX-07 gate records this reason as the override. */
     static final String SEEDED_OVERRIDE = "Demo reference data: seeded promotion with no live evidence";
-    static final String STRATEGY = "user:strategy";
-    static final String ADMIN = "user:admin";
+    static final String STRATEGY = "system:demo-seed.strategy";
+    static final String ADMIN = "system:demo-seed.admin";
+    /** A proposal the named learner would have drafted, written by the seeder on its behalf. */
+    static String byLearner(String learnerKey) { return "system:demo-seed." + learnerKey; }
 
     // Deterministic ids F7 (UI) and F8 (Playwright) can rely on.
     public static final String PROP_LIVE_NODE_REJECT = "prop_demo_live_node_reject";
@@ -94,6 +94,8 @@ public class SooDemoSeeder {
     public static final String PROP_LIVE_LANE_CALIBRATION = "prop_demo_live_lane_calibration";
     public static final String PROP_RTO_THRESHOLD = "prop_demo_rto_threshold";
     public static final String PROP_APPEASEMENT = "prop_demo_appeasement";
+    public static final String PROP_LIVE_RESERVATION_TTL = "prop_demo_live_reservation_ttl";
+    public static final String PROP_T0_EXCEPTION = "prop_demo_t0_exception_triage";
 
     private final SooDemoHistory history;
     private final RewardMaturityService rewards;
@@ -108,12 +110,15 @@ public class SooDemoSeeder {
     private final List<GovernedLearner> learners;
     private final ObjectiveService objectives;
     private final WeeklyLearningDigestService digests;
-    private final LearnedFactRepository facts;
     private final InventoryLearningRepository inventory;
     private final DecisionDefinitionRepository definitions;
     private final LearningEvents events;
     private final TenantConfigStore config;
     private final JdbcClient jdbc;
+    private final ai.intentoms.learning.governance.ParameterResolver parameters;
+    private final ai.intentoms.app.glue.AgentDemoSeeder agentSeeder;
+    private final ai.intentoms.agent.mandate.MandateRepository mandates;
+    private final ai.intentoms.platform.ledger.EventStore eventStore;
     private final boolean enabled;
     private final String tenant;
     private final Map<String, Boolean> running = new ConcurrentHashMap<>();
@@ -121,8 +126,10 @@ public class SooDemoSeeder {
     public SooDemoSeeder(SooDemoHistory history, RewardMaturityService rewards, CoverageMonitor coverage, ProposalRepository proposals, HypothesisRepository hypotheses,
                          ProposalEvaluationService evaluator, PromotionService promotion, ExperimentManager experiments, LearnerGovernance governance,
                          LearnerRegistry registry, List<GovernedLearner> learners, ObjectiveService objectives, WeeklyLearningDigestService digests,
-                         LearnedFactRepository facts, InventoryLearningRepository inventory, DecisionDefinitionRepository definitions, LearningEvents events,
-                         TenantConfigStore config, JdbcClient jdbc,
+                         InventoryLearningRepository inventory, DecisionDefinitionRepository definitions, LearningEvents events,
+                         TenantConfigStore config, JdbcClient jdbc, ai.intentoms.learning.governance.ParameterResolver parameters,
+                         ai.intentoms.app.glue.AgentDemoSeeder agentSeeder, ai.intentoms.agent.mandate.MandateRepository mandates,
+                         ai.intentoms.platform.ledger.EventStore eventStore,
                          @Value("${oms.demo.seed:false}") boolean demoSeed, @Value("${oms.demo.soo-seed:true}") boolean sooSeed,
                          @Value("${oms.demo.tenant:demo}") String tenant) {
         this.history = history;
@@ -138,12 +145,15 @@ public class SooDemoSeeder {
         this.learners = learners;
         this.objectives = objectives;
         this.digests = digests;
-        this.facts = facts;
         this.inventory = inventory;
         this.definitions = definitions;
         this.events = events;
         this.config = config;
         this.jdbc = jdbc;
+        this.parameters = parameters;
+        this.agentSeeder = agentSeeder;
+        this.mandates = mandates;
+        this.eventStore = eventStore;
         this.enabled = demoSeed && sooSeed;
         this.tenant = tenant;
     }
@@ -193,16 +203,21 @@ public class SooDemoSeeder {
         List<String> warnings = new ArrayList<>();
         Map<String, Object> counts = new LinkedHashMap<>();
 
-        SooDemoHistory.Result h = history.generate(now);
+        Map<String, String> ids = new LinkedHashMap<>();
+        // The holdout exists (back-dated) before the history, so the history is tagged by the live router's own assignment.
+        String holdoutId = backdatedHoldout();
+        ids.put("holdoutExperiment", holdoutId);
+        SooDemoHistory.Result h = history.generate(now, customer -> parameters.inHoldout("customer:" + customer), holdoutId);
         counts.put("decisionRecords", h.recordsByDecision());
         counts.put("learnerEventsFed", h.learnerEvents());
+        counts.put("holdoutOrders", h.holdoutOrders());
+        counts.put("exceptionChecks", h.exceptionRecords());
         step(warnings, "rewards", () -> counts.put("rewardsComputed", rewards.sweepOnce()));
         step(warnings, "supplier receipts", () -> counts.put("supplierReceipts", supplierReceipts(now)));
         step(warnings, "stock age", () -> counts.put("agedPositions", ageStock(now)));
-        step(warnings, "agent reputation", () -> counts.put("agentFacts", agentFacts()));
+        step(warnings, "agent mandates", () -> counts.put("agentMandates", agentHistory(now)));
         step(warnings, "autonomy", this::autonomy);
 
-        Map<String, String> ids = new LinkedHashMap<>();
         step(warnings, "live use", () -> liveUse(ids));
         step(warnings, "decision threshold promoted", () -> promotedThreshold(ids, now));
         step(warnings, "weights rolled back", () -> rolledBackWeights(ids));
@@ -210,6 +225,7 @@ public class SooDemoSeeder {
         step(warnings, "approved", () -> approvedThreshold(ids));
         step(warnings, "evaluated", () -> evaluatedLiveUse(ids));
         step(warnings, "rejected", () -> rejectedAppeasement(ids));
+        step(warnings, "t0 shadow", () -> t0WithShadow(ids));
 
         Map<String, String> learnerRuns = new TreeMap<>();
         for (GovernedLearner l : learners) {
@@ -219,7 +235,6 @@ public class SooDemoSeeder {
         }
         counts.put("learnerRuns", learnerRuns);
         step(warnings, "draft", () -> draftFallback(ids));
-        step(warnings, "holdout", () -> ids.put("holdoutExperiment", backdatedHoldout()));
         step(warnings, "objective", () -> objective(ids));
         step(warnings, "coverage", coverage::sweepOnce);
         step(warnings, "digest", () -> ids.put("digest", digests.publish(7, SEED).digestId()));
@@ -232,6 +247,9 @@ public class SooDemoSeeder {
         marker.put("durationMs", System.currentTimeMillis() - started);
         marker.put("counts", counts);
         marker.put("ids", ids);
+        marker.put("liveFamilies", parameters == null ? List.of() : jdbc.sql("select parameter from learned_parameter_live where tenant_id = :t and status = 'LIVE' order by parameter")
+            .param("t", TenantContext.require()).query(String.class).list());
+        marker.put("demoActors", List.of(SEED, STRATEGY, ADMIN, byLearner("<learner>")));
         marker.put("pausedLearners", governance.states().stream().filter(s -> s.paused()).map(s -> Map.of("learnerKey", s.learnerKey(), "reason", s.pausedReason())).toList());
         if (!warnings.isEmpty()) marker.put("warnings", warnings);
         config.set(MARKER, marker);
@@ -279,27 +297,40 @@ public class SooDemoSeeder {
         return n;
     }
 
-    /** FD-05: reputation and dispute rate for the three demo agents, two versions each (the score moved as mandates came in). */
-    private int agentFacts() {
-        Object[][] agents = {{"shopbot-ucp", 0.78, 0.82, 0.012}, {"concierge-acp", 0.69, 0.74, 0.031}, {"ops-copilot", 0.95, 0.96, 0.0}};
-        Instant now = Instant.now();
+    /**
+     * FD-05 for real: mandates the three demo agents placed orders under, a prompt-injection hit and a chargeback dispute,
+     * so the agent-reputation learner (run with the other batch learners below) computes each agent's reputation from
+     * evidence instead of the seeder writing facts in its name. Agents are registered first (the agent seed normally
+     * runs after this one).
+     */
+    private int agentHistory(Instant now) {
+        agentSeeder.seed();
+        Object[][] agents = {{"shopbot-ucp", 14, 1, 0, 1}, {"concierge-acp", 9, 0, 2, 0}, {"ops-copilot", 6, 0, 0, 0}};
         int n = 0;
         for (Object[] a : agents) {
-            String id = (String) a[0];
-            for (double[] step : new double[][]{{(double) a[1], 18}, {(double) a[2], 41}}) n += writeFact(SubjectType.AGENT, id, FactKey.AGENT_REPUTATION, step[0], (int) step[1], now);
-            n += writeFact(SubjectType.AGENT, id, FactKey.DISPUTE_RATE, (double) a[3], 41, now);
+            String agent = (String) a[0];
+            int count = (int) a[1], invalid = (int) a[2], revoked = (int) a[3], disputes = (int) a[4];
+            for (int k = 0; k < count; k++) {
+                String id = String.format(java.util.Locale.ROOT, "mdt-demo-%s-%02d", agent, k + 1);
+                if (mandates.find(id).isPresent()) continue;
+                Instant issued = now.minus(Duration.ofDays(80 - k * 5L));
+                boolean valid = k >= invalid;
+                String status = k < revoked ? ai.intentoms.agent.mandate.Mandate.REVOKED : ai.intentoms.agent.mandate.Mandate.CONSUMED;
+                mandates.insert(new ai.intentoms.agent.mandate.Mandate(id, agent, String.format(java.util.Locale.ROOT, "cust-demo-%03d", 10 + k), new ai.intentoms.agent.mandate.MandateScope("demo", List.of("apparel"), 3),
+                    ai.intentoms.finance.model.Money.of("150.00", "USD"), "Buy everyday basics under $150 for the buyer", "demo-signature", valid, null, 0.02, null,
+                    issued, issued.plus(Duration.ofDays(7)), status, List.of(), issued, issued));
+                n++;
+            }
+            if ("concierge-acp".equals(agent)) agentEvent(agent, "agent.injection_flagged", Map.of("reason", "instruction text tried to raise the spend limit", "risk", 0.91), now.minus(Duration.ofDays(20)));
+            for (int d = 0; d < disputes; d++) agentEvent(agent, "agent.dispute_recorded", Map.of("orderId", "demo-hist-0042", "reasonCode", "fraudulent", "amount", 88.0), now.minus(Duration.ofDays(12)));
         }
         return n;
     }
 
-    private int writeFact(SubjectType st, String id, FactKey key, double value, int sample, Instant at) {
-        var current = facts.active(st, id, key);
-        if (current.isPresent() && current.get().value() instanceof TypedValue.NumberValue nv && nv.value() == value) return 0;
-        int version = current.map(f -> f.version() + 1).orElse(1);
-        facts.supersede(st, id, key, at);
-        facts.insert(new LearnedFact("fact_demo_" + key.name().toLowerCase() + "_" + id + "_" + version, st, id, key, new TypedValue.NumberValue(value),
-            Math.min(1.0, sample / 30.0), sample, "agent_reputation", version, at, null, at));
-        return 1;
+    private void agentEvent(String agent, String type, Map<String, Object> payload, Instant at) {
+        Map<String, Object> p = new LinkedHashMap<>(payload);
+        p.put("demoData", true);
+        eventStore.append(ai.intentoms.agent.registry.AgentRegistry.AGGREGATE, agent, new ai.intentoms.platform.ledger.NewEvent(type, p, Actor.parse(SEED)));
     }
 
     private void autonomy() {
@@ -318,14 +349,43 @@ public class SooDemoSeeder {
             "Give the sourcing score each node's observed on-time rate", true);
         liveUseProposal(PROP_LIVE_LANE_TRANSIT, "promise.lane_transit_days", "lane_transit", 1.0, 8.0, 2.0,
             "Promise dates from learned carrier-lane transit times, within two days of the static table", true);
-        ids.put("promotedLiveUse", PROP_LIVE_NODE_REJECT + "," + PROP_LIVE_NODE_ON_TIME + "," + PROP_LIVE_LANE_TRANSIT);
+        liveUseProposal(PROP_LIVE_LANE_CALIBRATION, "promise.lane_calibration", "lane_transit", -0.2, 0.2, 0.05,
+            "Correct the stated on-time probability by each lane's observed calibration gap", true);
+        List<String> promoted = new ArrayList<>(List.of(PROP_LIVE_NODE_REJECT, PROP_LIVE_NODE_ON_TIME, PROP_LIVE_LANE_TRANSIT, PROP_LIVE_LANE_CALIBRATION));
+        // More learned values reach live decisions (each bounded by its range and max step); the bandit makes live
+        // sourcing explore, so new orders log real propensities for off-policy evaluation.
+        Object[][] more = {
+            {"prop_demo_live_bandit", "sourcing.policy_bandit", "sourcing_policy_bandit", null, null, null, "Let the sourcing policy explorer try alternative policies on up to 10% of orders"},
+            {"prop_demo_live_reject_penalty", "sourcing.reject_penalty", "node_reliability", 0.1, 2.0, 0.5, "Use each node's learned, decaying reject penalty when a store rejects"},
+            {"prop_demo_live_customer_prefs", "customer.preferences", "ci_preference", null, null, null, "Give decisions each customer's learned preferences (split tolerance, speed vs cost, pickup, channel)"},
+            {"prop_demo_live_backlog", "sourcing.node_backlog_breach", "node_backlog_breach", 0.0, 1.0, 0.2, "Steer orders away from nodes whose backlog is about to cause missed promises"},
+            {"prop_demo_live_warn_early", "monitoring.warn_early_threshold", "warn_early", 0.3, 0.9, 0.1, "Warn customers about a likely delay at the learned risk level"},
+            {"prop_demo_live_buffer", "promise.buffer_days", "promise_buffer", 0.0, 3.0, 1.0, "Add the learned promise buffer per customer segment"},
+            {"prop_demo_live_fraud_signals", "fraud.signal_risk", "fraud_signals", 0.0, 1.0, 0.2, "Give the payment-risk check the learned fraud rate of each signal level"},
+        };
+        for (Object[] m : more) {
+            try {
+                liveUseProposal((String) m[0], (String) m[1], (String) m[2], (Double) m[3], (Double) m[4], (Double) m[5], (String) m[6], true);
+                promoted.add((String) m[0]);
+            } catch (RuntimeException e) {
+                log.warn("Demo live use of {} skipped: {}", m[1], e.getMessage());
+            }
+        }
+        if (jdbc.sql("select count(*) from learned_fact where tenant_id = :t and fact_key = 'BACKORDER_CONVERSION_RATE' and valid_to is null")
+                .param("t", TenantContext.require()).query(Long.class).single() > 0) {
+            liveUseProposal("prop_demo_live_backorder", "inventory.backorder_conversion", "inventory_backorder", 0.0, 1.0, 0.2,
+                "Give the backorder decision each option's learned conversion rate", true);
+            promoted.add("prop_demo_live_backorder");
+        }
+        ids.put("promotedLiveUse", String.join(",", promoted));
     }
 
-    /** EVALUATED live use, waiting for an approver: the lane calibration offset. */
+    /** EVALUATED live use, waiting for an approver (deliberately not live, so the "not promoted" path stays visible). */
     private void evaluatedLiveUse(Map<String, String> ids) {
-        liveUseProposal(PROP_LIVE_LANE_CALIBRATION, "promise.lane_calibration", "lane_transit", -0.2, 0.2, 0.05,
-            "Correct the stated on-time probability by each lane's observed calibration gap", false);
-        ids.put("evaluated", PROP_LIVE_LANE_CALIBRATION);
+        liveUseProposal(PROP_LIVE_RESERVATION_TTL, "inventory.reservation_ttl", "inventory_reservation_ttl", 5.0, 1440.0, 60.0,
+            "Hold carts for the learned time before releasing their stock", false);
+        ids.put("evaluated", PROP_LIVE_RESERVATION_TTL);
+        ids.put("notLive", "inventory.reservation_ttl");
     }
 
     private void liveUseProposal(String id, String family, String learner, Double min, Double max, Double maxStep, String reason, boolean promote) {
@@ -352,7 +412,7 @@ public class SooDemoSeeder {
                 "Accuracy of the act band holds above 0.75 on the golden set"), "Acting slightly sooner on node scores cuts the wait for confirmation without hurting accuracy.");
         Proposal p = draft(PROP_SOURCING_THRESHOLD, new ArtifactRef("decision", "sourcing_node_score"), version,
             List.of(new PolicyChange.ThresholdChange("sourcing_node_score", "act", 0.80, 0.75)), "Act on node scores from 0.75 instead of 0.80",
-            PolicyChangeset.RiskTier.T1, "system:band_threshold", hyp);
+            PolicyChangeset.RiskTier.T1, byLearner("band_threshold"), hyp);
         evaluate(p);
         approve(PROP_SOURCING_THRESHOLD, STRATEGY);
         promotion.promote(PROP_SOURCING_THRESHOLD, Actor.parse(ADMIN), SEEDED_OVERRIDE);
@@ -370,7 +430,7 @@ public class SooDemoSeeder {
             List.of("cost component vs reward correlation 0.21", "time component vs reward correlation 0.08"), "Plan-score weights should follow the components that go with better outcomes.");
         Proposal p = draft(PROP_WEIGHTS, new ArtifactRef("config", SourcingConfigKeys.WEIGHTS), 0,
             List.of(new PolicyChange.WeightChange(SourcingConfigKeys.WEIGHTS, "cost", SourcingConfigKeys.DEFAULT_W_COST, 0.45)),
-            "Weigh cost a little more in the sourcing plan score", PolicyChangeset.RiskTier.T1, "system:sourcing_weights", hyp);
+            "Weigh cost a little more in the sourcing plan score", PolicyChangeset.RiskTier.T1, byLearner("sourcing_weights"), hyp);
         evaluate(p);
         approve(PROP_WEIGHTS, STRATEGY);
         promotion.promote(PROP_WEIGHTS, Actor.parse(ADMIN), SEEDED_OVERRIDE);
@@ -388,7 +448,7 @@ public class SooDemoSeeder {
             "Sending low-confidence breach scores to a person before acting should keep more promises.");
         Proposal p = draft(PROP_SLA_CANARY, new ArtifactRef("decision", "sla_breach_risk"), version,
             List.of(new PolicyChange.ThresholdChange("sla_breach_risk", "act", 0.80, 0.86)), "Breach risk acts on its own only from 0.86",
-            PolicyChangeset.RiskTier.T1, "system:band_threshold", hyp);
+            PolicyChangeset.RiskTier.T1, byLearner("band_threshold"), hyp);
         evaluate(p);
         if (!positive(proposals.get(PROP_SLA_CANARY))) approve(PROP_SLA_CANARY, STRATEGY);
         var e = experiments.start(PROP_SLA_CANARY, ExperimentMode.CANARY, 0.10, Map.of("durationDays", 14, "minPerArm", 200, "alpha", 0.05), SEED);
@@ -405,7 +465,7 @@ public class SooDemoSeeder {
             "Inspect returns before refunding unless the score is clearly low risk.");
         Proposal p = draft(PROP_RETURN_THRESHOLD, new ArtifactRef("decision", "return_risk"), version,
             List.of(new PolicyChange.ThresholdChange("return_risk", "act", 0.90, 0.93)), "Return risk refunds at once only from 0.93",
-            PolicyChangeset.RiskTier.T2, "system:band_threshold", hyp);
+            PolicyChangeset.RiskTier.T2, byLearner("band_threshold"), hyp);
         evaluate(p);
         approve(PROP_RETURN_THRESHOLD, STRATEGY);
         ids.put("approved", PROP_RETURN_THRESHOLD);
@@ -415,12 +475,35 @@ public class SooDemoSeeder {
     private void rejectedAppeasement(Map<String, String> ids) {
         Proposal p = draft(PROP_APPEASEMENT, new ArtifactRef("config", "cs.appeasement_default_usd"), 0,
             List.of(new PolicyChange.ParameterChange("cs.appeasement_default_usd", 10, 15)), "Raise the default goodwill credit from $10 to $15",
-            PolicyChangeset.RiskTier.T2, "system:appeasement_level", null);
+            PolicyChangeset.RiskTier.T2, byLearner("appeasement_level"), null);
         evaluate(p);
         String reason = "Over this quarter's appeasement budget; revisit after peak";
         proposals.reject(PROP_APPEASEMENT, reason, Instant.now());
         events.proposalRejected(PROP_APPEASEMENT, Actor.parse(STRATEGY), Map.of("target", p.changeset().target().toString(), "reason", reason));
         ids.put("rejected", PROP_APPEASEMENT);
+    }
+
+    /**
+     * EX-07's T0 path: exception classification may classify only from 0.55 (orders whose exception was classified just
+     * above 0.50 were often given the wrong playbook). Replay on the seeded history, then a real shadow experiment whose
+     * paired live/shadow checks the experiment itself measures. With replay above zero and a passed shadow, the
+     * automatic promotion sweep may promote it on its own (T0).
+     */
+    private void t0WithShadow(Map<String, String> ids) {
+        int version = liveVersion("exception_classify");
+        String hyp = hypothesis("hyp_demo_t0_exception", Map.of("decision", "exception_classify"), "on_time", Direction.INCREASE,
+            Map.of("action", "move_threshold", "decision", "exception_classify", "band", "act", "from", 0.50, "to", 0.55),
+            List.of("Exceptions classified between 0.50 and 0.55 got the wrong type about 70% of the time", "Those orders missed their promise far more often than ones sent to triage"),
+            "Sending borderline exceptions to triage instead of an automatic playbook fixes more orders.");
+        Proposal p = draft(PROP_T0_EXCEPTION, new ArtifactRef("decision", "exception_classify"), version,
+            List.of(new PolicyChange.ThresholdChange("exception_classify", "act", 0.50, 0.55)), "Classify exceptions automatically only from 0.55; send the rest to triage",
+            PolicyChangeset.RiskTier.T0, byLearner("band_threshold"), hyp);
+        evaluate(p);
+        var shadow = experiments.start(PROP_T0_EXCEPTION, ExperimentMode.SHADOW, 1.0, Map.of("minRecords", 30, "durationDays", 7), SEED);
+        history.pairShadow(version, shadow.candidateVersion(), Instant.now(), 40);
+        experiments.complete(shadow.experimentId(), Actor.parse(SEED));
+        ids.put("t0Shadow", PROP_T0_EXCEPTION);
+        ids.put("t0ShadowExperiment", shadow.experimentId());
     }
 
     /** DRAFT: if the fraud threshold tuner (run with the other learners) drafted nothing, its usual proposal on COD refusals. */
@@ -429,7 +512,7 @@ public class SooDemoSeeder {
         if (!drafts.isEmpty()) { ids.put("draft", drafts.get(0).proposalId()); return; }
         int version = liveVersion("rto_risk");
         draft(PROP_RTO_THRESHOLD, new ArtifactRef("decision", "rto_risk"), version, List.of(new PolicyChange.ThresholdChange("rto_risk", "act", 0.90, 0.93)),
-            "Hold more first-time COD orders for address confirmation", PolicyChangeset.RiskTier.T2, "system:fraud_threshold_tuner", null);
+            "Hold more first-time COD orders for address confirmation", PolicyChangeset.RiskTier.T2, byLearner("fraud_threshold_tuner"), null);
         ids.put("draft", PROP_RTO_THRESHOLD);
     }
 

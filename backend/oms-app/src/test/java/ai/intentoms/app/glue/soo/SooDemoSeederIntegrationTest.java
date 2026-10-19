@@ -51,13 +51,21 @@ class SooDemoSeederIntegrationTest extends PostgresTestBase {
             // Every proposal status, including the deterministic ones the UI and Playwright assert on.
             Map<ProposalStatus, String> expected = Map.of(ProposalStatus.PROMOTED, SooDemoSeeder.PROP_SOURCING_THRESHOLD,
                 ProposalStatus.ROLLED_BACK, SooDemoSeeder.PROP_WEIGHTS, ProposalStatus.APPROVED, SooDemoSeeder.PROP_RETURN_THRESHOLD,
-                ProposalStatus.EVALUATED, SooDemoSeeder.PROP_LIVE_LANE_CALIBRATION, ProposalStatus.REJECTED, SooDemoSeeder.PROP_APPEASEMENT,
+                ProposalStatus.EVALUATED, SooDemoSeeder.PROP_LIVE_RESERVATION_TTL, ProposalStatus.REJECTED, SooDemoSeeder.PROP_APPEASEMENT,
                 ProposalStatus.CANARY, SooDemoSeeder.PROP_SLA_CANARY);
             expected.forEach((st, id) -> assertThat(proposals.get(id).status()).as(id).isEqualTo(st));
             for (ProposalStatus st : ProposalStatus.values()) assertThat(proposals.byStatus(st.name(), 50)).as(st.name()).isNotEmpty();
-            assertThat(proposals.get(SooDemoSeeder.PROP_SOURCING_THRESHOLD).approvedBy()).isEqualTo("user:strategy");
-            assertThat(proposals.get(SooDemoSeeder.PROP_LIVE_NODE_REJECT).createdBy()).isEqualTo("user:strategy");
-            assertThat(proposals.get(SooDemoSeeder.PROP_LIVE_NODE_REJECT).approvedBy()).isEqualTo("user:admin");
+            assertThat(proposals.get(SooDemoSeeder.PROP_LIVE_LANE_CALIBRATION).status()).isEqualTo(ProposalStatus.PROMOTED);
+
+            // Defect 19: every governance step ran as a labelled demo actor, never a real user.
+            assertThat(proposals.get(SooDemoSeeder.PROP_SOURCING_THRESHOLD).createdBy()).isEqualTo("system:demo-seed.band_threshold");
+            assertThat(proposals.get(SooDemoSeeder.PROP_SOURCING_THRESHOLD).approvedBy()).isEqualTo(SooDemoSeeder.STRATEGY);
+            assertThat(proposals.get(SooDemoSeeder.PROP_LIVE_NODE_REJECT).createdBy()).isEqualTo(SooDemoSeeder.STRATEGY);
+            assertThat(proposals.get(SooDemoSeeder.PROP_LIVE_NODE_REJECT).approvedBy()).isEqualTo(SooDemoSeeder.ADMIN);
+            long realUserEvents = jdbc.sql("""
+                select count(*) from event where tenant_id = :t and aggregate_type = 'learning' and actor in ('user:admin', 'user:strategy')""")
+                .param("t", DEMO).query(Long.class).single();
+            assertThat(realUserEvents).as("learning ledger events attributed to real users by the seeder").isZero();
             assertThat(proposals.rollbackSnapshot(SooDemoSeeder.PROP_LIVE_NODE_REJECT)).as("promoted through PromotionService, so rollback is available").isPresent();
             assertThat(proposals.get(SooDemoSeeder.PROP_SOURCING_THRESHOLD).evaluationReport()).containsKey("liftEstimate").containsKey("confidenceInterval");
 
@@ -82,15 +90,43 @@ class SooDemoSeederIntegrationTest extends PostgresTestBase {
             assertThat(learners.get("node_reliability").autonomyLevel()).isEqualTo(AutonomyLevel.L2_ACT_WITH_APPROVAL);
             assertThat(learners.get("lane_transit").autonomyLevel()).isEqualTo(AutonomyLevel.L2_ACT_WITH_APPROVAL);
             assertThat(learners.get("fraud_threshold_tuner").pausedReason()).startsWith("outcome coverage for address_risk");
-            assertThat(learners.values().stream().filter(LearnerState::paused).map(LearnerState::learnerKey)).containsExactly("fraud_threshold_tuner");
+            assertThat(learners.values().stream().filter(LearnerState::paused).map(LearnerState::learnerKey))
+                .as("paused: %s", learners.values().stream().filter(LearnerState::paused).map(l -> l.learnerKey() + "=" + l.pausedReason()).toList()).containsExactly("fraud_threshold_tuner");
 
             assertThat(liveParameters.all().stream().filter(LiveParameterRepository.LiveParameter::live).map(LiveParameterRepository.LiveParameter::parameter))
-                .contains("sourcing.node_reject_rate", "sourcing.node_on_time_rate", "promise.lane_transit_days");
+                .contains("sourcing.node_reject_rate", "sourcing.node_on_time_rate", "promise.lane_transit_days", "promise.lane_calibration", "sourcing.policy_bandit",
+                    "sourcing.reject_penalty", "customer.preferences", "sourcing.node_backlog_breach", "monitoring.warn_early_threshold", "promise.buffer_days",
+                    "fraud.signal_risk")
+                .doesNotContain("inventory.reservation_ttl", "decision.calibration", "fraud.agent_reputation", "fraud.agent_dispute_rate");
+
+            // The T0 path: replay above zero and a passed shadow from a real shadow experiment.
+            var t0 = proposals.get(SooDemoSeeder.PROP_T0_EXCEPTION);
+            assertThat(t0.status()).isEqualTo(ProposalStatus.EVALUATED);
+            assertThat(t0.tier().name()).isEqualTo("T0");
+            @SuppressWarnings("unchecked") Map<String, Object> ci = (Map<String, Object>) t0.evaluationReport().get("confidenceInterval");
+            assertThat(((Number) ci.get("lower")).doubleValue()).as("T0 replay lower bound in %s", t0.evaluationReport()).isGreaterThan(0.0);
+            @SuppressWarnings("unchecked") Map<String, Object> shadow = (Map<String, Object>) t0.evaluationReport().get("shadow");
+            assertThat(shadow).as("shadow verdict").containsEntry("passed", true);
+
+            // The holdout is tagged by the live router's own assignment and big enough for the lift report.
+            String holdoutId = experiments.running().stream().filter(e -> e.mode().name().equals("HOLDOUT")).findFirst().orElseThrow().experimentId();
+            long holdoutEpisodes = jdbc.sql("""
+                select count(*) from episode e join decision_record d on d.tenant_id = e.tenant_id and d.id = e.decision_id
+                where e.tenant_id = :t and e.reward is not null and d.details->'experiment'->>'arm' = 'holdout' and d.details->'experiment'->>'experimentId' = :h""")
+                .param("t", DEMO).param("h", holdoutId).query(Long.class).single();
+            assertThat(holdoutEpisodes).as("rewarded holdout episodes for the lift report").isGreaterThanOrEqualTo(30);
+
+            // FD-05 for real: the agent-reputation learner scored the agents from seeded mandates; the seeder wrote no facts in its name.
+            assertThat(jdbc.sql("select count(*) from mandate where tenant_id = :t and mandate_id like 'mdt-demo-%'").param("t", DEMO).query(Long.class).single()).isGreaterThanOrEqualTo(29);
+            Map<String, Object> rep = jdbc.sql("""
+                select learner, sample_size, version from learned_fact where tenant_id = :t and subject_type = 'AGENT' and subject_id = 'shopbot-ucp'
+                  and fact_key = 'AGENT_REPUTATION' and valid_to is null""").param("t", DEMO).query().singleRow();
+            assertThat(rep).containsEntry("learner", "agent_reputation").containsEntry("sample_size", 14);
             assertThat(experiments.running()).extracting(e -> e.mode().name()).contains("CANARY", "HOLDOUT");
             assertThat(experiments.running()).allSatisfy(e -> assertThat(e.createdBy()).isEqualTo(SooDemoSeeder.SEED));
             var objective = objectives.live().orElseThrow();
-            assertThat(objective.createdBy()).isEqualTo("user:strategy");
-            assertThat(objective.approvedBy()).isEqualTo("user:admin");
+            assertThat(objective.createdBy()).isEqualTo(SooDemoSeeder.STRATEGY);
+            assertThat(objective.approvedBy()).isEqualTo(SooDemoSeeder.ADMIN);
             assertThat(objective.constraints()).containsKey("freezeWindows");
 
             // Idempotent: a second run changes nothing.
