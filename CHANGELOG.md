@@ -25,6 +25,64 @@ All notable changes to Intent OMS are documented here. The format follows
     counts only the queues you work, and a Why drawer that shows which learned facts a decision used.
   - Demo tenant reference data (`SooDemoSeeder`), `scripts/usecases/uc8-self-optimizing.sh`, and a local Playwright
     suite (`make e2e`).
+  - Fixed after a second audit:
+    - Orders: an order that loses the last units at reservation is re-sourced or backordered instead of failing. Each
+      fulfilment group's last parcel counts as delivered. A carrier scan for an unknown parcel is ignored, and a lost
+      or damaged parcel counts as a late delivery.
+    - Rewards: one return outcome per return (the refund replaces the estimate). Fill counts every unit ordered, and
+      there is a new first-attempt fill. A perfect-order component (unweighted) now heads the lift report. Reward
+      scales come from the holdout once it has 30 episodes.
+    - Fraud: fraud labels are sampled from cohorts whose chargeback window has closed, for the tuner, the signal
+      learner and the drift monitor. Return grading labels the return's risk decision. Fraud changes are evaluated on
+      labelled fraud history.
+    - Governance: live-use ranges are checked against each value's domain (a demo range in the wrong units had sent
+      about 190 delay emails). Guardrails also watch live-use promotions, and proposals are governed by the learner
+      that owns the target. The cooldown applies only after a rollback for cause. The global kill switch and the
+      tenant list need the platform engineer role. The critic reviews every evaluation.
+    - Learning inputs: human resolutions record the value the person chose, and calibration and learners read it.
+      Read-only sourcing scores are logged as shadow. Day parts use the tenant's clock. Erased customers are never
+      learned again, and a repeated erasure also removes facts stored under the pseudonym.
+    - Privacy: contact details typed into notes, return reasons, complaints, customer messages and agent
+      instructions are redacted before they reach a decision record or a model prompt.
+    - Screens: the Tasks page opens decision escalations, shows the recommendation and records the choice. The return
+      inspection dropdown offers only conditions the API accepts. The Learning console shows the perfect-order
+      headline, a 4-week guardrail report, the critic's review and each live value's allowed range.
+  - Fixed after a third audit:
+    - Security: nobody can grant a role or permission they do not hold. A tenant admin could create a user or API key
+      with the platform-engineer role and from there flip the global kill switch or list every tenant; that and the
+      same hole in agent registration are closed, key issue and revoke are audited, and revoke is tenant-scoped.
+    - Governance: a change is judged against what is live. A proposal drafted against an older version, or from a
+      value that is no longer live, is refused at evaluation and at promotion, and the max step is measured from the
+      live value. Live use takes the tier of the decisions it feeds, so a learned value feeding a T2 decision never
+      promotes itself. The target's owner governs a learner's draft (the stricter of owner and drafter wins). Canary
+      duration and shadow sample size have tenant floors a caller cannot go below, and a canary cannot be completed
+      early. Promotion re-checks a live-use range against its domain, and switching on a family nothing has learned
+      for is weak evidence.
+    - Rewards: the north star is §2's definition, judged per line (delivered complete, on time, undamaged, not
+      returned for a fulfilment reason); contacts and chargebacks no longer count against it. The weighted fill term
+      is first-attempt fill. Every term has an explicit scale (from the holdout, else the tenant's own episodes, else
+      a stated default), shown by `GET /learning/reward-baseline`. A won chargeback blames nobody, a refused
+      cash-on-delivery parcel costs its return leg rather than the order, and a node's refusal is scored against
+      the choice that planned its group.
+    - Learning inputs: a reservation race is not a store reject. Outcomes of a re-sourced group reach the decision
+      that planned it. Provisional rewards cannot make a sourcing policy the greedy one. The calibration report is
+      measured out of sample, lane learning works right after boot, and the warn-early learner and the warning gate
+      read the same score. Late orders, carrier exceptions and nodes likely to breach now score without a model, in
+      every tenant. Inventory values are judged on what they change, not on an unrelated decision.
+    - Decision fabric: a return review resolves and labels its risk escalation; labels say who resolved (person,
+      agent, system) and learners read people only. Calibration learns from live resolutions and is live on demo.
+      Override-to-rule is no longer blocked by golden-set candidates, and its rule generalises. Rules are judged on
+      the ground truth that exists (fraud outcomes), so "the model beats the rule" is reachable. The fraud-label
+      replay compares like with like and says what it covers. Off-policy evaluation operates on real propensities:
+      a governed exploration share for low-risk decisions only, and bandit changes evaluated with IPS and doubly
+      robust estimates. The critic weighs the IPS cross-check and the mature share.
+    - Privacy: names and street addresses typed into notes are redacted along with emails and phone numbers.
+      Customers are keyed by their vault token in every learning table, existing rows are re-keyed on upgrade, and
+      an erasure also scrubs the customer's facts from decision records, the why view and old learning events. The
+      decision log is append-only: later annotations go to their own append-only table, a database trigger refuses
+      any other change, and legal erasure is the one scoped exception.
+    - Screens: the outcome score is explained as a weighted sum, never labelled "0 to 1"; system actors have plain
+      names; the live-use form follows each family's domain.
 - **Self-Optimizing Order Orchestration** (`oms-learning`, new module): closes the loop from outcome back to policy.
   Every decision now logs propensity (`decision_record.context_features/arms/chosen_arm/propensity/policy_version`)
   so past decisions can be fairly replayed against a new policy. Episodes are assembled from the existing event

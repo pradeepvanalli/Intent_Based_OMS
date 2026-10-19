@@ -35,12 +35,12 @@ provider). PostgreSQL 16 in Docker (compose). k6 v2.3.0. Demo tenant.
 Earlier runs on a previous build (708/707 decisions/episodes at 1 order/s; 2,169/2,169 at 5 orders/s) were reported
 without their raw output, so they are not quoted as evidence here.
 
-In the first run, 707 episodes for 708 decisions means one decision point was evaluated twice and folded into one
-episode (OC-02), as designed. Every decision was the anchor or the latest evaluation of an episode.
+In this run every LIVE decision has its own episode (724 for 724). When a decision point is evaluated twice, the second
+evaluation folds into the existing episode (OC-02), so episodes can be fewer than decisions without anything missing.
 
 ## Limits
 
-- This is a single-machine run, not a production-sized load test. The second row is 5x the first and still shows no
-  assembly backlog. Rerun against a deployment-sized environment before quoting capacity numbers.
+- This is a single-machine run at an assumed peak of 360 orders an hour, not a production-sized load test. Rerun
+  against a deployment-sized environment, at the tenant's real peak, before quoting capacity numbers.
 - Without AI keys, decisions take the heuristic path. With a live model, per-order decision latency rises, but episode
   assembly works off the ledger events afterwards, so the model's latency does not slow assembly.

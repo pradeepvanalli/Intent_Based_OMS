@@ -22,7 +22,10 @@ either loop changes live behaviour until it clears evaluation, approval where th
 2. **Live paths read learned values only through `ParameterResolver`.** A value is served only after a promoted
    `ParameterChange` on `parameter:live:<family>` (created through `POST /learning/live-parameters/proposals`), within
    its range and max step, and only while the learner is on, unpaused and above L0. Otherwise the static value is
-   served. Never read `LearnedFactRepository` directly from sourcing, promise, inventory or monitoring code; use
+   served. Every family a live path reads is declared in `LiveFamilies` with its units and domain; the range is
+   checked against it when drafted and again at promotion, and a learned number outside the domain is never served.
+   The max step is measured from the tenant's static value; with no static value the promoted range is the bound.
+   Never read `LearnedFactRepository` directly from sourcing, promise, inventory or monitoring code; use
    `LearnedFactCache` + `ParameterResolver`.
 3. **Learners propose, the gate decides.** A learner may write facts and proposals. It never calls
    `DecisionStudioService.publish/edit/createDraft`, never changes an agent's trust tier, and never bypasses
@@ -30,12 +33,26 @@ either loop changes live behaviour until it clears evaluation, approval where th
    cancellations, pricing, objective and autonomy). `PromotionService` applies every change type and keeps a rollback
    snapshot.
 4. **Propensity is the probability of the logged arm.** The generic runtime logs the main question's options as
-   `arms` with propensity 1.0. Anything that samples (see `SourcingPolicyBandit`) logs the arm actually applied with
+   `arms` with propensity 1.0, except under the governed exploration floor (`learning.exploration.<decision>`,
+   `ExplorationFloor`: T0 decisions only, never money, fraud, mandate or injection decisions, off for holdout
+   customers), where the applied arm's true probability is logged and the model's own answer kept in
+   `details.modelAnswer`. Anything that samples (see `SourcingPolicyBandit`) logs the arm actually applied with
    its true draw probability, keeps a sampled-but-unused arm in `details.shadow`, seeds the draw once and stores the
    seed, and offers a static `replay(...)`.
 5. **One episode per decision point.** `EpisodeAssembler` keys episodes by decision, subject, line and fulfilment
    group (`DecisionPoints`). A scorer that re-evaluates the same order must not open new episodes; it moves
    `last_decision_id`.
+6. **Customers are tokens.** Every CUSTOMER subject in learning tables (facts, evidence, order refs, segment members,
+   episodes, `fact.learned` events) is keyed by `CustomerSubjects.key(ref)`, the vault token that erasure also uses as
+   the pseudonym. Readers convert the same way; never store a raw `cust-…` reference. `FreeTextRedactor` takes the
+   order's known PII (`OrderPii.known(order)`) wherever a caller has the order.
+7. **The decision log is append-only.** `decision_record` refuses UPDATE and DELETE by trigger; later annotations
+   (labels, overrides, human resolutions) go through `DecisionRecordRepository.annotate` into `decision_annotation`.
+   Legal erasure is the one scoped exception, for personal columns only. Build no code path that updates a record.
+8. **The gate judges against what is live.** `PromotionGuard` compares a change's `from` and `baseVersion` with the
+   live definition (`LiveBase`), measures the step from the live value, takes a live-use proposal's tier from the
+   decisions its family affects (`LiveUseTier`), and applies the stricter of the target's owner and the drafting
+   learner (`ProposalOwnership.governors`).
 
 ## Extension points (add a bean, don't edit a shared file)
 
