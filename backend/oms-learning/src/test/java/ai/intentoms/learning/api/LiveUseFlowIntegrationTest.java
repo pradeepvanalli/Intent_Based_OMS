@@ -76,6 +76,12 @@ class LiveUseFlowIntegrationTest extends PostgresTestBase {
         assertThat(closed.status()).isEqualTo(ProposalStatus.ROLLED_BACK);
         assertThat(closed.rolledBackReason()).contains("switched off by user:bob");
         assertThatThrownBy(() -> promotion.rollback(p.proposalId(), Actor.parse("user:bob"), null)).isInstanceOf(ConflictException.class);
+        // Defect 26: the same change cannot come straight back, although its "from" now records the revoked row's range.
+        as("alice");
+        assertThatThrownBy(() -> liveUse.propose(new LiveUseController.LiveUseRequest(family, "node_reliability", 0.0, 0.5, 0.1, true, null)))
+            .isInstanceOf(OmsException.class).satisfies(e -> assertThat(((OmsException) e).code()).isEqualTo("proposal_cooling_down"));
+        // A different range is a different change.
+        assertThat(liveUse.propose(new LiveUseController.LiveUseRequest(family, "node_reliability", 0.0, 0.4, 0.1, true, null)).status()).isEqualTo(ProposalStatus.DRAFT);
     }
 
     @Test

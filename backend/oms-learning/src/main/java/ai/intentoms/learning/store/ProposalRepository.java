@@ -203,10 +203,18 @@ public class ProposalRepository {
 
     private static final com.fasterxml.jackson.core.type.TypeReference<PolicyChange> ONE_CHANGE = new com.fasterxml.jackson.core.type.TypeReference<>() {};
 
-    /** Same target and same changes, whatever order they were listed in: SHA-256 over a canonical form of each change. */
+    /**
+     * Same target and same changes, whatever order they were listed in: SHA-256 over a canonical form of each change.
+     * A change's {@code from} is left out: what was rolled back is where the change took the target, and the same
+     * destination drafted from a slightly different starting point (live use switched off since, say) is the same change.
+     */
     public static String fingerprint(String targetRef, List<PolicyChange> changes) {
         List<String> parts = new java.util.ArrayList<>();
-        for (PolicyChange c : changes) parts.add(canonical(Json.readMap(Json.write(c, ONE_CHANGE))));
+        for (PolicyChange c : changes) {
+            Map<String, Object> m = new java.util.LinkedHashMap<>(Json.readMap(Json.write(c, ONE_CHANGE)));
+            m.remove("from");
+            parts.add(canonical(m));
+        }
         java.util.Collections.sort(parts);
         try {
             byte[] d = java.security.MessageDigest.getInstance("SHA-256").digest((targetRef + "|" + String.join("|", parts)).getBytes(java.nio.charset.StandardCharsets.UTF_8));
