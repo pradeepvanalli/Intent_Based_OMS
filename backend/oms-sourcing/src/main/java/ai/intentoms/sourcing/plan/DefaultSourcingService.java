@@ -96,6 +96,8 @@ public class DefaultSourcingService implements SourcingService {
     public static final String EVT_FAILED = "order.sourcing_failed";
     public static final String EVT_RESOURCED = "order.resourced";
     public static final String SPLIT_DECISION = "split_acceptability";
+    /** The re-sourcing reason the order workflow gives when its own reservation found the planned stock gone. */
+    public static final String RESERVATION_SHORTAGE = "insufficient_atp";
     static final List<String> FALLBACK_ORDER = List.of(Policies.SHIP_COMPLETE, Policies.SHIP_AS_AVAILABLE, Policies.SPLIT_UP_TO_K, Policies.EARLIEST_PARTIAL, Policies.PICKUP_CONSOLIDATED);
     private static final Set<String> INACTIVE_GROUP = Set.of("rejected", "cancelled", "shipped", "delivered", "picked_up");
     private static final Logger log = LoggerFactory.getLogger(DefaultSourcingService.class);
@@ -200,14 +202,18 @@ public class DefaultSourcingService implements SourcingService {
             Set<String> rejectedNodes = new LinkedHashSet<>();
             Set<String> penalised = new HashSet<>();
             Map<String, Double> deltas = new LinkedHashMap<>();
+            // FS-02 / FS-06 (audit B3-1): only a node that refused is penalised and learned as a reject. When the OMS's own
+            // reservation lost a race for the last units (stale ATP inside the OMS), the node never refused anything.
+            boolean refused = nodeRefused(reason);
             for (FulfilmentGroup g : active) {
                 rejectedNodes.add(g.nodeId());
+                if (!refused) continue;
                 double delta = deltas.computeIfAbsent(g.nodeId(), this::rejectPenalty);
                 for (FulfilmentGroup.Allocation a : g.allocations()) {
                     if (penalised.add(g.nodeId() + "|" + a.sku())) nodes.penalise(g.nodeId(), a.sku(), delta, "store_reject: " + reason);
                 }
             }
-            double delta = deltas.values().stream().mapToDouble(Double::doubleValue).max().orElse(settings.rejectPenalty());
+            double delta = !refused ? 0.0 : deltas.values().stream().mapToDouble(Double::doubleValue).max().orElse(settings.rejectPenalty());
             Set<String> rejectedIds = new LinkedHashSet<>();
             List<FulfilmentGroup> groups = new ArrayList<>();
             for (FulfilmentGroup g : order.fulfilmentGroups()) {
@@ -222,12 +228,14 @@ public class DefaultSourcingService implements SourcingService {
             List<OrderLine> lines = order.lines().stream().map(l -> rejectedIds.contains(l.fulfilmentGroupId()) ? l.withFulfilmentGroup(null) : l).toList();
             Order updated = orders.update(order.withFulfilmentGroups(groups).withLines(lines));
             List<String> reasons = new ArrayList<>();
-            reasons.add("re-sourced after reject at " + rejectedNodes + ": " + reason);
+            reasons.add(refused ? "re-sourced after reject at " + rejectedNodes + ": " + reason
+                : "re-sourced away from " + rejectedNodes + " without a node penalty, the node did not refuse: " + reason);
             // OC-02: the re-sourcing decision is about the rejected group, so its episode is that group's.
             SourcingResult result = sourceInternal(updated, rejectedNodes, actor, reasons, rejectedIds.iterator().next());
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("reason", reason == null ? "" : reason);
             payload.put("rejectedNodes", List.copyOf(rejectedNodes));
+            payload.put("nodeRejected", refused);
             payload.put("rejectedGroupIds", List.copyOf(rejectedIds));
             payload.put("penaltyDelta", delta);
             payload.put("penaltyByNode", deltas);
@@ -537,6 +545,20 @@ public class DefaultSourcingService implements SourcingService {
             .filter(p -> pickupOrder == Policies.PICKUP_CONSOLIDATED.equals(p.policy()))
             .filter(p -> latest == null || p.latestEta() == null || !p.latestEta().isAfter(latest))
             .map(SourcingPlan::policy).toList();
+    }
+
+    /**
+     * FS-02 / FS-06: whether a re-sourcing reason means the node refused or failed the work (a store reject, a short pick,
+     * a timeout, an operator reporting a reject). Not a refusal: {@value #RESERVATION_SHORTAGE}, the OMS's own reservation
+     * losing a race for the last units another order took between sourcing and reserving (stale ATP inside the OMS);
+     * {@code reship}, a parcel lost after it left; {@code autonomy_undo:*}, an automatic action being undone. Those
+     * re-source away from the node without penalising it, and {@code order.resourced} says {@code nodeRejected: false},
+     * so the node reliability learner does not count them as rejects.
+     */
+    public static boolean nodeRefused(String reason) {
+        if (reason == null) return true;
+        String r = reason.trim().toLowerCase(java.util.Locale.ROOT);
+        return !(r.equals(RESERVATION_SHORTAGE) || r.equals("reship") || r.startsWith("autonomy_undo"));
     }
 
     /** FS-06: the penalty a reject at this node earns, learned per node once promoted, else {@code sourcing.reject_penalty}. */
