@@ -54,6 +54,17 @@ public class ProposalRepository {
      * cooldown ({@code learning.rollback_cooldown_days}, default 30) is refused, since the rollback is evidence against
      * it; a learner that drafts it again gets a 409 it logs and moves on from.
      */
+    /** "live use of sourcing.reject_penalty", "the sla_breach_risk decision", "the sourcing.weights setting". */
+    static String plainTarget(ArtifactRef target) {
+        String name = target.name() == null ? "" : target.name();
+        return switch (target.type()) {
+            case "parameter" -> name.startsWith("live:") ? "live use of " + name.substring("live:".length()) : "the learned value " + name;
+            case "decision" -> "the " + name + " decision";
+            case "config" -> "the " + name + " setting";
+            default -> name;
+        };
+    }
+
     public void insert(Proposal p) {
         String target = p.changeset().target().toString();
         int days = config == null ? DEFAULT_COOLDOWN_DAYS : Math.max(0, config.getInt(COOLDOWN_KEY, DEFAULT_COOLDOWN_DAYS));
@@ -64,8 +75,8 @@ public class ProposalRepository {
                     String when = rb.rolledBackAt() == null ? "recently" : "on " + rb.rolledBackAt().toString().substring(0, 10);
                     String why = rb.rolledBackReason() == null ? "no reason given" : rb.rolledBackReason();
                     throw new OmsException(org.springframework.http.HttpStatus.CONFLICT, "proposal_cooling_down",
-                        "The same change to " + target + " was rolled back " + when + " (" + why + "); it cannot be proposed again for " + days
-                            + " days without different evidence", Map.of("rolledBackProposalId", rb.proposalId(), "cooldownDays", days), null);
+                        "The same change to " + plainTarget(p.changeset().target()) + " was rolled back " + when + " (" + why + "); it cannot be proposed again for " + days
+                            + " days without different evidence", Map.of("rolledBackProposalId", rb.proposalId(), "cooldownDays", days, "target", target), null);
                 }
             }
         }
