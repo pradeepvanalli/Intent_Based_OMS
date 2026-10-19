@@ -100,6 +100,21 @@ class LearningGovernanceApiIntegrationTest extends PostgresTestBase {
     }
 
     @Test
+    void theAuthorIsRefusedFirstThenTheLifecycle() {
+        var cs = new ai.intentoms.learning.model.PolicyChangeset(new ai.intentoms.learning.model.ArtifactRef("decision", "return_risk"), 1,
+            java.util.List.of(new ai.intentoms.learning.model.PolicyChange.ThresholdChange("return_risk", "act", 0.9, 0.92)), "test", ai.intentoms.learning.model.PolicyChangeset.RiskTier.T1);
+        var p = new ai.intentoms.learning.model.Proposal(Ids.prefixed("prop"), cs, null, ai.intentoms.learning.model.PolicyChangeset.RiskTier.T1,
+            ai.intentoms.learning.model.ProposalStatus.DRAFT, null, null, "user:tenant-admin", Instant.now(), Instant.now(), null, null, null, null, null, null, null, null);
+        proposals.insert(p);
+        asTenantAdmin();
+        assertThatThrownBy(() -> learning.approve(p.proposalId(), null)).isInstanceOf(ValidationException.class).hasMessageContaining("cannot approve it themselves");
+        asPlatformAdmin();
+        assertThatThrownBy(() -> learning.approve(p.proposalId(), null)).isInstanceOf(ai.intentoms.platform.error.ConflictException.class).hasMessageContaining("not been tested");
+    }
+
+    @Autowired ai.intentoms.learning.store.ProposalRepository proposals;
+
+    @Test
     void factsCanBeReadBySubjectAsDocumented() {
         String node = "DC-E2-" + Ids.shortId();
         facts.insert(new LearnedFact(Ids.prefixed("fact"), SubjectType.NODE, node, FactKey.NODE_ON_TIME_RATE, new TypedValue.NumberValue(0.91), 0.8, 40,

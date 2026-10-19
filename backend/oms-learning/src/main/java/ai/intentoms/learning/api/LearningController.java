@@ -264,9 +264,10 @@ public class LearningController {
     @RequiresPermission(Permissions.LEARNING_ADMIN)
     public Proposal approve(@PathVariable String id, @RequestBody(required = false) Map<String, String> body) {
         Proposal p = proposals.get(id);
-        ai.intentoms.learning.model.ProposalLifecycle.require(p, ai.intentoms.learning.model.ProposalStatus.APPROVED, "approve");
         String by = actorRef();
+        // The author never approves, whatever the status, so that refusal comes first (422); then the lifecycle (409).
         if (by.equals(p.createdBy())) throw new ValidationException("The author of a proposal cannot approve it themselves");
+        ai.intentoms.learning.model.ProposalLifecycle.require(p, ai.intentoms.learning.model.ProposalStatus.APPROVED, "approve");
         String reasonCode = body == null ? null : body.get("reasonCode");
         if (ai.intentoms.learning.promotion.PromotionGuard.isPostalCodeScoped(p.changeset())) {
             // GV-07: a restriction scoped to postal codes can disadvantage a neighbourhood; it needs a stated reason.
