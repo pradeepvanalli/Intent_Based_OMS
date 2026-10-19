@@ -116,4 +116,27 @@ class CustomerLearningReasonsIntegrationTest extends PostgresTestBase {
             factCache.invalidateAll();
         }
     }
+
+    @Autowired ai.intentoms.learning.api.ExperimentController experimentApi;
+    @Autowired ai.intentoms.learning.api.LearningController learningApi;
+
+    @Test
+    void customersAreAskedForByReferenceAndFoundByToken() {
+        String ref = "cust-api-" + Ids.shortId();
+        put(subjects.key(ref), FactKey.PREFERRED_CONTACT_CHANNEL, new TypedValue.TextValue("sms"));
+        assertThat(learningApi.facts("CUSTOMER", ref, null)).singleElement().satisfies(f -> assertThat(f.subjectId()).isEqualTo(subjects.key(ref)));
+        assertThat(learningApi.fact(SubjectType.CUSTOMER, ref, FactKey.PREFERRED_CONTACT_CHANNEL).value()).isEqualTo(new TypedValue.TextValue("sms"));
+
+        Experiment holdout = experiments.ensureHoldout(0.5, "user:test");
+        router.invalidate();
+        try {
+            for (int i = 0; i < 20; i++) {
+                String c = "cust-member-" + i;
+                assertThat(experimentApi.holdoutMember(c)).containsEntry("experimentId", holdout.experimentId())
+                    .containsEntry("inHoldout", router.inHoldout("customer:" + c));
+            }
+        } finally {
+            experiments.stop(holdout.experimentId(), ExperimentStatus.STOPPED, Map.of(), Actor.parse("user:test"));
+        }
+    }
 }

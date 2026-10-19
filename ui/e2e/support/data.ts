@@ -169,9 +169,11 @@ export function stickyInTreatment(experimentId: string, key: string, share: numb
 export async function customerRefFor(api: APIRequestContext, holdout: boolean): Promise<{ ref: string; experimentId: string }> {
   const running = (await experiments(api)).find((e) => e.mode === 'HOLDOUT' && e.status === 'RUNNING');
   if (!running) throw new Error('no running holdout experiment (the demo seed starts one)');
-  for (let i = 0; i < 5000; i++) {
+  // Membership hashes the customer's vault token (NF-07), which only the server knows: ask it.
+  for (let i = 0; i < 1500; i++) {
     const ref = `e2e-${uid()}-${i}`;
-    if (stickyInTreatment(running.experimentId, `customer:cust-${ref}`, running.trafficShare) === holdout) return { ref, experimentId: running.experimentId };
+    const member = await ok<{ inHoldout: boolean; experimentId: string }>(api.get(`/api/v1/learning/experiments/holdout/members/cust-${ref}`));
+    if (member.inHoldout === holdout) return { ref, experimentId: running.experimentId };
   }
   throw new Error(`no ${holdout ? 'holdout' : 'treatment'} customer found for ${running.experimentId}`);
 }
