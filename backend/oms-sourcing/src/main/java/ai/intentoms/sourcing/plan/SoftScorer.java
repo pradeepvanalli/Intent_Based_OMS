@@ -5,6 +5,7 @@ import ai.intentoms.decision.model.Band;
 import ai.intentoms.decision.model.DecisionOptions;
 import ai.intentoms.decision.model.DecisionResult;
 import ai.intentoms.decision.model.Layer;
+import ai.intentoms.decision.model.Mode;
 import ai.intentoms.decision.runtime.DecisionService;
 import ai.intentoms.platform.ledger.Actor;
 import ai.intentoms.platform.observability.Metrics;
@@ -65,13 +66,26 @@ public class SoftScorer {
     }
 
     public SoftScores score(SourcingRequest req, List<Candidate> candidates, RateCard card, Actor actor) {
+        return score(req, candidates, card, actor, Mode.LIVE, null);
+    }
+
+    /**
+     * @param mode               {@code LIVE} when the plan will be committed; {@code SHADOW} for read-only paths (sourcing
+     *                           options, replays, re-promise previews): same learned features and calibration, but the
+     *                           record is not LIVE, so it never opens or repoints an episode nor counts in guardrail,
+     *                           holdout or coverage figures (E-1)
+     * @param fulfillmentGroupId the group being re-sourced, when the decision is about one group (OC-02): its episode
+     *                           then carries {@code fulfillment_group_id} instead of repointing the order's
+     */
+    public SoftScores score(SourcingRequest req, List<Candidate> candidates, RateCard card, Actor actor, Mode mode, String fulfillmentGroupId) {
         if (candidates.isEmpty()) return SoftScores.neutral("no candidates");
         // Learned node reliability (FS-02) is merged into the candidates by the decision fabric's learning hook
         // (oms-learning NodeReliabilityFeatures), so the decision record shows which facts and versions it used.
         Map<String, Object> input = input(req, candidates, card, time.now(), ai.intentoms.learning.model.DayPart.zone(config));
+        if (fulfillmentGroupId != null) input.put("fulfillmentGroupId", fulfillmentGroupId);
         DecisionResult r;
         try {
-            r = decisions.decide(DECISION, input, DecisionOptions.live("order", req.orderId(), actor));
+            r = decisions.decide(DECISION, input, new DecisionOptions("order", req.orderId(), null, mode == null ? Mode.LIVE : mode, null, actor, Map.of()));
         } catch (RuntimeException e) {
             log.warn("sourcing_node_score unavailable for order {}: {}", req.orderId(), e.getMessage());
             metrics.count("oms.sourcing.soft_score.unavailable");

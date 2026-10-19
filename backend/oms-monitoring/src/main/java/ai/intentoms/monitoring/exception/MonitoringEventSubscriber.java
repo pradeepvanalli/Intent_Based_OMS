@@ -131,6 +131,9 @@ public class MonitoringEventSubscriber implements EventSubscriber {
         input.put("order", orderMap);
         input.put("customer", Map.of("tier", order.map(o -> o.customer() == null || o.customer().tier() == null ? "standard" : o.customer().tier()).orElse("standard")));
         input.put("network", Map.of("atp_elsewhere", atpElsewhere(line.map(OrderLine::sku).orElse(null), nodeOf(orderId, lineId))));
+        // OC-02: the decision is about one line; its episode carries the line (and order) so outcomes join there.
+        if (lineId != null) input.put("lineId", lineId);
+        if (orderId != null) input.put("orderId", orderId);
         try {
             DecisionResult r = decisions.decide(decision, input, DecisionOptions.live(exc.aggregateType(), exc.aggregateId(), ACTOR));
             exceptions.attachDecision(exc.id(), r, Map.of("onBreachDecision", decision));
