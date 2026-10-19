@@ -103,20 +103,20 @@ public class OpsQueryCatalog {
         // XP-06: the self-optimizing layer's tables.
         add("learning_proposals_by_status", "Learning proposals counted by status with the oldest one in each",
             "select p.status, count(*) as proposals, min(p.created_at) as oldest, count(distinct p.target_ref) as targets from proposal p where p.tenant_id = :tenant and p.created_at >= now() - make_interval(hours => :hours) group by p.status order by proposals desc",
-            List.of(new Param("hours", ParamType.HOURS, false, null, "Look-back window in hours (default 720)")), List.of("proposal", "proposals", "pending change", "learning queue", "awaiting review"), "How many learning proposals are waiting for review?");
+            List.of(new Param("hours", ParamType.HOURS, false, null, "Look-back window in hours (default 720)")), List.of("proposal", "proposals", "pending change", "learning queue", "awaiting review", "waiting for review", "drafted change"), "How many learning proposals are waiting for review?");
         add("learning_recent_promotions", "Changes the learning layer promoted or rolled back, newest first",
             "select p.proposal_id, p.target_ref, p.tier, p.status, coalesce(p.approved_by, 'automatic') as approved_by, p.promoted_at, p.rolled_back_at, p.rolled_back_reason from proposal p where p.tenant_id = :tenant and (p.promoted_at >= now() - make_interval(hours => :hours) or p.rolled_back_at >= now() - make_interval(hours => :hours)) order by coalesce(p.rolled_back_at, p.promoted_at) desc limit :limit",
-            List.of(new Param("hours", ParamType.HOURS, false, null, "Look-back window in hours (default 720)"), limit), List.of("promoted", "promotion", "rolled back", "rollback", "what changed", "learning changed"), "What did learning promote this month?");
+            List.of(new Param("hours", ParamType.HOURS, false, null, "Look-back window in hours (default 720)"), limit), List.of("promoted", "promotion", "promote", "rolled back", "rollback", "roll back", "what changed", "learning changed", "learning promote", "went live"), "What did learning promote this month?");
         add("learner_status", "Every learner with its autonomy level, on/off switch, pause reason and last run",
             "select l.learner_key, l.autonomy_level, l.enabled, l.paused_reason, l.last_run_at, l.max_promotions_per_week from learner l where l.tenant_id = :tenant order by l.learner_key",
-            List.of(), List.of("learner", "learners", "autonomy", "paused", "kill switch"), "Which learners are paused?");
+            List.of(), List.of("learner", "learners", "autonomy", "paused", "kill switch", "switched off"), "Which learners are paused?");
         add("episode_outcome_coverage", "Episodes per decision with how many have an outcome, are mature, and their mean reward",
             "select e.decision_name, count(*) as episodes, count(*) filter (where exists (select 1 from outcome o where o.tenant_id = e.tenant_id and o.episode_id = e.episode_id)) as with_outcome, count(*) filter (where e.status = 'MATURE') as mature, round(avg(e.reward)::numeric, 4) as mean_reward from episode e where e.tenant_id = :tenant and e.created_at >= now() - make_interval(hours => :hours){filters} group by e.decision_name order by episodes desc",
             List.of(new Param("hours", ParamType.HOURS, false, null, "Look-back window in hours (default 720)"), new Param("decisionName", ParamType.DECISION, false, " and e.decision_name = :decisionName", "Decision name")),
-            List.of("episode", "episodes", "coverage", "reward", "outcomes"), "What is the outcome coverage per decision?");
+            List.of("episode", "episodes", "coverage", "reward", "outcomes", "outcome coverage", "outcome", "coverage per decision", "missing outcomes"), "What is the outcome coverage per decision?");
         add("learned_facts_by_key", "Active learned facts counted by subject type and fact key, with the latest update",
             "select f.subject_type, f.fact_key, count(*) as active_facts, max(f.created_at) as last_updated, round(avg(f.sample_size)::numeric, 1) as avg_sample_size from learned_fact f where f.tenant_id = :tenant and f.valid_to is null group by f.subject_type, f.fact_key order by active_facts desc",
-            List.of(), List.of("learned fact", "facts", "learned", "posterior", "node reliability"), "Which learned facts do we have?");
+            List.of(), List.of("learned fact", "facts", "learned", "posterior", "node reliability", "learned value"), "Which learned facts do we have?");
     }
 
     private void add(String name, String description, String sql, List<Param> params, List<String> keywords, String example) {

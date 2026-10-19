@@ -6,6 +6,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -55,5 +56,20 @@ class OpsQueryCatalogTest {
         assertThat(catalog.match("show me the open exceptions in the inbox").template().name()).isEqualTo("open_exceptions");
         assertThat(catalog.match("which lines are backordered").template().name()).isEqualTo("backordered_lines");
         assertThat(catalog.match("orders stuck for more than 12 hours at DC-NJ").parameters()).containsEntry("hours", 12).containsEntry("nodeId", "DC-NJ");
+    }
+
+    /** XP-06: without a model, every learning example question (and everyday phrasings of it) reaches its template. */
+    @Test
+    void keywordMatcherRoutesTheLearningExampleQuestions() {
+        for (String name : List.of("learning_proposals_by_status", "learning_recent_promotions", "learner_status", "episode_outcome_coverage", "learned_facts_by_key")) {
+            OpsQueryTemplate t = catalog.all().stream().filter(x -> x.name().equals(name)).findFirst().orElseThrow();
+            assertThat(catalog.match(t.example()).template().name()).as(t.example()).isEqualTo(name);
+        }
+        assertThat(catalog.match("What did learning promote this month?").template().name()).isEqualTo("learning_recent_promotions");
+        assertThat(catalog.match("What is the outcome coverage per decision?").template().name()).isEqualTo("episode_outcome_coverage");
+        assertThat(catalog.match("which learning changes were rolled back this week").template().name()).isEqualTo("learning_recent_promotions");
+        assertThat(catalog.match("are outcomes missing for any decision").template().name()).isEqualTo("episode_outcome_coverage");
+        assertThat(catalog.match("which learners are switched off").template().name()).isEqualTo("learner_status");
+        assertThat(catalog.match("what learned values do we have for node reliability").template().name()).isEqualTo("learned_facts_by_key");
     }
 }

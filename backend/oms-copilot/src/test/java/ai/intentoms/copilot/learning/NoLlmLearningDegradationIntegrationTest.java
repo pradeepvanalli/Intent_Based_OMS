@@ -135,5 +135,8 @@ class NoLlmLearningDegradationIntegrationTest extends NoLlmTestBase {
         }
         assertThat(catalog.match("which learners are paused").template().name()).isEqualTo("learner_status");
         assertThat(catalog.match("how many learning proposals are awaiting review").template().name()).isEqualTo("learning_proposals_by_status");
+        // The two example questions the keyword fallback used to misroute (to orders_by_status and decision_band_mix).
+        assertThat(catalog.match("What did learning promote this month?").template().name()).isEqualTo("learning_recent_promotions");
+        assertThat(catalog.match("What is the outcome coverage per decision?").template().name()).isEqualTo("episode_outcome_coverage");
     }
 }
