@@ -97,4 +97,71 @@ describe('Learning Console', () => {
     expect(within(draft).getByRole('button', { name: 'Approve and use' })).toBeDisabled();
     expect(within(draft).getByText(/someone else must approve/)).toBeInTheDocument();
   }, T);
+
+  it('only offers what the change status allows: a draft is tested before approval, a live change can only be rolled back', async () => {
+    loginAsAdmin();
+    const view = renderWithProviders(<LearningConsole />, { route: '/?tab=changes&change=prop_demo3' });
+    let drawer = await screen.findByRole('dialog', {}, { timeout: T });
+    const approve = await within(drawer).findByRole('button', { name: 'Approve' }, { timeout: T });
+    expect(approve).toBeDisabled();
+    expect(approve).toHaveAttribute('title', 'Test it on past decisions before approving');
+    expect(within(drawer).getByRole('button', { name: 'Test on past decisions' })).toBeInTheDocument();
+    expect(within(drawer).queryByRole('button', { name: /Go live/ })).not.toBeInTheDocument();
+    view.unmount();
+
+    renderWithProviders(<LearningConsole />, { route: '/?tab=changes&change=prop_demo7' });
+    drawer = await screen.findByRole('dialog', {}, { timeout: T });
+    expect(await within(drawer).findByRole('button', { name: 'Roll back' }, { timeout: T })).toBeInTheDocument();
+    for (const name of ['Approve', 'Reject', 'Test again', 'Test on past decisions', 'Go live', 'Start shadow test']) {
+      expect(within(drawer).queryByRole('button', { name })).not.toBeInTheDocument();
+    }
+  }, T * 2);
+
+  it('asks for a written reason before a change with weak evidence goes live, and records it', async () => {
+    loginAsAdmin();
+    renderWithProviders(<LearningConsole />, { route: '/?tab=changes&change=prop_demo13' });
+    const drawer = await screen.findByRole('dialog', {}, { timeout: T });
+    expect(await within(drawer).findByTestId('promotion-concerns', {}, { timeout: T })).toHaveTextContent(/no shadow run has passed/);
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Go live anyway…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Go live without full evidence?' });
+    expect(within(dialog).getByText(/no shadow run has passed/)).toBeInTheDocument();
+    const confirm = within(dialog).getByRole('button', { name: 'Go live anyway' });
+    const reason = within(dialog).getByRole('textbox', { name: /Why go live anyway/ });
+    fireEvent.change(reason, { target: { value: 'too short' } });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(reason, { target: { value: 'Pilot agreed with the operations lead for one week' } });
+    expect(confirm).not.toBeDisabled();
+    fireEvent.click(confirm);
+    expect(await screen.findByTestId('promotion-note', {}, { timeout: T })).toHaveTextContent(/Pilot agreed with the operations lead/);
+  }, T * 2);
+
+  it('lets a configuration admin change a learner’s limits', async () => {
+    loginAsAdmin();
+    renderWithProviders(<LearningConsole />, { route: '/?tab=learners' });
+    const budget = await screen.findByTestId('budget-node_reliability', {}, { timeout: T });
+    fireEvent.click(within(budget).getByRole('button', { name: 'Change limits for Node reliability' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Change limits for Node reliability' });
+    fireEvent.change(within(dialog).getByRole('spinbutton', { name: /Largest move per change/ }), { target: { value: '0.02' } });
+    fireEvent.change(within(dialog).getByRole('spinbutton', { name: /Changes per policy per week/ }), { target: { value: '2' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save limits' }));
+    expect(await within(await screen.findByTestId('budget-node_reliability')).findByText(/Moves at most 0.02 · 2 changes a week per target/, {}, { timeout: T })).toBeInTheDocument();
+  }, T);
+
+  it('lets only a platform administrator stop learning for every tenant', async () => {
+    setSession('test-token', { type: 'USER', id: 'ops', tenantId: 'demo', roles: ['admin'], permissions: ['learning.read', 'learning.admin', 'config.admin'], trustTier: 3 });
+    const view = renderWithProviders(<LearningConsole />, { route: '/?tab=learners' });
+    await screen.findByRole('button', { name: 'Pause all learning' }, { timeout: T });
+    expect(screen.queryByRole('button', { name: 'Stop learning for every tenant' })).not.toBeInTheDocument();
+    view.unmount();
+
+    loginAsAdmin();
+    renderWithProviders(<LearningConsole />, { route: '/?tab=learners' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop learning for every tenant' }, { timeout: T }));
+    const dialog = await screen.findByRole('dialog', { name: 'Stop learning for every tenant?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Stop learning everywhere' }));
+    const banner = await screen.findByTestId('global-kill-switch', {}, { timeout: T });
+    expect(banner).toHaveTextContent(/Learning is stopped for every tenant/);
+    fireEvent.click(within(banner).getByRole('button', { name: 'Restart learning' }));
+    await screen.findByRole('button', { name: 'Stop learning for every tenant' }, { timeout: T });
+  }, T * 2);
 });

@@ -8,6 +8,7 @@ import { TabPanel, Tabs } from '../../components/Tabs';
 import { EmptyState } from '../../components/States';
 import { hasPermission, useSession } from '../../auth/session';
 import { useQueryState } from '../../lib/hooks';
+import { relTime } from '../../lib/format';
 import { toast } from '../../lib/toast';
 import { TechnicalToggle } from './Bits';
 import { OverviewTab } from './OverviewTab';
@@ -41,6 +42,7 @@ export default function LearningConsole() {
   const review = useQueries({ queries: REVIEW.map((s) => ({ queryKey: ['learning', 'proposals', s], queryFn: () => learningApi.proposals(s), refetchInterval: REFRESH, enabled: canRead })) });
   const running = useQuery({ queryKey: ['learning', 'experiments', 'all'], queryFn: () => learningApi.experiments(true), refetchInterval: REFRESH, enabled: canRead });
   const resumeAll = useMutation({ mutationFn: () => learningApi.setAllLearning(true), onSuccess: () => { toast.ok('Learning resumed'); qc.invalidateQueries({ queryKey: ['learning'] }); } });
+  const restartGlobal = useMutation({ mutationFn: () => learningApi.setGlobalLearning(true), onSuccess: () => { toast.ok('Learning restarted for every tenant'); qc.invalidateQueries({ queryKey: ['learning'] }); } });
 
   if (!canRead) {
     return (
@@ -65,7 +67,12 @@ export default function LearningConsole() {
         <div className="learn-head-actions"><TechnicalToggle /></div>
       </div>
 
-      {ks?.globalKillSwitch && <div className="callout danger" role="status"><span><b>Learning is stopped for every tenant</b> by the platform operator. Live decisions use their standard values.</span></div>}
+      {ks?.globalKillSwitch && (
+        <div className="callout danger" role="status" data-testid="global-kill-switch">
+          <span className="grow"><b>Learning is stopped for every tenant</b> {ks.globalSource === 'property' ? 'by server configuration' : `by ${ks.globalSetBy?.replace(/^user:/, '') ?? 'the platform operator'}`}{ks.globalSetAt ? ` ${relTime(ks.globalSetAt)}` : ''}. Nothing is promoted and live decisions use their standard values.</span>
+          {ks.canSetGlobal && ks.globalSource !== 'property' && <Button size="sm" variant="primary" loading={restartGlobal.isPending} onClick={() => restartGlobal.mutate()}>Restart learning</Button>}
+        </div>
+      )}
       {ks?.tenantPaused && !ks.globalKillSwitch && (
         <div className="callout warn" role="status">
           <span className="grow"><b>All learning is paused.</b> Live decisions use their standard values until it is resumed.</span>

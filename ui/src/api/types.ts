@@ -254,7 +254,15 @@ export interface LearnerView {
 }
 /** @deprecated the learner list returns {@link LearnerView}. */
 export type LearnerState = LearnerView;
-export interface KillSwitchState { globalKillSwitch: boolean; tenantPaused: boolean; pausedLearners: string[]; }
+/** GV-03 at every level. globalSource: "property" (forced at startup), "runtime" (set by a platform admin) or null when off. */
+export interface KillSwitchState {
+  globalKillSwitch: boolean; globalSource?: 'property' | 'runtime' | null; globalSetBy?: string | null; globalSetAt?: string | null;
+  tenantPaused: boolean; pausedLearners: string[];
+  /** True for a platform administrator, who alone can stop learning for every tenant. */
+  canSetGlobal?: boolean;
+}
+/** GV-02: either field may be omitted to keep its value; clearMaxStep removes the learner's own limit (the 0.05 default for 0..1 values applies). */
+export interface BudgetUpdate { maxStep?: number | null; maxPromotionsPerWeek?: number | null; clearMaxStep?: boolean; }
 export interface LearnerMetrics {
   learnerKey: string; displayName: string; lastRunAt?: string | null; updateLagSeconds?: number | null; coverage?: number | null;
   proposalsDrafted: number; proposalsPromoted: number; proposalsRolledBack: number; proposalYieldPerWeek: number;
@@ -308,10 +316,27 @@ export interface CumulativeDiff {
 export interface ChangeCardReplay {
   evaluated: boolean; method?: string; liftEstimate?: number | null; confidenceInterval?: { lower: number; upper: number } | null;
   sampleSize?: number; episodes?: number; guardrails?: unknown; shadow?: ShadowResult; estimator?: string; clipping?: unknown;
+  canary?: Record<string, unknown>;
+  /** The plain inverse-propensity estimate, reported beside the doubly robust one. */
+  ips?: { proposedRewardEstimate?: number; liftEstimate?: number; confidenceInterval?: { lower: number; upper: number } };
+  /** How much of the evidence rests on final (mature) rewards versus provisional ones. */
+  rewards?: { mature: number; provisional: number; matureShare: number };
+  reason?: string; next?: string; caveat?: string;
 }
+/** What the lifecycle lets this person do next (defect 2), and what going live would waive (EX-07). */
+export interface ChangeCardActions {
+  canApprove: boolean; canReject: boolean; reason?: string | null;
+  canEvaluate?: boolean; canPromote?: boolean; canRollback?: boolean; canExperiment?: boolean;
+  /** Promoting now needs a written reason because of these; empty when the evidence and budget checks pass. */
+  promotionConcerns?: string[];
+  /** Why it cannot go live at all right now (freeze window, kill switch, paused learner…); no reason overrides it. */
+  promotionBlocker?: string | null;
+}
+/** Recorded when a person promoted despite weak evidence or a used-up budget. */
+export interface PromotionNote { by: string; reason: string; waived: string[]; at: string; }
 export interface ChangeCard {
   proposal: Proposal; hypothesis?: Hypothesis | null; evidence: string[]; replay: ChangeCardReplay; criticReview?: Review | null;
-  diff: KeyDiff[]; cumulative?: CumulativeDiff | null; actions: { canApprove: boolean; canReject: boolean; reason?: string | null };
+  diff: KeyDiff[]; cumulative?: CumulativeDiff | null; actions: ChangeCardActions; promotionNote?: PromotionNote | null;
 }
 export interface Experiment {
   experimentId: string; proposalId: string; mode: ExperimentMode; trafficShare: number; status: ExperimentStatus;
@@ -326,10 +351,12 @@ export interface ExperimentDetail {
 export interface LiftMetric {
   metric: string; betterWhen: 'higher' | 'lower'; nTreated: number; nHoldout: number; treatedMean?: number; holdoutMean?: number;
   lift?: number | null; ciLower?: number; ciUpper?: number; significant: boolean; improvement?: boolean;
+  /** False until each side has minPerArm episodes and some spread; reason says what is missing. */
+  enoughData?: boolean; reason?: string;
 }
 export interface LiftReport {
   windowDays: number; since: string; holdout: { experimentId: string; trafficShare: number; startAt: string } | null; note?: string;
-  baselines?: unknown; metrics: LiftMetric[]; byDecision?: Record<string, unknown>;
+  baselines?: unknown; metrics: LiftMetric[]; byDecision?: Record<string, unknown>; minPerArm?: number;
 }
 export type DigestRow = Record<string, unknown>;
 export interface DigestSummary {

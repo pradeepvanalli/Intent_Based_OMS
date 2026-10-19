@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ApiError } from '../../api/client';
+import { friendlyError } from '../../api/friendly';
 import { learningApi } from '../../api/learning';
 import type { ChangeCard, ExperimentMode, KeyDiff, Proposal } from '../../api/types';
 import { Badge } from '../../components/Badge';
@@ -13,7 +15,10 @@ import { useSession } from '../../auth/session';
 import { DemoBadge, InfoTip, ReasonDialog, Technical } from './Bits';
 import { METHOD_WORDS, POSTAL_REASON_CODES, STATUS_TONE, STATUS_WORDS, TIER_WORDS, VERDICT, authorName, changeSentence, decisionLabel, familyName, isPostalScoped, proposalTitle, replayPhrase } from './copy';
 
-type Dialogs = 'approve' | 'reject' | 'rollback' | null;
+type Dialogs = 'approve' | 'reject' | 'rollback' | 'override' | null;
+
+/** The server's minimum for a written override reason (PromotionGuard.MIN_OVERRIDE_REASON). */
+const MIN_OVERRIDE_REASON = 10;
 
 /** XP-02 change card: what would change, why, what replay showed, the second opinion, and what changed since the last approved version. */
 export function ChangeDrawer({ proposalId, onClose, canAdmin, names }: { proposalId: string | null; onClose: () => void; canAdmin: boolean; names: Map<string, string> }) {
@@ -34,10 +39,23 @@ export function ChangeDrawer({ proposalId, onClose, canAdmin, names }: { proposa
 function CardBody({ card, names }: { card: ChangeCard; names: Map<string, string> }) {
   const p = card.proposal;
   const motive = p.changeset.motivatedBy && !/^hyp_/.test(p.changeset.motivatedBy) ? p.changeset.motivatedBy : null;
+  const { principal } = useSession();
+  const mine = card.actions.reason?.includes('author') || (!!principal && p.createdBy === `user:${principal.id}`);
   return (
     <>
-      {!card.actions.canApprove && card.actions.reason?.includes('author') && (p.status === 'DRAFT' || p.status === 'EVALUATED') && (
+      {mine && (p.status === 'DRAFT' || p.status === 'EVALUATED') && (
         <div className="callout info"><span>You suggested this change, so someone else needs to approve it. That keeps every change checked by two people.</span></div>
+      )}
+
+      {p.status === 'APPROVED' && card.actions.promotionBlocker && (
+        <div className="callout danger" role="status" data-testid="promotion-blocker"><span><b>It cannot go live right now:</b> {card.actions.promotionBlocker}.</span></div>
+      )}
+      {p.status === 'APPROVED' && !card.actions.promotionBlocker && (card.actions.promotionConcerns?.length ?? 0) > 0 && (
+        <div className="callout warn" role="status" data-testid="promotion-concerns">
+          <span><b>Going live needs a written reason</b>, because:
+            <ul className="small" style={{ margin: '4px 0 0', paddingLeft: 18 }}>{card.actions.promotionConcerns!.map((c, i) => <li key={i}>{c}</li>)}</ul>
+          </span>
+        </div>
       )}
 
       <section>
@@ -88,6 +106,10 @@ function CardBody({ card, names }: { card: ChangeCard; names: Map<string, string
           {p.evaluatedAt && <div>Tested on past decisions {fmtDateTime(p.evaluatedAt)}</div>}
           {p.approvedAt && <div>Approved by {p.approvedBy?.replace(/^user:/, '')} {fmtDateTime(p.approvedAt)}</div>}
           {p.promotedAt && <div>Went live {fmtDateTime(p.promotedAt)}</div>}
+          {card.promotionNote && (
+            <div data-testid="promotion-note">Went live without full evidence: {card.promotionNote.by.replace(/^user:/, '')} wrote "{card.promotionNote.reason}"
+              {card.promotionNote.waived.length > 0 && <span className="muted"> (waived: {card.promotionNote.waived.join('; ')})</span>}</div>
+          )}
           {p.rejectedAt && <div>Rejected {fmtDateTime(p.rejectedAt)}{p.rejectedReason ? `: ${p.rejectedReason}` : ''}</div>}
           {p.rolledBackAt && <div>Rolled back {fmtDateTime(p.rolledBackAt)}{p.rolledBackReason ? `: ${p.rolledBackReason}` : ''}</div>}
         </div>
@@ -118,6 +140,14 @@ function Replay({ card }: { card: ChangeCard }) {
         {r.sampleSize !== undefined && <span className="small muted">{fmtNum(r.sampleSize)} past decisions</span>}
       </div>
       {r.method && <div className="xs muted mt1">{METHOD_WORDS[r.method] ?? humanize(r.method)}</div>}
+      {r.rewards && r.rewards.mature + r.rewards.provisional > 0 && (
+        <div className="xs muted mt1">{fmtPct(r.rewards.matureShare, 0)} of these outcomes are final; the rest may still change (returns, late deliveries).</div>
+      )}
+      {r.method === 'no_counterfactual' && (r.reason || r.next) && <div className="small muted mt1">{r.reason ? `${r.reason}. ` : ''}{r.next ?? ''}</div>}
+      {r.caveat && <div className="xs muted mt1">{r.caveat}</div>}
+      {r.ips?.confidenceInterval && (
+        <Technical><div className="xs muted mono mt1">IPS cross-check: lift {fmtNum(r.ips.liftEstimate ?? 0, 4)} · CI [{fmtNum(r.ips.confidenceInterval.lower, 4)}, {fmtNum(r.ips.confidenceInterval.upper, 4)}]</div></Technical>
+      )}
       {r.shadow && (
         <div className={`callout mt2 ${r.shadow.passed ? 'ok' : r.shadow.passed === false ? 'warn' : ''}`}>
           <span><b>Shadow test {r.shadow.passed ? 'passed' : r.shadow.passed === false ? 'did not pass' : 'running'}.</b> {String(r.shadow.reason ?? '')}</span>
@@ -165,34 +195,66 @@ function Actions({ card, onDone }: { card: ChangeCard; onDone: () => void }) {
   const evaluate = useMutation({ mutationFn: () => learningApi.evaluate(p.proposalId), onSuccess: () => done('Tested on past decisions') });
   const approve = useMutation({ mutationFn: (code?: string) => learningApi.approve(p.proposalId, code), onSuccess: () => done('Approved', 'It goes live when promoted.') });
   const reject = useMutation({ mutationFn: (reason: string) => learningApi.reject(p.proposalId, reason), onSuccess: () => done('Rejected') });
-  const promote = useMutation({ mutationFn: () => learningApi.promote(p.proposalId), onSuccess: () => done('Live now', 'You can roll it back at any time.') });
+  const [waivable, setWaivable] = useState<string[]>([]);
+  const promote = useMutation({
+    mutationFn: (overrideReason?: string) => learningApi.promote(p.proposalId, overrideReason),
+    onSuccess: (_r, reason) => done('Live now', reason ? 'Your reason is recorded with the change. You can roll it back at any time.' : 'You can roll it back at any time.'),
+    onError: (e) => {
+      // EX-07: weak evidence or a used-up weekly budget; ask for a written reason instead of failing.
+      if (e instanceof ApiError && e.code === 'promotion_needs_override') {
+        const w = e.problem.waivable;
+        setWaivable(Array.isArray(w) ? w.map(String) : []);
+        setDialog('override');
+        return;
+      }
+      const f = friendlyError(e instanceof ApiError ? e.problem : { status: 0, detail: e instanceof Error ? e.message : String(e) });
+      toast.danger(f.title, f.message);
+    },
+  });
   const rollback = useMutation({ mutationFn: (reason: string) => learningApi.rollback(p.proposalId, reason), onSuccess: () => done('Rolled back', 'The previous version is back in use.') });
   const experiment = useMutation({ mutationFn: (mode: ExperimentMode) => learningApi.startExperiment(p.proposalId, mode, mode === 'CANARY' ? 0.1 : 1, {}), onSuccess: (_e, mode) => done(mode === 'SHADOW' ? 'Shadow test started' : 'Trial started on 10% of customers') });
 
+  const a = card.actions;
   const open = p.status === 'DRAFT' || p.status === 'EVALUATED';
   const postal = isPostalScoped(p);
   const target = p.changeset.target;
-  const shadowable = (target.type === 'decision' || target.name.startsWith('live:')) && (open || p.status === 'APPROVED');
-  const canaryable = target.type === 'decision' && (open || p.status === 'APPROVED');
+  const canEvaluate = a.canEvaluate ?? open;
+  const canExperiment = a.canExperiment ?? (open || p.status === 'APPROVED');
+  const canRollback = a.canRollback ?? (p.status === 'PROMOTED' || p.status === 'CANARY');
+  const shadowable = (target.type === 'decision' || target.name.startsWith('live:')) && canExperiment;
+  const canaryable = target.type === 'decision' && canExperiment;
   const mine = principal ? `user:${principal.id}` === p.createdBy : false;
+  const approveHint = p.status === 'DRAFT' ? 'Test it on past decisions before approving' : !a.canApprove || mine ? 'Someone other than the author must approve' : undefined;
+  const concerns = a.promotionConcerns ?? [];
+  const blocker = a.promotionBlocker ?? null;
+  const goLive = () => { if (concerns.length > 0) { setWaivable(concerns); setDialog('override'); } else promote.mutate(undefined); };
 
   return (
     <div className="row wrap gap2" style={{ width: '100%' }}>
-      {open && <Button size="sm" loading={evaluate.isPending} onClick={() => evaluate.mutate()}>{card.replay.evaluated ? 'Test again' : 'Test on past decisions'}</Button>}
+      {canEvaluate && <Button size="sm" loading={evaluate.isPending} onClick={() => evaluate.mutate()}>{card.replay.evaluated ? 'Test again' : 'Test on past decisions'}</Button>}
       {shadowable && <Button size="sm" variant="subtle" loading={experiment.isPending && experiment.variables === 'SHADOW'} onClick={() => experiment.mutate('SHADOW')}>Start shadow test</Button>}
       {canaryable && <Button size="sm" variant="subtle" loading={experiment.isPending && experiment.variables === 'CANARY'} onClick={() => experiment.mutate('CANARY')}>Try on 10% of customers</Button>}
       <span className="grow" />
-      {open && card.actions.canReject && <Button size="sm" variant="ghost" onClick={() => setDialog('reject')}>Reject</Button>}
-      {open && <Button size="sm" variant="primary" disabled={!card.actions.canApprove || mine} title={!card.actions.canApprove || mine ? 'Someone other than the author must approve' : undefined}
+      {a.canReject && <Button size="sm" variant="ghost" onClick={() => setDialog('reject')}>Reject</Button>}
+      {open && <Button size="sm" variant="primary" disabled={!a.canApprove || mine} title={approveHint}
         loading={approve.isPending} onClick={() => (postal ? setDialog('approve') : approve.mutate(undefined))}>Approve</Button>}
-      {p.status === 'APPROVED' && <Button size="sm" variant="ai" loading={promote.isPending} onClick={() => promote.mutate()}>Go live</Button>}
-      {(p.status === 'PROMOTED' || p.status === 'CANARY') && <Button size="sm" variant="danger" onClick={() => setDialog('rollback')}>Roll back</Button>}
+      {p.status === 'APPROVED' && <Button size="sm" variant="ai" disabled={!!blocker} title={blocker ?? (concerns.length ? 'Needs a written reason: the evidence or weekly budget falls short' : undefined)}
+        loading={promote.isPending} onClick={goLive}>{concerns.length > 0 ? 'Go live anyway…' : 'Go live'}</Button>}
+      {canRollback && <Button size="sm" variant="danger" onClick={() => setDialog('rollback')}>{p.status === 'CANARY' ? 'Stop trial and roll back' : 'Roll back'}</Button>}
 
       <ReasonDialog open={dialog === 'approve'} title="Approve a postal-code change" confirmLabel="Approve" required={false} codes={POSTAL_REASON_CODES}
         description="This change only affects some postal codes, which can disadvantage a neighbourhood. Say why it is justified."
         loading={approve.isPending} onClose={() => setDialog(null)} onConfirm={(_r, code) => approve.mutate(code)} />
       <ReasonDialog open={dialog === 'reject'} title="Reject this change" confirmLabel="Reject" danger loading={reject.isPending}
         description="The learner will not suggest the same change again without new evidence." onClose={() => setDialog(null)} onConfirm={(r) => reject.mutate(r)} />
+      <ReasonDialog open={dialog === 'override'} title="Go live without full evidence?" confirmLabel="Go live anyway" danger loading={promote.isPending}
+        label="Why go live anyway?" minLength={MIN_OVERRIDE_REASON}
+        description={<>
+          <span>This change would normally wait, because:</span>
+          <ul className="small" style={{ margin: '4px 0 8px', paddingLeft: 18 }}>{(waivable.length ? waivable : concerns).map((w, i) => <li key={i}>{w}</li>)}</ul>
+          <span>Your reason is recorded with the change and in the audit trail.</span>
+        </>}
+        onClose={() => setDialog(null)} onConfirm={(r) => promote.mutate(r)} />
       <ReasonDialog open={dialog === 'rollback'} title="Roll back this change" confirmLabel="Roll back" danger loading={rollback.isPending}
         description="The exact previous version comes back for every new decision, and live use of any learned value it switched on stops." onClose={() => setDialog(null)} onConfirm={(r) => rollback.mutate(r)} />
     </div>

@@ -63,7 +63,7 @@ export const metricName = (m: string): string => METRIC[m] ?? humanize(m);
 
 /** One sentence for a lift result, in words a first-timer can act on. */
 export function liftVerdict(m: LiftMetric): { text: string; tone: 'ok' | 'warn' | 'danger' | 'neutral' } {
-  if (m.lift === null || m.lift === undefined || m.nHoldout < 1 || m.nTreated < 1) return { text: 'Not enough data yet', tone: 'neutral' };
+  if (m.lift === null || m.lift === undefined || m.nHoldout < 1 || m.nTreated < 1 || m.enoughData === false) return { text: 'Not enough data yet', tone: 'neutral' };
   if (!m.significant) return { text: 'No clear difference yet', tone: 'neutral' };
   return m.improvement ? { text: 'Better with learning', tone: 'ok' } : { text: 'Worse with learning', tone: 'danger' };
 }

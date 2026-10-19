@@ -66,7 +66,7 @@ function ExperimentDrawer({ id, onClose, canAdmin }: { id: string | null; onClos
   return (
     <Drawer open={!!id} onClose={onClose} width={640} title={e ? targetWords(e) : 'Experiment'}
       subtitle={e ? <span className="row gap2"><Badge tone="outline">{MODE_WORDS[e.mode].label}</Badge><Badge tone={e.status === 'RUNNING' ? 'ai' : 'neutral'} dot>{humanize(e.status.toLowerCase())}</Badge><DemoBadge by={e.createdBy} /></span> : undefined}
-      footer={<>{canAdmin && e?.status === 'RUNNING' && e.mode !== 'HOLDOUT' && <><Button size="sm" variant="primary" loading={complete.isPending} onClick={() => complete.mutate()}>Complete and save result</Button><Button size="sm" variant="ghost" loading={stop.isPending} onClick={() => stop.mutate()}>Stop</Button></>}<span className="grow" /><Button onClick={onClose}>Close</Button></>}>
+      footer={<>{canAdmin && e?.status === 'RUNNING' && e.mode !== 'HOLDOUT' && <><Button size="sm" variant="primary" loading={complete.isPending} disabled={!!tooEarly(e)} title={tooEarly(e) ?? undefined} onClick={() => complete.mutate()}>Complete and save result</Button><Button size="sm" variant="ghost" loading={stop.isPending} onClick={() => stop.mutate()}>Stop</Button></>}<span className="grow" /><Button onClick={onClose}>Close</Button></>}>
       {q.isLoading && <Loading />}
       {q.isError && <ErrorState error={q.error} retry={() => q.refetch()} />}
       {q.data && <ExperimentBody d={q.data} />}
@@ -111,4 +111,12 @@ function ExperimentBody({ d }: { d: ExperimentDetail }) {
 
 function Fig({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return <div className="mini-stat"><span className="l">{label}</span><span className="v">{value}</span>{hint && <span className="d">{hint}</span>}</div>;
+}
+
+/** EX-03: a trial on customers runs at least its minimum duration (default 7 days) before it can be completed. */
+function tooEarly(e: Experiment): string | null {
+  if (e.mode !== 'CANARY') return null;
+  const days = typeof e.stopRule?.minDurationDays === 'number' ? e.stopRule.minDurationDays : 7;
+  const ready = new Date(e.startAt).getTime() + days * 86_400_000;
+  return Date.now() < ready ? `A trial runs at least ${days} days before its result counts; it can complete ${new Date(ready).toLocaleDateString()}. Stop it if it has to end now.` : null;
 }
