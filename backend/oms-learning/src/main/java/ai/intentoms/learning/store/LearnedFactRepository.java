@@ -35,12 +35,22 @@ public class LearnedFactRepository {
         this.metrics = metrics;
     }
 
+    private ErasedSubjects erased;
+
+    /** GV-06 / N2: customer facts (preferences, segment membership) are never written for an erased customer. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setErasedSubjects(ErasedSubjects erased) { this.erased = erased; }
+
     /** {@code PromotionService} writes its own {@code fact.learned} carrying the proposal id for promoted facts. */
     private static final String PROMOTION_WRITER = "promotion-service";
 
     private static final String COLS = "fact_id, subject_type, subject_id, fact_key, value::text as value, confidence, sample_size, learner, version, valid_from, valid_to, created_at";
 
     public void insert(LearnedFact f) {
+        if (f.subjectType() == SubjectType.CUSTOMER && erased != null && erased.erased(f.subjectId())) {
+            if (metrics != null) metrics.count("oms.learning.erased_subject_skipped", "key", f.factKey().name());
+            return;
+        }
         jdbc.sql("""
             insert into learned_fact(fact_id, tenant_id, subject_type, subject_id, fact_key, value, confidence, sample_size, learner, version, valid_from, valid_to, created_at)
             values (:id, :t, :st, :sid, :key, :val, :conf, :n, :learner, :v, :from, :to, :created)
