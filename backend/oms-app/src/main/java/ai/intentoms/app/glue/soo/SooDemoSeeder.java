@@ -350,6 +350,9 @@ public class SooDemoSeeder {
         registry.ensureRegistered();
         governance.setAutonomy("node_reliability", AutonomyLevel.L2_ACT_WITH_APPROVAL, STRATEGY);
         governance.setAutonomy("lane_transit", AutonomyLevel.L2_ACT_WITH_APPROVAL, STRATEGY);
+        // EX-01: exception triage (T0) explores 10% of its live classifications, so its records log real propensities
+        // and a threshold change on it is evaluated with IPS that has support (ExplorationFloor governs the rest).
+        config.set(ai.intentoms.learning.hooks.ExplorationFloor.KEY_PREFIX + "exception_classify", 0.10);
     }
 
     // ------------------------------------------------------------------ proposals in every status

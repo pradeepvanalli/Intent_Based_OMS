@@ -146,6 +146,7 @@ public class SourcingPolicyBandit implements GovernedLearner {
         details.put("autonomyLevel", d.gate().level().name());
         details.put("gate", d.gate().reason());
         details.put("appliedPolicy", used);
+        details.put("defaultPolicy", d.defaultPolicy()); // EX-01: what the order gets with the bandit off, for off-policy evaluation
         details.put("exploration", d.exploration());
         details.put("weights", d.weights());
         details.put("randomSeed", d.seed());

@@ -138,14 +138,18 @@ public class ProposalEvaluationService {
         List<Paired> paired = pairedRecords(decision, baseVersion);
         boolean thresholdOnly = changes.stream().allMatch(c -> c instanceof PolicyChange.ThresholdChange);
         if (thresholdOnly) {
-            // The proposed act threshold applied to each logged confidence: acting now means the logged value, not acting is its own arm.
+            // The proposed act threshold applied to each logged confidence: acting now means the model's answer, not acting
+            // is its own arm, except on a T0 decision, which below its act threshold still acts with the escape value.
             Double newAct = null;
             for (PolicyChange c : changes) if (c instanceof PolicyChange.ThresholdChange tc && "act".equalsIgnoreCase(tc.band())) newAct = tc.to();
+            DecisionDefinition baseDef = definitions.find(decision, baseVersion).map(DecisionDefinitionRepository.Row::definition).orElse(null);
+            String escape = baseDef != null && baseDef.tier() == Tier.T0 && baseDef.escapeValue() != null ? String.valueOf(baseDef.escapeValue()) : null;
             Map<LoggedRecord, String> proposedArm = new IdentityHashMap<>();
             int flips = 0;
             for (Paired p : paired) {
                 boolean acts = newAct == null ? !NOT_ACTED.equals(p.logged().chosenArm()) : p.record().confidence() >= newAct || p.record().layer() == ai.intentoms.decision.model.Layer.L0_RULE;
-                String arm = acts && p.record().value() != null ? String.valueOf(p.record().value()) : NOT_ACTED;
+                Object model = modelAnswer(p.record());
+                String arm = acts && model != null ? String.valueOf(model) : escape != null ? escape : NOT_ACTED;
                 proposedArm.put(p.logged(), arm);
                 if (!arm.equals(p.logged().chosenArm())) flips++;
             }
@@ -153,6 +157,7 @@ public class ProposalEvaluationService {
             r.put("simulation", "proposed act threshold applied to the logged confidence");
             r.put("decisionsChanged", flips);
             r.put("rewards", rewardMix(paired));
+            r.put("loggedPropensities", propensityMix(paired.stream().map(Paired::logged).toList()));
             Double act = newAct;
             addFraudLabels(r, decision, rec -> FraudLabelEvaluation.risky(rec.value())
                 && (rec.layer() == ai.intentoms.decision.model.Layer.L0_RULE || (act == null ? rec.band() == Band.ACT : rec.confidence() >= act)));
@@ -225,6 +230,109 @@ public class ProposalEvaluationService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setFraudLabels(FraudLabelEvaluation fraudLabels) { this.fraudLabels = fraudLabels; }
 
+    /**
+     * The model's own answer on a logged record: what it applied, unless the applied arm was explored or a handed-off
+     * default ({@code details.modelAnswer}), or a T0 decision fell back to its escape value below the act threshold (the
+     * main question's answer).
+     */
+    static Object modelAnswer(DecisionRecord r) {
+        Map<String, Object> d = r.details() == null ? Map.of() : r.details();
+        if (d.get("modelAnswer") != null && !String.valueOf(d.get("modelAnswer")).isBlank()) return d.get("modelAnswer");
+        if ("T0".equals(String.valueOf(d.get("tier"))) && d.get("mainQuestion") != null && r.answers() != null) {
+            ai.intentoms.decision.model.Answer a = r.answers().get(String.valueOf(d.get("mainQuestion")));
+            if (a != null && a.value() != null) return a.value();
+        }
+        return r.value();
+    }
+
+    /** How many of the logged choices carry a real (below 1) propensity, and the smallest one: IPS only corrects with those. */
+    static Map<String, Object> propensityMix(List<LoggedRecord> logged) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("records", logged.size());
+        m.put("belowOne", logged.stream().filter(l -> l.propensity() < 1.0 - 1e-9).count());
+        m.put("min", round(logged.stream().mapToDouble(LoggedRecord::propensity).min().orElse(1.0)));
+        m.put("clippedAt", OffPolicyEvaluator.PROPENSITY_FLOOR);
+        return m;
+    }
+
+    // ------------------------------------------------------------------ the sourcing bandit's policy (EX-01 a)
+
+    static final String BANDIT = "sourcing_policy_bandit";
+    static final String BANDIT_EXPLORATION = "learning.bandit.exploration";
+    static final String BANDIT_LIVE = "live:sourcing.policy_bandit";
+
+    /**
+     * EX-01 (a): a change to the sourcing bandit's policy (its exploration share, or switching it on or off) is evaluated
+     * with IPS and doubly robust over the bandit's logged choices, which carry the true probability of the policy each
+     * order got, instead of being called counterfactual-free. The target policy's probability of each logged arm comes
+     * from the record itself (its eligible arms, weights and exploration share); overridden draws are left out.
+     */
+    private Optional<Map<String, Object>> banditPolicy(Proposal proposal, ArtifactRef target) {
+        if (proposal.changeset().changes().isEmpty() || !(proposal.changeset().changes().get(0) instanceof PolicyChange.ParameterChange pc)) return Optional.empty();
+        java.util.function.Function<DecisionRecord, Map<String, Double>> policy;
+        String describe;
+        if ("config".equals(target.type()) && BANDIT_EXPLORATION.equals(target.name()) && pc.to() instanceof Number to) {
+            double eps = Math.max(0.0, Math.min(0.10, to.doubleValue()));
+            policy = r -> epsilonGreedy(r, eps);
+            describe = "the bandit exploring " + Math.round(eps * 1000) / 10.0 + "% of orders, with the weights each order was drawn with";
+        } else if ("parameter".equals(target.type()) && BANDIT_LIVE.equals(target.name()) && pc.to() instanceof Map<?, ?> to) {
+            if (Boolean.FALSE.equals(to.get("enabled"))) {
+                policy = ProposalEvaluationService::defaultOnly;
+                describe = "the bandit off: every order gets its default policy";
+            } else {
+                policy = r -> epsilonGreedy(r, r.details() != null && r.details().get("exploration") instanceof Number e ? e.doubleValue() : 0.10);
+                describe = "the bandit acting with the exploration share and weights each order was drawn with";
+            }
+        } else return Optional.empty();
+        List<Paired> paired = new ArrayList<>();
+        Map<LoggedRecord, Map<String, Double>> targetOf = new IdentityHashMap<>();
+        for (DecisionRecord r : decisionRecords.recentLive(BANDIT, 1, Instant.now().minus(LOOKBACK), MAX_RECORDS)) {
+            if (r.details() != null && Boolean.TRUE.equals(r.details().get("overridden"))) continue; // the bandit's arm was not what the customer got
+            if (r.chosenArm() == null) continue;
+            Optional<Episode> ep = episodes.findByDecisionId(r.id());
+            if (ep.isEmpty() || ep.get().reward() == null) continue;
+            Map<String, Double> t = policy.apply(r);
+            if (t == null) continue;
+            LoggedRecord l = new LoggedRecord(r.chosenArm(), r.propensity(), r.confidence(), r.band().name(), ep.get().reward());
+            paired.add(new Paired(r, l, ep.get().status() == ai.intentoms.learning.model.EpisodeStatus.MATURE));
+            targetOf.put(l, t);
+        }
+        List<LoggedRecord> logged = paired.stream().map(Paired::logged).toList();
+        if (logged.size() < minCohort) {
+            return Optional.of(noCounterfactual(logged.size(), "only " + logged.size() + " rewarded sourcing-policy choices with a logged propensity (need " + minCohort + ")"));
+        }
+        Map<String, Object> r = new LinkedHashMap<>(OffPolicyEvaluator.evaluateStochastic(logged, targetOf::get).asMap());
+        r.put("method", "ips_doubly_robust_logged_propensities");
+        r.put("decision", BANDIT);
+        r.put("targetPolicy", describe);
+        r.put("simulation", "each logged sourcing-policy choice weighted by the target policy's probability of it over the logged propensity (clipped at "
+            + OffPolicyEvaluator.PROPENSITY_FLOOR + ")");
+        r.put("rewards", rewardMix(paired));
+        r.put("loggedPropensities", propensityMix(logged));
+        return Optional.of(r);
+    }
+
+    /** Epsilon-greedy over the record's eligible arms with its weights: the top arm gets 1 - eps plus its uniform share. */
+    @SuppressWarnings("unchecked")
+    static Map<String, Double> epsilonGreedy(DecisionRecord r, double eps) {
+        List<String> arms = r.arms() == null ? List.of() : r.arms();
+        if (arms.isEmpty()) return null;
+        Map<String, Object> w = r.details() != null && r.details().get("weights") instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
+        String top = arms.stream().max((a, b) -> Double.compare(num(w.get(a)), num(w.get(b)))).orElse(arms.get(0));
+        Map<String, Double> out = new LinkedHashMap<>();
+        for (String a : arms) out.put(a, (a.equals(top) ? 1.0 - eps : 0.0) + (arms.size() == 1 ? eps : eps / arms.size()));
+        return out;
+    }
+
+    /** The bandit off: the order's default policy, known from the record ({@code details.defaultPolicy}, or what a non-acting draw applied). */
+    static Map<String, Double> defaultOnly(DecisionRecord r) {
+        Map<String, Object> d = r.details() == null ? Map.of() : r.details();
+        Object dflt = d.get("defaultPolicy") != null ? d.get("defaultPolicy") : Boolean.FALSE.equals(d.get("acted")) ? d.get("appliedPolicy") : null;
+        return dflt == null ? null : Map.of(String.valueOf(dflt), 1.0);
+    }
+
+    private static double num(Object o) { return o instanceof Number n ? n.doubleValue() : 0.0; }
+
     /** {@code mature} episodes have a final reward; {@code provisional} ones may still change as late outcomes land (OC-04). */
     record Paired(DecisionRecord record, LoggedRecord logged, boolean mature) {}
 
@@ -261,6 +369,8 @@ public class ProposalEvaluationService {
         // with an observational fallback.
         Map<String, Object> existing = proposal.evaluationReport();
         if (existing != null && "plan_rescoring_replay".equals(existing.get("method"))) return new java.util.LinkedHashMap<>(existing);
+        Optional<Map<String, Object>> bandit = banditPolicy(proposal, target);
+        if (bandit.isPresent()) return bandit.get();
         if ("config".equals(target.type()) && ref.startsWith(PromotedProviderRouter.KEY_PREFIX) && proposal.changeset().changes().get(0) instanceof PolicyChange.ParameterChange pc) {
             String decision = ref.substring(PromotedProviderRouter.KEY_PREFIX.length());
             String routed = String.valueOf(pc.to());

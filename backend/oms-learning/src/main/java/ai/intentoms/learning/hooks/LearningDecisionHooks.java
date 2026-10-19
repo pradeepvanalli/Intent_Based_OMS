@@ -89,6 +89,17 @@ public class LearningDecisionHooks implements DecisionLearningHooks {
         return Optional.empty();
     }
 
+    private ExplorationFloor exploration;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setExploration(ExplorationFloor exploration) { this.exploration = exploration; }
+
+    /** EX-01: the governed exploration floor (T0 only, tenant share, holdout and kill switches respected). */
+    @Override
+    public Optional<Exploration> explore(String decision, ai.intentoms.decision.model.Tier tier, List<String> arms, String chosen, String routingKey) {
+        return exploration == null ? Optional.empty() : exploration.explore(decision, tier, arms, chosen, routingKey);
+    }
+
     @Override
     public Optional<Route> route(String decision, String routingKey, int resolvedVersion) {
         // Experiments keep routing while learning is paused: stopping a holdout mid-flight would bias its result.

@@ -131,6 +131,9 @@ class SooDemoSeederIntegrationTest extends PostgresTestBase {
                 .as("the fraud threshold tuner proposed from the matured cohort").isPositive();
             assertThat(jdbc.sql("select count(*) from learned_fact where tenant_id = :t and fact_key = 'CALIBRATION_CURVE' and subject_id = 'sla_breach_risk' and valid_to is null")
                 .param("t", DEMO).query(Long.class).single()).as("calibration curve from labelled breach-risk resolutions").isEqualTo(1);
+            // EX-01: one T0 decision explores on the demo tenant, so its live records carry real propensities.
+            assertThat(jdbc.sql("select value::text from tenant_config where tenant_id = :t and key = 'learning.exploration.exception_classify'")
+                .param("t", DEMO).query(String.class).optional()).hasValueSatisfying(v -> assertThat(Double.parseDouble(v.replace("\"", ""))).isEqualTo(0.1));
             // C-N2: labelled resolutions are stored the way the live path stores them (escalated, L3_HUMAN), and they still calibrate.
             assertThat(jdbc.sql("select count(*) from decision_record where tenant_id = :t and labels ? 'human_resolution' and layer <> 'L3_HUMAN'")
                 .param("t", DEMO).query(Long.class).single()).as("seeded resolutions not stored as escalations").isZero();
