@@ -140,7 +140,10 @@ public class SooDemoHistory {
             Order o = order(i, now.minus(Duration.ofMinutes(Math.round(ageDays * 1440))), ageDays, rnd);
             holdoutOrder = holdoutExperimentId != null && inHoldout.test(o.customer());
             if (holdoutOrder) holdoutOrders++;
-            if (holdoutOrder && o.packages() == 1 && rnd.nextDouble() < 0.25) o = split(o);
+            // Draw for every order, held out or not, so which customers the (randomly named) holdout picks never shifts
+            // the random sequence the rest of the history is drawn from: every other seeded outcome stays the same.
+            double splitDraw = rnd.nextDouble();
+            if (holdoutOrder && o.packages() == 1 && splitDraw < 0.25) o = split(o);
 
             double snsConf = 0.55 + rnd.nextDouble() * 0.44;
             double slaConf = 0.5 + rnd.nextDouble() * 0.49;
