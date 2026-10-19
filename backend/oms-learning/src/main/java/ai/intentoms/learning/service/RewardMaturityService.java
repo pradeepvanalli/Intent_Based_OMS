@@ -99,10 +99,13 @@ public class RewardMaturityService {
     private org.springframework.beans.factory.ObjectProvider<RewardBaselineService> baseline;
 
     void process(Episode ep, ObjectiveWeights weights, MaturityWindows windows, Instant now) {
+        long version = episodes.outcomeVersion(ep.episodeId()); // before the outcomes: a write committed in between is scored next sweep
         List<OutcomeRecord> outs = outcomes.forEpisode(ep.episodeId());
         Set<String> scored = RewardCalculator.scoredTerms(outs);
         boolean mature = true;
-        Map<String, Double> components = new LinkedHashMap<>(RewardCalculator.normalise(RewardCalculator.components(outs), baselineScales()));
+        double orderValue = RewardCalculator.needsOrderValue(outs) ? outcomes.orderValueForEpisode(ep.episodeId(), ep.orderId()).orElse(0.0) : 0.0;
+        RewardCalculator.Scope scope = new RewardCalculator.Scope(orderValue, ep.fulfillmentGroupId() == null && ep.lineId() == null);
+        Map<String, Double> components = new LinkedHashMap<>(RewardCalculator.normalise(RewardCalculator.components(outs, scope), baselineScales()));
         for (String term : RewardCalculator.TERMS) {
             if (RewardCalculator.weight(weights, term) == 0) continue;
             boolean windowClosed = !ep.createdAt().plus(windows.forTerm(term)).isAfter(now);
@@ -111,7 +114,7 @@ public class RewardMaturityService {
         Double reward = outs.isEmpty() ? null : RewardCalculator.compute(components, weights);
         components.putAll(OutcomeAttribution.attribute(outs)); // OC-05: who most likely caused a bad outcome, stored with the reward
         EpisodeStatus status = mature ? EpisodeStatus.MATURE : outs.isEmpty() ? EpisodeStatus.OPEN : EpisodeStatus.PROVISIONAL;
-        episodes.updateStatusAndReward(ep.episodeId(), status, reward, components, mature ? now : null);
+        episodes.updateStatusAndReward(ep.episodeId(), status, reward, components, mature ? now : null, version);
         if (status != ep.status()) metrics.count("oms.learning.episode.status_changed", "decision", ep.decisionName(), "to", status.name());
         if (mature) {
             Map<String, Object> payload = new LinkedHashMap<>();

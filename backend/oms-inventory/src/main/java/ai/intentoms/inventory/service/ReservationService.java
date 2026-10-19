@@ -5,6 +5,7 @@ import ai.intentoms.inventory.model.ReservationLine;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Reservations with TTL (FR-INV-02), strongly consistent per sku and node (NFR-06): every reserve runs in a transaction
@@ -20,6 +21,17 @@ public interface ReservationService {
 
     /** Atomic multi-line reserve: every line is validated under lock and either all are inserted or none. */
     List<Reservation> reserveAll(List<ReservationLine> lines, String source, String refId, Duration ttl);
+
+    /**
+     * As {@link #reserveAll}, but a shortage is returned instead of thrown, so a caller already inside a transaction (a
+     * workflow step) is not left rollback-only by an expected outcome and can act on the shortage (re-source).
+     */
+    ReserveAttempt tryReserveAll(List<ReservationLine> lines, String source, String refId, Duration ttl);
+
+    /** Either the reservations made, or the first shortage {sku, nodeId, available, requested[, lines]} and nothing reserved. */
+    record ReserveAttempt(List<Reservation> reserved, Map<String, Object> shortage) {
+        public boolean ok() { return shortage == null; }
+    }
 
     /** Cart/checkout -> order at capture: source becomes {@code order}, TTL is cleared, the order id is recorded. Stays ACTIVE. */
     Reservation convert(String reservationId, String orderId);

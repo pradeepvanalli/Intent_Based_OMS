@@ -43,4 +43,21 @@ class OutcomeAttributionTest {
         assertThat(OutcomeAttribution.attribute(List.of(out(new OutcomeData.FulfillmentOutcome(2, false, List.of("a", "b"), false, 3, 3, 9, 90)))))
             .containsEntry("attr.stock", 1.0);
     }
+
+    @Test void twoParcelsFromTwoNodesAreStock() {
+        var outs = List.of(
+            out(new OutcomeData.FulfillmentOutcome(2, false, List.of("DC-NJ"), false, 2, 2, 9, 90, "fg1", "sh1")),
+            out(new OutcomeData.FulfillmentOutcome(2, false, List.of("DC-TX"), false, 1, 1, 7, 90, "fg2", "sh2")));
+        assertThat(OutcomeAttribution.attribute(outs)).containsEntry("attr.stock", 1.0);
+    }
+
+    @Test void oneNodeShippingItsPackageInTwoParcelsIsNotStock() {
+        // Audit A7: one group at one node, shipped as two parcels. Every unit was in stock there.
+        var outs = List.of(
+            out(new OutcomeData.FulfillmentOutcome(1, false, List.of("DC-NJ"), false, 3, 2, 9, 90, "fg1", "sh1")),
+            out(new OutcomeData.FulfillmentOutcome(1, false, List.of("DC-NJ"), false, 3, 1, 9, 90, "fg1", "sh2")));
+        Map<String, Double> a = OutcomeAttribution.attribute(outs);
+        assertThat(a).containsEntry("attr.stock", 0.0).containsEntry("attr.node", 1.0);
+        assertThat(OutcomeAttribution.primary(a)).isEqualTo("node");
+    }
 }

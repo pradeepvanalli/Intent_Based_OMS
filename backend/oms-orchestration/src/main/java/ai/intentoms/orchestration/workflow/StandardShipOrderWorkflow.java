@@ -25,6 +25,8 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -142,7 +144,10 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         boolean allShipped = s.allLinesIn(fresh, FINISHED_LINE);
         Map<String, Object> capture = s.captureForShipment(fresh, shippedByLine, allShipped, "shipment " + shipment.id());
         Set<String> groupsDone = new LinkedHashSet<>();
-        if (group != null && group.allocations().stream().allMatch(a -> s.qtyIn(fresh, a.lineId(), "released") + s.qtyIn(fresh, a.lineId(), "picking") + s.qtyIn(fresh, a.lineId(), "packed") == 0)) groupsDone.add(group.id());
+        // Judged per group: when a line is split by quantity across nodes, the other node's units of the line are still
+        // released, so the line's state alone never says this group has shipped everything it was allocated (audit B-2).
+        if (group != null && (groupFullyShipped(group, shipments.forOrder(order.id()))
+                || group.allocations().stream().allMatch(a -> s.qtyIn(fresh, a.lineId(), "released") + s.qtyIn(fresh, a.lineId(), "picking") + s.qtyIn(fresh, a.lineId(), "packed") == 0))) groupsDone.add(group.id());
         Map<String, Object> evt = new LinkedHashMap<>();
         evt.put("shipmentId", shipment.id());
         evt.put("nodeId", nodeId);
@@ -151,7 +156,7 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         evt.put("lines", shippedByLine);
         evt.put("captured", capture.get("captured"));
         evt.put("allShipped", allShipped);
-        evt.putAll(outcomeFacts(fresh, group, nodeId, shipLines, shipment.id()));
+        evt.putAll(outcomeFacts(fresh, group, nodeId, shipLines, shipment.id(), firstAttempt(fresh, group)));
         if (!groupsDone.isEmpty()) s.markGroups(order.id(), groupsDone, "shipped", null);
         s.appendOrderEvent(order.id(), "order.shipped", evt);
         notifier.notify(order.id(), "email", "shipped", "Your order has shipped", "Shipment " + shipment.tracking() + " (" + shipment.carrier() + ") with " + shipLines.size() + " line(s)",
@@ -173,9 +178,11 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
      * so a consumer counts them once per group / order however many parcels a group ships in, and counts parcels by
      * distinct {@code shipmentId}. {@code packageCount} is how many live packages the order's plan has (customer
      * preference learning reads it as the split the customer saw); {@code storeRejected} says some node rejected part of
-     * the order before it shipped; {@code splitAvoided} is a multi-line order planned as one package.
+     * the order before it shipped; {@code splitAvoided} is a multi-line order planned as one package. {@code orderUnits}
+     * is every unit ordered (the fill denominator, backordered and cancelled units included) and {@code firstAttempt}
+     * says the parcel's group is from the order's first plan.
      */
-    static Map<String, Object> outcomeFacts(Order order, FulfilmentGroup group, String nodeId, List<ShipmentRecord.Line> shipLines, String shipmentId) {
+    static Map<String, Object> outcomeFacts(Order order, FulfilmentGroup group, String nodeId, List<ShipmentRecord.Line> shipLines, String shipmentId, boolean firstAttempt) {
         List<FulfilmentGroup> live = order.fulfilmentGroups().stream().filter(g -> !Set.of("rejected", "cancelled").contains(String.valueOf(g.status()).toLowerCase(java.util.Locale.ROOT))).toList();
         int plannedPackages = Math.max(1, live.size());
         int unitsShipped = shipLines.stream().mapToInt(ShipmentRecord.Line::qty).sum();
@@ -191,10 +198,35 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         m.put("storeRejected", order.fulfilmentGroups().stream().anyMatch(g -> "rejected".equalsIgnoreCase(g.status())));
         m.put("unitsOrdered", Math.max(unitsPlanned, unitsShipped));
         m.put("unitsShipped", unitsShipped);
+        // §7 fill: every unit the customer ordered, backordered and cancelled ones included, and whether this parcel
+        // comes from the order's first plan (not from a re-sourcing after a reject, a shortage or a backorder).
+        m.put("orderUnits", order.lines().stream().mapToInt(OrderLine::qty).sum());
+        m.put("firstAttempt", firstAttempt);
         m.put("fulfillmentCost", group == null || group.estimatedCost() == null ? 0.0 : group.estimatedCost().amount().doubleValue());
         m.put("orderValue", order.totals() == null || order.totals().grandTotal() == null ? 0.0 : order.totals().grandTotal().amount().doubleValue());
         m.put("lineIds", shipLines.stream().map(ShipmentRecord.Line::lineId).distinct().toList());
         return m;
+    }
+
+    /** The group was planned by the order's first sourcing (its first {@code order.sourced}), not by a later re-sourcing. */
+    private boolean firstAttempt(Order order, FulfilmentGroup group) {
+        if (group == null) return true;
+        List<Map<String, Object>> sourced = s.orderEvents(order.id(), "order.sourced");
+        if (sourced.isEmpty() || !(sourced.get(0).get("fulfilmentGroupIds") instanceof List<?> first) || first.isEmpty()) return true;
+        return first.stream().map(String::valueOf).anyMatch(group.id()::equals);
+    }
+
+    /** Every allocation of the group is covered by units in the group's own parcels. */
+    static boolean groupFullyShipped(FulfilmentGroup group, List<ShipmentRecord> orderShipments) {
+        if (group.allocations().isEmpty()) return false;
+        Map<String, Integer> shipped = new HashMap<>();
+        for (ShipmentRecord sh : orderShipments) {
+            if (!group.id().equals(sh.fulfilmentGroupId())) continue;
+            for (ShipmentRecord.Line l : sh.lines()) shipped.merge(l.lineId(), l.qty(), Integer::sum);
+        }
+        Map<String, Integer> planned = new HashMap<>();
+        for (FulfilmentGroup.Allocation a : group.allocations()) planned.merge(a.lineId(), a.qty(), Integer::sum);
+        return planned.entrySet().stream().allMatch(e -> shipped.getOrDefault(e.getKey(), 0) >= e.getValue());
     }
 
     /** Cumulative shipped units per {@code sku|node} across the order's shipments (so partial shipments consume reservations once covered). */
@@ -317,12 +349,13 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
             case Signals.CARRIER_EXCEPTION, Signals.RETURNED_TO_SENDER -> {
                 Map<String, Object> result = ctx.activity(sig.name() + "#" + n, RETRY, () -> {
                     List<String> touched = new ArrayList<>();
-                    for (ShipmentRecord sh : shipmentsFor(order, payload)) { shipments.applyCarrierEvent(sh.id(), Signals.CARRIER_EXCEPTION.equals(sig.name()) ? "exception" : "returned_to_sender", OrderWorkflowSupport.ACTOR); touched.add(sh.id()); }
+                    List<ShipmentRecord> parcels = shipmentsFor(order, payload);
+                    for (ShipmentRecord sh : parcels) { shipments.applyCarrierEvent(sh.id(), Signals.CARRIER_EXCEPTION.equals(sig.name()) ? "exception" : "returned_to_sender", OrderWorkflowSupport.ACTOR); touched.add(sh.id()); }
                     Map<String, Object> details = new LinkedHashMap<>(payload);
                     details.put("shipments", touched);
                     Map<String, Object> exc = s.raise("carrier", sig.name(), Signals.CARRIER_EXCEPTION.equals(sig.name()) ? "Carrier reported an exception on " + payload.getOrDefault("tracking", "shipment") : "Parcel returned to sender",
                         order.id(), null, null, details, Signals.CARRIER_EXCEPTION.equals(sig.name()) ? "carrier_delay" : null);
-                    s.appendOrderEvent(order.id(), "order." + sig.name(), carrierFacts(order, touched));
+                    s.appendOrderEvent(order.id(), "order." + sig.name(), carrierFacts(order, parcels, payload));
                     return Map.of("shipments", touched, "exception", exc);
                 });
                 ctx.log("Carrier event " + sig.name() + "; exception raised, still waiting for delivery", result);
@@ -364,15 +397,29 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         Order fresh = s.orders().get(order.id());
         boolean all = s.allLinesIn(fresh, Set.of("delivered", "cancelled"));
         List<ShipmentRecord> allShipments = shipments.forOrder(order.id());
+        // A parcel has arrived for the workflow once a scan naming it has been processed here, not when the webhook
+        // moved its shipment record: two scans a few ms apart both reach the records before the first is processed,
+        // and the first would otherwise complete (and silently mark delivered) the second scan's group (audit B-2).
+        Set<String> processed = new HashSet<>();
+        Set<String> credited = new HashSet<>();
+        for (Map<String, Object> earlier : s.orderEvents(order.id(), "order.delivered")) {
+            if (earlier.get("shipments") instanceof List<?> ids) ids.forEach(id -> processed.add(String.valueOf(id)));
+            if (Boolean.TRUE.equals(earlier.get("groupDelivered")) && earlier.get("fulfilmentGroupId") != null) credited.add(String.valueOf(earlier.get("fulfilmentGroupId")));
+        }
+        for (ShipmentRecord sh : targets) processed.add(sh.id());
         Set<String> groupsDone = new LinkedHashSet<>();
         for (FulfilmentGroup g : fresh.fulfilmentGroups()) {
-            boolean shippedGroup = "shipped".equalsIgnoreCase(g.status()) || (all && "released".equalsIgnoreCase(g.status()));
+            String st = String.valueOf(g.status()).toLowerCase(java.util.Locale.ROOT);
+            if (st.equals("rejected") || st.equals("cancelled")) continue;
+            boolean shippedGroup = st.equals("shipped") || st.equals("delivered") || groupFullyShipped(g, allShipments) || (all && st.equals("released"));
             if (!shippedGroup) continue;
             List<ShipmentRecord> parcels = allShipments.stream().filter(sh -> g.id().equals(sh.fulfilmentGroupId())).toList();
-            boolean arrived = all || (!parcels.isEmpty() && parcels.stream().allMatch(sh -> "delivered".equals(sh.status())));
+            boolean arrived = all || (!parcels.isEmpty() && parcels.stream().allMatch(sh -> processed.contains(sh.id())));
             if (arrived) groupsDone.add(g.id());
         }
-        if (!groupsDone.isEmpty()) s.markGroups(fresh.id(), groupsDone, "delivered", null);
+        Set<String> newlyDone = new LinkedHashSet<>();
+        for (FulfilmentGroup g : fresh.fulfilmentGroups()) if (groupsDone.contains(g.id()) && !"delivered".equalsIgnoreCase(g.status())) newlyDone.add(g.id());
+        if (!newlyDone.isEmpty()) s.markGroups(fresh.id(), newlyDone, "delivered", null);
         Order afterGroups = s.orders().get(order.id());
 
         java.time.LocalDate today = java.time.LocalDate.now();
@@ -405,7 +452,8 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
             evt.put("shipments", entry.getValue());
             evt.put("lineIds", List.copyOf(linesByGroup.getOrDefault(groupId, Set.of())));
             evt.put("tracking", String.valueOf(payload.getOrDefault("tracking", "")));
-            evt.put("groupDelivered", g == null || groupsDone.contains(g.id()));
+            // True exactly once per group: on the scan that brings its last parcel (a repeated scan credits nobody again).
+            evt.put("groupDelivered", g == null || (groupsDone.contains(g.id()) && !credited.contains(g.id())));
             evt.put("allDelivered", all);
             evt.put("onTime", onTime);
             evt.put("lateByHours", lateByHours);
@@ -441,10 +489,8 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         String id = OrderWorkflowSupport.str(payload.get("shipmentId"));
         if (id != null) return shipments.find(id).map(List::of).orElse(List.of());
         String tracking = OrderWorkflowSupport.str(payload.get("tracking"));
-        if (tracking != null) {
-            List<ShipmentRecord> byTracking = shipments.byTracking(tracking).stream().filter(sh -> sh.orderId().equals(order.id())).toList();
-            if (!byTracking.isEmpty()) return byTracking;
-        }
+        // A scan naming a tracking number that matches none of the order's parcels delivers nothing (audit A5).
+        if (tracking != null && !tracking.isBlank()) return shipments.byTracking(tracking).stream().filter(sh -> sh.orderId().equals(order.id())).toList();
         return shipments.forOrder(order.id()).stream().filter(sh -> !"delivered".equals(sh.status())).toList();
     }
 
@@ -452,8 +498,10 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
      * {@code order.carrier_exception} / {@code order.returned_to_sender} (OC-03, FD-02): a refused or failed delivery is
      * an outcome for the order's decisions and, for cash on delivery, the refused-delivery label {@code rto_risk} learns
      * from. The address token and customer let later risk checks count prior refusals without storing the address.
+     * {@code lost} / {@code damaged} are the carrier's verdict on the parcels (a lost parcel never gets a delivery scan,
+     * so this is its delivery outcome: audit A6); the group, nodes and lines scope it to the parcels' own decisions.
      */
-    static Map<String, Object> carrierFacts(Order order, List<String> shipmentIds) {
+    static Map<String, Object> carrierFacts(Order order, List<ShipmentRecord> parcels, Map<String, Object> payload) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("orderId", order.id());
         if (order.customerRef() != null) m.put("customerRef", order.customerRef());
@@ -461,7 +509,17 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         if (token != null) m.put("addressToken", token);
         m.put("cod", ai.intentoms.orchestration.fraud.PaymentRiskFeatures.hasCod(order));
         m.put("amount", order.totals() == null || order.totals().grandTotal() == null ? 0.0 : order.totals().grandTotal().amount().doubleValue());
-        m.put("shipments", shipmentIds);
+        m.put("shipments", parcels.stream().map(ShipmentRecord::id).toList());
+        Set<String> groups = new LinkedHashSet<>();
+        for (ShipmentRecord sh : parcels) groups.add(sh.fulfilmentGroupId());
+        if (groups.size() == 1 && groups.iterator().next() != null) m.put("fulfilmentGroupId", groups.iterator().next());
+        if (!parcels.isEmpty()) {
+            m.put("nodeIds", parcels.stream().map(ShipmentRecord::nodeId).filter(java.util.Objects::nonNull).distinct().toList());
+            m.put("lineIds", parcels.stream().flatMap(sh -> sh.lines().stream()).map(ShipmentRecord.Line::lineId).distinct().toList());
+        }
+        if (payload.get("tracking") != null) m.put("tracking", String.valueOf(payload.get("tracking")));
+        m.put("lost", Boolean.TRUE.equals(payload.get("lost")));
+        m.put("damaged", Boolean.TRUE.equals(payload.get("damaged")));
         return m;
     }
 
@@ -470,8 +528,7 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         String id = OrderWorkflowSupport.str(payload.get("shipmentId"));
         if (id != null) return shipments.find(id).map(List::of).orElse(List.of());
         String tracking = OrderWorkflowSupport.str(payload.get("tracking"));
-        List<ShipmentRecord> byTracking = tracking == null ? List.of() : shipments.byTracking(tracking).stream().filter(sh -> sh.orderId().equals(order.id())).toList();
-        if (!byTracking.isEmpty()) return byTracking;
+        if (tracking != null && !tracking.isBlank()) return shipments.byTracking(tracking).stream().filter(sh -> sh.orderId().equals(order.id())).toList();
         return shipments.forOrder(order.id()).stream().filter(sh -> !"delivered".equals(sh.status())).toList();
     }
 

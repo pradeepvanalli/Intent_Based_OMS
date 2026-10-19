@@ -25,6 +25,7 @@ import ai.intentoms.platform.ledger.Event;
 import ai.intentoms.platform.ledger.EventStore;
 import ai.intentoms.platform.ledger.NewEvent;
 import ai.intentoms.platform.observability.Metrics;
+import ai.intentoms.platform.pii.FreeTextRedactor;
 import ai.intentoms.platform.pii.Tokenizer;
 import ai.intentoms.platform.security.AuthorizationService;
 import ai.intentoms.platform.time.TimeSource;
@@ -254,7 +255,7 @@ public class ReturnService {
         boolean allCoded = lines.stream().allMatch(l -> l.reasonCode() != null);
         if (allCoded && (text == null || text.isBlank())) return new ReasonOutcome(providedCode, null);
         Map<String, Object> ret = new LinkedHashMap<>();
-        ret.put("customer_reason_text", text == null ? "" : text);
+        ret.put("customer_reason_text", text == null ? "" : FreeTextRedactor.redact(text)); // NF-07: free text, no contact details in the decision log
         ret.put("reason_code", providedCode == null ? "" : providedCode);
         ret.put("item_condition", "unknown");
         Map<String, Object> item = new LinkedHashMap<>();
@@ -706,7 +707,7 @@ public class ReturnService {
             Map<String, Object> ret = new LinkedHashMap<>();
             ret.put("reason", nz(r.reasonCode()));
             ret.put("item_condition", r.condition());
-            ret.put("inspection_notes", nz(r.inspectionNote()));
+            ret.put("inspection_notes", FreeTextRedactor.redact(nz(r.inspectionNote())));
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("sku", first.sku());
             item.put("category", nz(first.attributes().get("category")));
@@ -1091,6 +1092,7 @@ public class ReturnService {
     static Map<String, Object> outcomeFacts(ReturnRma rma, Map<String, Object> payload) {
         Map<String, Object> p = new LinkedHashMap<>(payload);
         p.putIfAbsent("orderId", rma.orderId());
+        p.put("rmaId", rma.rmaId()); // keys the return's single outcome: its disposition and refund events merge into one
         if (rma.customerRef() != null) p.putIfAbsent("customerRef", rma.customerRef());
         if (rma.reasonCode() != null) p.putIfAbsent("reasonCode", rma.reasonCode());
         if (rma.condition() != null) p.putIfAbsent("condition", rma.condition());

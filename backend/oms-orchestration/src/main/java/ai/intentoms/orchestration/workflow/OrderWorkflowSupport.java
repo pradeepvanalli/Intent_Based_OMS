@@ -15,7 +15,6 @@ import ai.intentoms.order.model.Order;
 import ai.intentoms.order.model.OrderLine;
 import ai.intentoms.order.model.Tender;
 import ai.intentoms.order.service.OrderService;
-import ai.intentoms.platform.error.ConflictException;
 import ai.intentoms.platform.ledger.Actor;
 import ai.intentoms.platform.ledger.EventStore;
 import ai.intentoms.platform.ledger.NewEvent;
@@ -197,15 +196,18 @@ public class OrderWorkflowSupport {
             out.put("alreadyReserved", true);
             return out;
         }
-        try {
-            List<Reservation> made = reservations.reserveAll(lines, Reservation.SOURCE_ORDER, order.id(), null);
+        // A shortage is expected here (another order took the stock after this one was planned). It comes back as a
+        // result, never as an exception through the inner transactional proxy, so this step's transaction stays
+        // committable and the workflow re-sources instead of failing and compensating the order (audit A1).
+        ReservationService.ReserveAttempt attempt = reservations.tryReserveAll(lines, Reservation.SOURCE_ORDER, order.id(), null);
+        if (attempt.ok()) {
             out.put("ok", true);
-            out.put("reserved", made.stream().map(Reservation::id).toList());
+            out.put("reserved", attempt.reserved().stream().map(Reservation::id).toList());
             out.put("lines", lines.stream().<Map<String, Object>>map(l -> Map.of("sku", l.sku(), "nodeId", l.nodeId(), "qty", l.qty())).toList());
-        } catch (ConflictException e) {
+        } else {
             out.put("ok", false);
-            out.put("error", e.getMessage());
-            out.put("shortage", new LinkedHashMap<>(e.details()));
+            out.put("error", "insufficient_atp");
+            out.put("shortage", new LinkedHashMap<>(attempt.shortage()));
         }
         return out;
     }
@@ -374,6 +376,11 @@ public class OrderWorkflowSupport {
 
     public void appendOrderEvent(String orderId, String type, Map<String, Object> payload) {
         events.append("order", orderId, new NewEvent(type, payload, ACTOR, null, orderId, Map.of()));
+    }
+
+    /** Payloads of the order's ledger events of {@code type} appended so far, oldest first. */
+    public List<Map<String, Object>> orderEvents(String orderId, String type) {
+        return events.load("order", orderId).stream().filter(e -> type.equals(e.type())).map(e -> e.payload() == null ? Map.<String, Object>of() : e.payload()).toList();
     }
 
     // ------------------------------------------------------------------ misc

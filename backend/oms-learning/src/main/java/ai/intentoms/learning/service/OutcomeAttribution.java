@@ -13,7 +13,8 @@ import java.util.Map;
  * <ul>
  *   <li>lost parcel: carrier; damaged: carrier 0.7, node (packing) 0.3;</li>
  *   <li>late delivery: carrier 0.6, node 0.4; when a node rejected part of the order first, node 0.6, carrier 0.4;</li>
- *   <li>a store reject: node; a split into several packages: stock (no single node had it all);</li>
+ *   <li>a store reject: node; a split into packages from several nodes: stock (no single node had it all); several
+ *       packages from one node: node;</li>
  *   <li>stranded stock or a cancelled backorder: stock;</li>
  *   <li>a chargeback, a refused cash-on-delivery parcel, or a confirmed-fraud return: customer.</li>
  * </ul>
@@ -32,9 +33,14 @@ public final class OutcomeAttribution {
         // Split and store reject are facts about the order, not about each parcel: counted once however many parcels shipped.
         long parcels = outcomes.stream().filter(o -> o.payload() instanceof OutcomeData.FulfillmentOutcome f && f.shipmentId() != null)
             .map(o -> ((OutcomeData.FulfillmentOutcome) o.payload()).shipmentId()).distinct().count();
-        boolean split = parcels > 1 || outcomes.stream().anyMatch(o -> o.payload() instanceof OutcomeData.FulfillmentOutcome f && f.packageCount() > 1);
+        // Stock is to blame when the plan needed several packages or nodes (no single node had it all); one node shipping
+        // its package in several parcels is that node's packing, not stock (audit A7).
+        long nodes = outcomes.stream().filter(o -> o.payload() instanceof OutcomeData.FulfillmentOutcome).flatMap(o -> ((OutcomeData.FulfillmentOutcome) o.payload()).nodeIds().stream())
+            .filter(n -> n != null && !n.isBlank()).distinct().count();
+        boolean planSplit = nodes > 1 || outcomes.stream().anyMatch(o -> o.payload() instanceof OutcomeData.FulfillmentOutcome f && f.packageCount() > 1);
         if (rejected) node += 1;
-        if (split) stock += 1;
+        if (planSplit) stock += 1;
+        else if (parcels > 1) node += 1;
         for (OutcomeRecord o : outcomes) {
             switch (o.payload()) {
                 case OutcomeData.DeliveryOutcome d -> {

@@ -14,6 +14,7 @@ import ai.intentoms.platform.error.NotFoundException;
 import ai.intentoms.platform.ledger.Actor;
 import ai.intentoms.platform.ledger.NewEvent;
 import ai.intentoms.platform.observability.Metrics;
+import ai.intentoms.platform.pii.FreeTextRedactor;
 import ai.intentoms.platform.security.AuthorizationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -78,7 +79,9 @@ public class IntentService {
         Map<String, Object> o = new LinkedHashMap<>();
         o.put("id", order.id());
         o.put("channel", order.channel());
-        o.put("notes", order.notes() == null ? List.of() : order.notes().stream().map(Note::text).filter(t -> t != null && !t.isBlank()).toList());
+        // NF-07: notes, gift messages and instructions are free text; contact details typed into them never reach the
+        // decision log or a model prompt.
+        o.put("notes", order.notes() == null ? List.of() : order.notes().stream().map(Note::text).filter(t -> t != null && !t.isBlank()).map(FreeTextRedactor::redact).toList());
         o.put("intent_choices", order.intent() == null || order.intent().explicitChoices() == null ? List.of() : order.intent().explicitChoices());
         o.put("has_hazmat", order.hasHazmat());
         o.put("order_type", order.orderType());

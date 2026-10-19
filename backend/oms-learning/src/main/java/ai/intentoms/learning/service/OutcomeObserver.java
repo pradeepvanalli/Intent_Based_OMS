@@ -68,8 +68,28 @@ public class OutcomeObserver implements EventSubscriber {
             episodes.forSubject(e.aggregateType(), e.aggregateId()).forEach(ep -> targets.put(ep.episodeId(), ep));
         for (Episode ep : targets.values()) {
             if (ep.status() == EpisodeStatus.MATURE || !concerns(e, ep)) continue;
-            outcomes.insert(OutcomeRecord.of(Ids.prefixed("out"), ep.episodeId(), data, e.occurredAt(), e.id(), Instant.now()));
+            if (data instanceof OutcomeData.ReturnOutcome r && r.rmaId() != null && mergeIntoReturn(ep, r)) continue;
+            if (outcomes.insert(OutcomeRecord.of(Ids.prefixed("out"), ep.episodeId(), data, e.occurredAt(), e.id(), Instant.now()))) episodes.outcomeChanged(ep.episodeId());
         }
+    }
+
+    /**
+     * One outcome per return and episode (audit A2): a later event of a return already recorded on this episode (its
+     * refund after its disposition, a person's disposition after the automatic one) updates that outcome instead of
+     * adding a second loss. The merge is idempotent, so a redelivered event changes nothing.
+     */
+    private boolean mergeIntoReturn(Episode ep, OutcomeData.ReturnOutcome r) {
+        for (OutcomeRecord existing : outcomes.forEpisode(ep.episodeId())) {
+            if (existing.payload() instanceof OutcomeData.ReturnOutcome prior && r.rmaId().equals(prior.rmaId())) {
+                OutcomeData.ReturnOutcome merged = prior.merge(r);
+                if (!merged.equals(prior)) {
+                    outcomes.updatePayload(existing.outcomeId(), merged);
+                    episodes.outcomeChanged(ep.episodeId());
+                }
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

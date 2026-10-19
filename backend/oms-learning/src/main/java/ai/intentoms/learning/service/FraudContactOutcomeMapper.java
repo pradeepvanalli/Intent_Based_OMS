@@ -35,7 +35,7 @@ public class FraudContactOutcomeMapper implements OutcomeMapper {
             case "payment.chargeback_won" -> new OutcomeData.PaymentOutcome(true, false, -Math.abs(num(p.get("amount"))));
             case "order.returned_to_sender" -> Boolean.TRUE.equals(p.get("cod"))
                 ? new OutcomeData.PaymentOutcome(false, true, num(p.get("amount")))
-                : new OutcomeData.DeliveryOutcome(false, 0, false, false);
+                : new OutcomeData.DeliveryOutcome(false, 0, false, false, false);
             case "cs.complaint" -> new OutcomeData.ContactOutcome(str(p.get("channel"), "cs"), str(p.get("reason"), "complaint"), true);
             case "cs.contact" -> new OutcomeData.ContactOutcome(str(p.get("channel"), "cs"), str(p.get("reason"), "other"), false);
             default -> null;
