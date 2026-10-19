@@ -12,6 +12,7 @@ description: >-
   marketplace channel. Network: two DCs, four ship-from-store locations, one drop-ship vendor, one refurbishment centre.
 
 # ---- Sourcing and promise -------------------------------------------------------------------------------------------
+tenant.timezone: America/New_York           # FS-02: day parts (night/morning/afternoon/evening) of learned node reliability use this clock
 sourcing.margin_floor: 0.08                 # electronics run thin; 8 % contribution margin before finance must approve (GR-01)
 sourcing.max_split_packages: 2              # a phone order never travels in more than two boxes
 sourcing.split_penalty_usd: 14.0            # measured cost of one extra package incl. the signature surcharge

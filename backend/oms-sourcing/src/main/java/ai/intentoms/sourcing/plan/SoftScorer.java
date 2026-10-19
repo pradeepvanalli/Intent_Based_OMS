@@ -55,18 +55,20 @@ public class SoftScorer {
     private final DecisionService decisions;
     private final TimeSource time;
     private final Metrics metrics;
+    private final ai.intentoms.platform.config.TenantConfigStore config;
 
-    public SoftScorer(DecisionService decisions, TimeSource time, Metrics metrics) {
+    public SoftScorer(DecisionService decisions, TimeSource time, Metrics metrics, ai.intentoms.platform.config.TenantConfigStore config) {
         this.decisions = decisions;
         this.time = time;
         this.metrics = metrics;
+        this.config = config;
     }
 
     public SoftScores score(SourcingRequest req, List<Candidate> candidates, RateCard card, Actor actor) {
         if (candidates.isEmpty()) return SoftScores.neutral("no candidates");
         // Learned node reliability (FS-02) is merged into the candidates by the decision fabric's learning hook
         // (oms-learning NodeReliabilityFeatures), so the decision record shows which facts and versions it used.
-        Map<String, Object> input = input(req, candidates, card, time.now());
+        Map<String, Object> input = input(req, candidates, card, time.now(), ai.intentoms.learning.model.DayPart.zone(config));
         DecisionResult r;
         try {
             r = decisions.decide(DECISION, input, DecisionOptions.live("order", req.orderId(), actor));
@@ -78,8 +80,8 @@ public class SoftScorer {
         return fromResult(r);
     }
 
-    /** Builds the minimal typed state the decision declares (section 9 rule 2). */
-    public static Map<String, Object> input(SourcingRequest req, List<Candidate> candidates, RateCard card, Instant now) {
+    /** Builds the minimal typed state the decision declares (section 9 rule 2); {@code tenantZone} sets the day part. */
+    public static Map<String, Object> input(SourcingRequest req, List<Candidate> candidates, RateCard card, Instant now, java.time.ZoneId tenantZone) {
         double weight = 0;
         for (var l : req.lines()) weight += l.weightKg() * l.qty();
         List<Map<String, Object>> cands = new ArrayList<>(candidates.size());
@@ -101,7 +103,7 @@ public class SoftScorer {
         order.put("line_count", req.lines().size());
         // FS-02: the SKU class carrying most units and the day part, so learned reliability can be that specific.
         order.put("sku_class", dominantCategory(req));
-        order.put("day_part", ai.intentoms.learning.learner.NodeReliabilityLearner.dayPart(now));
+        order.put("day_part", ai.intentoms.learning.model.DayPart.of(now, tenantZone));
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("order", order);
         input.put("candidates", cands);

@@ -11,6 +11,7 @@ vertical: Replace with your vertical
 description: A neutral configuration set to copy and adapt; see README.md in this folder.
 
 # ---- Sourcing and promise -------------------------------------------------------------------------------------------
+tenant.timezone: America/New_York           # FS-02: day parts (night/morning/afternoon/evening) of learned node reliability use this clock
 sourcing.margin_floor: 0.12                 # contribution-margin ratio below which a plan needs finance approval (GR-01)
 sourcing.max_split_packages: 3              # most packages a split plan may use
 sourcing.split_penalty_usd: 12.0            # cost added per extra package (overrides shipping-rates.yaml splitPenaltyUsd)

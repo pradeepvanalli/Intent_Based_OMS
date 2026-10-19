@@ -3,6 +3,7 @@
 name: Intent OMS demo
 vertical: Omnichannel demo
 description: The original demo tenant behind scripts/demo.sh and the seven use-case scripts (apparel, home, electronics and a few compliance edge cases).
+tenant.timezone: America/New_York           # FS-02: day parts (night/morning/afternoon/evening) of learned node reliability use this clock
 sourcing.margin_floor: 0.12
 sourcing.max_split_packages: 3
 sourcing.split_penalty_usd: 12.0

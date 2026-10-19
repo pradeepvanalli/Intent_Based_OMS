@@ -36,10 +36,12 @@ public class NodeReliabilityFeatures implements FeatureContributor {
 
     private final LearnedFactCache facts;
     private final ParameterResolver resolver;
+    private final ai.intentoms.platform.config.TenantConfigStore config;
 
-    public NodeReliabilityFeatures(LearnedFactCache facts, ParameterResolver resolver) {
+    public NodeReliabilityFeatures(LearnedFactCache facts, ParameterResolver resolver, ai.intentoms.platform.config.TenantConfigStore config) {
         this.facts = facts;
         this.resolver = resolver;
+        this.config = config;
     }
 
     @Override public boolean appliesTo(String decision) { return DECISION.equals(decision); }
@@ -50,7 +52,8 @@ public class NodeReliabilityFeatures implements FeatureContributor {
         if (!(input.get("candidates") instanceof List<?> cands)) return;
         Map<String, Object> order = input.get("order") instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
         String skuClass = order.get("sku_class") == null ? null : String.valueOf(order.get("sku_class"));
-        String dayPart = order.get("day_part") == null ? NodeReliabilityLearner.dayPart(Instant.now()) : String.valueOf(order.get("day_part"));
+        // FS-02: the tenant-clock day part the learner files outcomes under (SoftScorer stamps it; otherwise now).
+        String dayPart = order.get("day_part") == null ? ai.intentoms.learning.model.DayPart.of(Instant.now(), config) : String.valueOf(order.get("day_part"));
         for (Object o : cands) {
             if (!(o instanceof Map<?, ?> cm) || cm.get("id") == null) continue;
             Map<String, Object> cand = (Map<String, Object>) cm;

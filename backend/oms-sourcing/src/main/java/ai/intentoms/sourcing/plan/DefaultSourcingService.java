@@ -410,9 +410,10 @@ public class DefaultSourcingService implements SourcingService {
             if (baseByNode.containsKey(pk.nodeId())) m.put("onTimeBase", baseByNode.get(pk.nodeId()));
             Candidate cand = candidateByNode.get(pk.nodeId());
             if (cand != null) {
-                // FS-02: the date the package must leave the node (today in its zone, or tomorrow past its cutoff), and the node-local day part.
+                // FS-02: the date the package must leave the node (today in its zone, or tomorrow past its cutoff), and the
+                // day part on the tenant's clock, the same one the decision read its node facts under.
                 m.put("shipBy", String.valueOf(Transit.today(cand.node(), now).plusDays(Transit.cutoffDelayDays(cand.node(), now))));
-                m.put("dayPart", NodeReliabilityLearner.dayPart(now, Transit.zone(cand.node())));
+                m.put("dayPart", ai.intentoms.learning.model.DayPart.of(now, config));
             }
             return m;
         }).toList());

@@ -203,6 +203,9 @@ Values are JSON. Strings written through the API are plain JSON strings. Default
 | `orchestration.fulfilment_timeout` | P5D | Time in `await_fulfilment` before a `fulfilment_timeout` exception |
 | `orchestration.delivery_timeout` | P14D | Time waiting for a delivery scan |
 | `orchestration.pickup_window` | P5D | BOPIS pickup window |
+| `tenant.timezone` | UTC | IANA zone of the tenant's clock. The one day-part definition (night 00-06, morning 06-12, afternoon 12-18, evening 18-24) for learned node reliability: the learner files outcomes and the sourcing decision reads facts on this clock (FS-02) |
+| `learning.fraud.chargeback_window_days` | 120 | Days a card payment can be charged back. Fraud learners sample `payment_risk` / `address_risk` outcomes only from decisions at least this old, frauds and goods alike (FD-03) |
+| `learning.fraud.outcome_window_days` | 30 | The same observation window for `rto_risk` and `return_risk` (a refused parcel or a return grading arrives within it) |
 | `webhooks.inbound_secret` | unset | When set, WMS/carrier/inventory webhooks require `X-Webhook-Signature` |
 | `alerts.slack_webhook`, `alerts.pagerduty_routing_key`, `alerts.email` | unset | Alert channels |
 | `alerts.dedupe_minutes` | 15 | Alert de-duplication window |
