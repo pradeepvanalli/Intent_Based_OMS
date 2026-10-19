@@ -7,6 +7,7 @@ import ai.intentoms.platform.time.TimeSource;
 import ai.intentoms.sourcing.CandidateGenerator;
 import ai.intentoms.sourcing.NodeRegistry;
 import ai.intentoms.sourcing.config.SourcingSettings;
+import ai.intentoms.sourcing.learning.LaneKnowledge;
 import ai.intentoms.sourcing.model.Candidate;
 import ai.intentoms.sourcing.model.Node;
 import ai.intentoms.sourcing.model.SimulationContext;
@@ -35,8 +36,9 @@ import java.util.TreeMap;
  * Deterministic candidate generation (FR-SRC-01). Filters, in order: active and not closed/excluded; node type and
  * required capabilities (hazmat lines → {@code hazmat}; pickup → {@code bopis}; same-day → {@code same_day}; anything
  * shipped → {@code ship} or {@code sfs}); some coverage from ATP (one {@code atp(sku)} call per sku); remaining daily
- * capacity; distance limit. Transit = rate-card zone days + cutoff roll-over + unknown-destination penalty + simulated
- * carrier outage. Sorted by complete coverage desc, distance asc, node id asc; truncated to the limit.
+ * capacity; distance limit. Transit = carrier days (the rate card's zone days + unknown-destination penalty, or the
+ * learned lane transit when it is promoted for live use and has enough evidence, see {@link LaneKnowledge}) + cutoff
+ * roll-over + simulated carrier outage. Sorted by complete coverage desc, distance asc, node id asc; truncated.
  */
 @Service
 public class DefaultCandidateGenerator implements CandidateGenerator {
@@ -47,8 +49,11 @@ public class DefaultCandidateGenerator implements CandidateGenerator {
     private final SourcingSettings settings;
     private final TimeSource time;
     private final Metrics metrics;
+    private final LaneKnowledge lanes;
 
-    public DefaultCandidateGenerator(NodeRegistry nodes, InventoryService inventory, NodeLoadRepository load, RateCardRepository rates, SourcingSettings settings, TimeSource time, Metrics metrics) {
+    public DefaultCandidateGenerator(NodeRegistry nodes, InventoryService inventory, NodeLoadRepository load, RateCardRepository rates, SourcingSettings settings, TimeSource time, Metrics metrics,
+                                     LaneKnowledge lanes) {
+        this.lanes = lanes;
         this.nodes = nodes;
         this.inventory = inventory;
         this.load = load;
@@ -70,6 +75,7 @@ public class DefaultCandidateGenerator implements CandidateGenerator {
         SimulationOverrides sim = SimulationContext.current();
         RateCard card = rates.current();
         GeoPoint dest = ZipGeo.locate(req.destination().zip(), req.destination().state(), req.destination().country());
+        String zip3 = ZipGeo.zip3(req.destination().zip());
         Map<String, Integer> wanted = req.unitsBySku();
         Set<String> required = requiredCapabilities(req);
         SourcingRequest.Constraints c = req.constraints();
@@ -108,7 +114,11 @@ public class DefaultCandidateGenerator implements CandidateGenerator {
             if (c.maxDistanceKm() != null && distance > c.maxDistanceKm()) continue;
             if (req.isPickup() && c.maxDistanceKm() == null && distance > settings.pickupRadiusKm() * 4) continue;
 
-            int transit = req.isPickup() ? 0 : card.transitDays(req.shipMethod(), distance) + dest.transitPenaltyDays() + sim.extraTransitDays();
+            int transit = 0;
+            if (!req.isPickup()) {
+                int carrierDays = card.transitDays(req.shipMethod(), distance) + dest.transitPenaltyDays();
+                transit = lanes.transit(req.shipMethod(), node.id(), zip3, carrierDays).days() + sim.extraTransitDays();
+            }
             transit += Transit.cutoffDelayDays(node, now);
             out.add(new Candidate(node, coverage, complete, Math.round(distance * 10) / 10.0, transit));
         }

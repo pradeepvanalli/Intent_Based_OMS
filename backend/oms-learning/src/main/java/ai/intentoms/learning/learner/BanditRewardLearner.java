@@ -57,7 +57,8 @@ public class BanditRewardLearner implements GovernedLearner {
         this.governance = governance;
     }
 
-    @Scheduled(fixedDelayString = "${oms.learning.fs01.sweep-ms:86400000}", initialDelayString = "${oms.learning.fs01.sweep-ms:880000}")
+    /** Every 15 minutes by default (NF-02: bandit posteriors updated within 15 minutes of an outcome). */
+    @Scheduled(fixedDelayString = "${oms.learning.fs01.sweep-ms:900000}", initialDelayString = "${oms.learning.fs01.sweep-ms:900000}")
     public void scheduled() {
         try { sweepOnce(); } catch (RuntimeException e) { log.error("Bandit reward sweep failed: {}", e.toString()); }
     }
@@ -80,13 +81,20 @@ public class BanditRewardLearner implements GovernedLearner {
             if (ep.reward() == null || ep.status() == EpisodeStatus.OPEN) continue;
             Optional<DecisionRecord> rec = decisionRecords.find(ep.decisionId());
             if (rec.isEmpty() || rec.get().chosenArm() == null || rec.get().propensity() <= 0) continue;
+            // A record whose policy was overridden downstream (split check, no plan for the drawn policy) did not apply the bandit's arm.
+            if (rec.get().details() != null && Boolean.TRUE.equals(rec.get().details().get("overridden"))) continue;
             Object bucket = rec.get().details() == null ? null : rec.get().details().get("bucket");
             if (bucket == null && rec.get().contextFeatures() != null) bucket = rec.get().contextFeatures().get("bucket");
             logged.add(new Logged(bucket == null ? SourcingPolicyBandit.bucket(rec.get().contextFeatures() == null ? Map.of() : rec.get().contextFeatures()) : String.valueOf(bucket),
                 rec.get().chosenArm(), rec.get().propensity(), ep.reward()));
         }
         Map<String, List<Logged>> byBucket = new LinkedHashMap<>();
-        for (Logged l : logged) byBucket.computeIfAbsent(l.bucket(), k -> new ArrayList<>()).add(l);
+        for (Logged l : logged) {
+            byBucket.computeIfAbsent(l.bucket(), k -> new ArrayList<>()).add(l);
+            // The coarse bucket (without segment and load) pools a new segment or load band until it has its own evidence.
+            String coarse = SourcingPolicyBandit.coarseBucket(l.bucket());
+            if (!coarse.equals(l.bucket())) byBucket.computeIfAbsent(coarse, k -> new ArrayList<>()).add(l);
+        }
         int written = 0;
         for (var e : byBucket.entrySet()) {
             if (e.getValue().size() < minBucket) continue;

@@ -112,7 +112,7 @@ class SelfOptimizingSourcingIntegrationTest extends SourcingTestBase {
     void promiseUsesLearnedLaneTransitCalibrationAndBufferOnlyWhenPromoted() {
         stock("TEE-BLK-M", "DC-NJ", 50);
         config.set("sourcing.service_carriers", Map.of("ground", "UPS"));
-        String lane = LaneDeliveryLearner.laneKey("UPS", "DC-NJ", "100");
+        String lane = LaneDeliveryLearner.laneKey("UPS", "ground", "DC-NJ", "100");
         facts.number(SubjectType.LANE, lane, FactKey.LANE_TRANSIT_DAYS_P50, 3.0, 40, LaneDeliveryLearner.KEY, 0.01);
         facts.number(SubjectType.LANE, lane, FactKey.LANE_CALIBRATION_OFFSET, -0.2, 40, LaneDeliveryLearner.KEY, 0.001);
         facts.number(SubjectType.SEGMENT, PromiseBufferLearner.segment("web"), FactKey.PROMISE_BUFFER_DAYS, 2, 100, PromiseBufferLearner.KEY, 0.5);

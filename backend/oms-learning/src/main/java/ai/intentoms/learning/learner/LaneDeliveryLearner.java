@@ -18,12 +18,15 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * FS-03 + CX-01, built together since both come from the same raw signal. A lane is carrier x origin node x
- * destination ZIP3 ({@code <carrier>|<node>|<zip3>}); every delivery is also counted on the coarser carrier x origin
- * lane ({@code <carrier>|<node>}) so a promise can fall back to it while the ZIP3 lane is still thin. Per lane: the
- * transit-time distribution (P50, P90), the observed on-time rate and the calibration gap between that rate and the
- * on-time probability the promise stated for the same deliveries ({@code LANE_CALIBRATION_OFFSET}, CX-01's target is
- * within 3 points). Read live by {@code DefaultPromiseService} through {@code ParameterResolver}
+ * FS-03 + CX-01, built together since both come from the same raw signal. A lane is carrier x service x origin node x
+ * destination ZIP3 ({@code <carrier>|<service>|<node>|<zip3>}); services are never pooled, because ground and express
+ * from the same node are different lanes. Every delivery is also counted on the carrier x service x origin lane
+ * ({@code <carrier>|<service>|<node>}), used only for calibration while the ZIP3 lane is thin, never for transit days
+ * (a pooled destination says nothing about how long one destination takes). Per lane: the transit-time distribution
+ * (P50, P90), the observed on-time rate, the calibration offset (observed rate minus the probability before lane
+ * calibration, {@code LANE_CALIBRATION_OFFSET}) and the residual error after calibration (observed rate minus the
+ * probability the orders were actually given, {@code LANE_CALIBRATION_ERROR}, CX-01's target is within 3 points).
+ * Read live by sourcing plans, the order's promise date and {@code POST /promise} through {@code ParameterResolver}
  * ({@code promise.lane_transit_days}, {@code promise.lane_calibration}).
  */
 @Component
@@ -81,8 +84,9 @@ public class LaneDeliveryLearner implements EventSubscriber, GovernedLearner {
             if (a.carrier() == null || a.shippedAt() == null) continue; // no lane without both ends known
             double transitDays = Math.max(0, Duration.between(a.shippedAt(), e.occurredAt()).toMinutes() / 1440.0);
             boolean onTime = a.promisedEta() == null || !e.occurredAt().atZone(ZoneOffset.UTC).toLocalDate().isAfter(a.promisedEta());
-            for (String lane : lanesFor(a.carrier(), a.nodeId(), a.destZip3())) {
-                if (samples.record(lane, transitDays, onTime, a.statedOnTime(), e.aggregateId(), a.nodeId())) publishFacts(lane);
+            Double base = a.baseOnTime() != null ? a.baseOnTime() : a.statedOnTime();
+            for (String lane : lanesFor(a.carrier(), a.shipMethod(), a.nodeId(), a.destZip3())) {
+                if (samples.record(lane, transitDays, onTime, a.statedOnTime(), base, e.aggregateId(), a.nodeId())) publishFacts(lane);
             }
         }
     }
@@ -97,21 +101,32 @@ public class LaneDeliveryLearner implements EventSubscriber, GovernedLearner {
         if (stats.total() >= MIN_RATE_SAMPLES) {
             facts.number(SubjectType.LANE, laneKey, FactKey.LANE_ON_TIME_RATE, round((double) stats.onTimeCount() / stats.total()), (int) stats.total(), KEY, 0.001);
         }
+        if (stats.baseSamples() >= MIN_RATE_SAMPLES) {
+            // The offset is learned against the probability before calibration, so applying it does not feed back into it.
+            double observed = (double) stats.onTimeOfBase() / stats.baseSamples();
+            facts.number(SubjectType.LANE, laneKey, FactKey.LANE_CALIBRATION_OFFSET, round(observed - stats.meanBase()), (int) stats.baseSamples(), KEY, 0.001);
+        }
         if (stats.statedSamples() >= MIN_RATE_SAMPLES) {
+            // The residual: how far what the orders were told is from what happened, after any calibration.
             double observed = (double) stats.onTimeOfStated() / stats.statedSamples();
-            facts.number(SubjectType.LANE, laneKey, FactKey.LANE_CALIBRATION_OFFSET, round(observed - stats.meanStated()), (int) stats.statedSamples(), KEY, 0.001);
+            facts.number(SubjectType.LANE, laneKey, FactKey.LANE_CALIBRATION_ERROR, round(observed - stats.meanStated()), (int) stats.statedSamples(), KEY, 0.001);
         }
     }
 
-    /** The ZIP3 lane (when the destination is known) and the carrier x origin lane every delivery also counts on. */
-    public static List<String> lanesFor(String carrier, String nodeId, String zip3) {
-        String coarse = laneKey(carrier, nodeId, null);
-        return zip3 == null || zip3.isBlank() ? List.of(coarse) : List.of(laneKey(carrier, nodeId, zip3), coarse);
+    /** The ZIP3 lane (when the destination is known) and the carrier x service x origin lane every delivery also counts on. */
+    public static List<String> lanesFor(String carrier, String service, String nodeId, String zip3) {
+        String coarse = laneKey(carrier, service, nodeId, null);
+        return zip3 == null || zip3.isBlank() ? List.of(coarse) : List.of(laneKey(carrier, service, nodeId, zip3), coarse);
     }
 
-    public static String laneKey(String carrier, String nodeId, String zip3) {
-        String base = carrier + "|" + nodeId;
+    /** {@code <carrier>|<service>|<node>[|<zip3>]}; an unknown service is "any". */
+    public static String laneKey(String carrier, String service, String nodeId, String zip3) {
+        String base = carrier + "|" + service(service) + "|" + nodeId;
         return zip3 == null || zip3.isBlank() ? base : base + "|" + zip3;
+    }
+
+    public static String service(String service) {
+        return service == null || service.isBlank() ? "any" : service.trim().toLowerCase(java.util.Locale.ROOT);
     }
 
     public static String zip3(String zip) {

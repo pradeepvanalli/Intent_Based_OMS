@@ -42,11 +42,17 @@ class FulfilmentLearnersUnitTest {
         assertThat(SourcingPolicyBandit.parseWeights(BanditRewardLearner.encode(w))).containsOnlyKeys(w.keySet());
     }
 
-    @Test void banditBucketsByChannelIntentBasketAndRegion() {
+    @Test void banditBucketsByChannelIntentBasketRegionSegmentAndLoad() {
         assertThat(SourcingPolicyBandit.bucket(Map.of("channel", "web", "intentPolicy", "ship_complete", "basketUnits", 3, "destinationZip", "10001")))
-            .isEqualTo("web|ship_complete|2-3|z1");
-        assertThat(SourcingPolicyBandit.bucket(Map.of("channel", "pos", "lineCount", 6, "destinationState", "TX"))).isEqualTo("pos|none|4+|TX");
-        assertThat(SourcingPolicyBandit.bucket(Map.of())).isEqualTo("any|none|1|any");
+            .isEqualTo("web|ship_complete|2-3|z1|none|any");
+        assertThat(SourcingPolicyBandit.bucket(Map.of("channel", "pos", "lineCount", 6, "destinationState", "TX"))).isEqualTo("pos|none|4+|TX|none|any");
+        assertThat(SourcingPolicyBandit.bucket(Map.of())).isEqualTo("any|none|1|any|none|any");
+        assertThat(SourcingPolicyBandit.bucket(Map.of("channel", "web", "segment", "seg-a", "networkLoad", "strained"))).isEqualTo("web|none|1|any|seg-a|strained");
+        assertThat(SourcingPolicyBandit.coarseBucket("web|none|1|any|seg-a|strained")).isEqualTo("web|none|1|any");
+        assertThat(SourcingPolicyBandit.loadBand(0.2)).isEqualTo("calm");
+        assertThat(SourcingPolicyBandit.loadBand(0.7)).isEqualTo("busy");
+        assertThat(SourcingPolicyBandit.loadBand(0.95)).isEqualTo("strained");
+        assertThat(SourcingPolicyBandit.loadBand(Double.NaN)).isEqualTo("any");
     }
 
     @Test void rejectPenaltyScalesWithTheNodesRejectRateRelativeToTheFleet() {

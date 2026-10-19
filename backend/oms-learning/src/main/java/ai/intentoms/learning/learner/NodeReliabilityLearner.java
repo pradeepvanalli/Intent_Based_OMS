@@ -34,7 +34,14 @@ import java.util.Map;
  * decaying with the 7-day half-life sourcing already applies. Live use goes through {@code ParameterResolver}
  * ({@code sourcing.reject_penalty}).
  *
- * <p>On-time is the delivery date against the ETA promised at sourcing time ({@code packages[].eta}).
+ * <p>On-time is the node's own job, an on-time pick (FS-02): the package left the node by the date sourcing set for it
+ * ({@code packages[].shipBy} on {@code order.sourced}, compared with the first {@code order.shipped} from that node).
+ * Whether the carrier then delivered on time is the lane's business ({@code LaneDeliveryLearner}). Older events with no
+ * ship-by date fall back to delivery against the promised ETA. Day part is the node's local time when sourcing assigned
+ * it ({@code packages[].dayPart}), else the tenant's time zone ({@code tenant.timezone}), else UTC.
+ *
+ * <p>Evidence fades with a half-life ({@code learning.node_reliability.half_life_days}, default 30): a node that rejected
+ * a lot last quarter but has shipped cleanly since recovers, and its reject penalty with it (FS-06).
  */
 @Component
 public class NodeReliabilityLearner implements EventSubscriber, GovernedLearner {
@@ -43,6 +50,7 @@ public class NodeReliabilityLearner implements EventSubscriber, GovernedLearner 
     private static final Logger log = LoggerFactory.getLogger(NodeReliabilityLearner.class);
     static final String SKU_CLASS = "default";
     static final int MIN_SPECIFIC_SAMPLES = 10;
+    public static final String HALF_LIFE_KEY = "learning.node_reliability.half_life_days";
 
     private final NodeAssignmentRepository assignments;
     private final NodeReliabilityStatRepository stats;
@@ -59,7 +67,7 @@ public class NodeReliabilityLearner implements EventSubscriber, GovernedLearner 
         this.governance = governance;
     }
 
-    @Override public List<String> eventTypePrefixes() { return List.of("order.sourced", "order.resourced", "order.delivered", "event.delivered"); }
+    @Override public List<String> eventTypePrefixes() { return List.of("order.sourced", "order.resourced", "order.shipped", "event.shipped", "order.delivered", "event.delivered"); }
 
     @Override
     public void on(Event e) {
@@ -71,6 +79,7 @@ public class NodeReliabilityLearner implements EventSubscriber, GovernedLearner 
             switch (e.type()) {
                 case "order.sourced" -> onSourced(e);
                 case "order.resourced" -> onResourced(e);
+                case "order.shipped", "event.shipped" -> onShipped(e);
                 case "order.delivered", "event.delivered" -> onDelivered(e);
                 default -> {}
             }
@@ -86,15 +95,33 @@ public class NodeReliabilityLearner implements EventSubscriber, GovernedLearner 
         if (!(p.get("packages") instanceof List<?> list)) return;
         String zip3 = str(p.get("destinationZip3"));
         String method = str(p.get("shipMethod"));
-        String dayPart = dayPart(e.occurredAt());
+        String fallbackDayPart = dayPart(e.occurredAt(), tenantZone());
         for (Object o : list) {
             if (!(o instanceof Map<?, ?> pkg) || pkg.get("nodeId") == null) continue;
             String skuClass = pkg.get("skuClass") == null ? SKU_CLASS : String.valueOf(pkg.get("skuClass"));
             Integer backlog = pkg.get("backlogUnits") instanceof Number n ? n.intValue() : null;
             Double stated = pkg.get("onTime") instanceof Number n ? n.doubleValue() : null;
+            Double base = pkg.get("onTimeBase") instanceof Number n ? n.doubleValue() : stated;
+            String dayPart = pkg.get("dayPart") == null ? fallbackDayPart : String.valueOf(pkg.get("dayPart"));
             assignments.record(e.aggregateId(), String.valueOf(pkg.get("nodeId")),
-                new NodeAssignmentRepository.Sourced(skuClass, parseDate(pkg.get("eta")), zip3, method, dayPart, backlog, stated), e.occurredAt());
+                new NodeAssignmentRepository.Sourced(skuClass, parseDate(pkg.get("eta")), zip3, method, dayPart, backlog, stated, parseDate(pkg.get("shipBy")), base),
+                e.occurredAt());
         }
+    }
+
+    /** FS-02: the first shipment from a node says whether its pick left by the ship-by date sourcing set. */
+    private void onShipped(Event e) {
+        Object node = e.payload() == null ? null : e.payload().get("nodeId");
+        if (node == null) return;
+        String nodeId = String.valueOf(node);
+        NodeAssignmentRepository.Assignment a = assignments.assignmentsFor(e.aggregateId()).stream().filter(x -> x.nodeId().equals(nodeId)).findFirst().orElse(null);
+        if (a == null || a.shipBy() == null) return; // no ship-by date: delivery decides, as before
+        boolean onTime = !e.occurredAt().atZone(tenantZone()).toLocalDate().isAfter(a.shipBy());
+        if (!assignments.recordPicked(e.aggregateId(), nodeId, onTime)) return; // already counted
+        String skuClass = a.skuClass() == null ? SKU_CLASS : a.skuClass();
+        String dayPart = a.dayPart() == null ? dayPart(e.occurredAt(), tenantZone()) : a.dayPart();
+        stats.recordOnTime(nodeId, skuClass, dayPart, onTime, halfLifeDays());
+        publishFacts(nodeId, skuClass, dayPart);
     }
 
     private void onResourced(Event e) {
@@ -105,8 +132,8 @@ public class NodeReliabilityLearner implements EventSubscriber, GovernedLearner 
             String nodeId = String.valueOf(n);
             NodeAssignmentRepository.Assignment a = assigned.stream().filter(x -> x.nodeId().equals(nodeId)).findFirst().orElse(null);
             String skuClass = a == null || a.skuClass() == null ? SKU_CLASS : a.skuClass();
-            String dayPart = a == null || a.dayPart() == null ? dayPart(e.occurredAt()) : a.dayPart();
-            stats.recordReject(nodeId, skuClass, dayPart, true);
+            String dayPart = a == null || a.dayPart() == null ? dayPart(e.occurredAt(), tenantZone()) : a.dayPart();
+            stats.recordReject(nodeId, skuClass, dayPart, true, halfLifeDays());
             publishFacts(nodeId, skuClass, dayPart);
         }
     }
@@ -117,9 +144,10 @@ public class NodeReliabilityLearner implements EventSubscriber, GovernedLearner 
             boolean onTime = a.promisedEta() == null || !deliveredOn.isAfter(a.promisedEta());
             if (!assignments.recordDelivered(e.aggregateId(), a.nodeId(), e.occurredAt(), onTime)) continue; // already counted
             String skuClass = a.skuClass() == null ? SKU_CLASS : a.skuClass();
-            String dayPart = a.dayPart() == null ? dayPart(e.occurredAt()) : a.dayPart();
-            stats.recordOnTime(a.nodeId(), skuClass, dayPart, onTime);
-            stats.recordReject(a.nodeId(), skuClass, dayPart, false);
+            String dayPart = a.dayPart() == null ? dayPart(e.occurredAt(), tenantZone()) : a.dayPart();
+            // A node with a ship-by date was already judged on its pick; delivery only says it did not reject.
+            if (a.pickedOnTime() == null && a.shipBy() == null) stats.recordOnTime(a.nodeId(), skuClass, dayPart, onTime, halfLifeDays());
+            stats.recordReject(a.nodeId(), skuClass, dayPart, false, halfLifeDays());
             publishFacts(a.nodeId(), skuClass, dayPart);
         }
     }
@@ -157,12 +185,25 @@ public class NodeReliabilityLearner implements EventSubscriber, GovernedLearner 
         return dayPart == null ? nodeId + "|" + skuClass : nodeId + "|" + skuClass + "|" + dayPart;
     }
 
-    public static String dayPart(Instant at) {
-        int hour = at.atZone(ZoneOffset.UTC).getHour();
+    public static String dayPart(Instant at) { return dayPart(at, ZoneOffset.UTC); }
+
+    /** Night, morning, afternoon or evening in the given zone (a node's or the tenant's local time). */
+    public static String dayPart(Instant at, java.time.ZoneId zone) {
+        int hour = at.atZone(zone).getHour();
         if (hour < 6) return "night";
         if (hour < 12) return "morning";
         if (hour < 18) return "afternoon";
         return "evening";
+    }
+
+    /** The tenant's time zone ({@code tenant.timezone}), UTC when unset or invalid. */
+    java.time.ZoneId tenantZone() {
+        try { return java.time.ZoneId.of(config.getString("tenant.timezone", "UTC")); }
+        catch (RuntimeException e) { return ZoneOffset.UTC; }
+    }
+
+    double halfLifeDays() {
+        try { return Math.max(1.0, config.getDouble(HALF_LIFE_KEY, 30.0)); } catch (RuntimeException e) { return 30.0; }
     }
 
     static LocalDate parseDate(Object v) {

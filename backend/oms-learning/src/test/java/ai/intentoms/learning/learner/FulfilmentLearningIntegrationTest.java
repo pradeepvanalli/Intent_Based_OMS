@@ -121,12 +121,12 @@ class FulfilmentLearningIntegrationTest extends PostgresTestBase {
         // FS-06: one node, so its reject rate equals the fleet's and the penalty equals the static 0.3
         assertThat(number(SubjectType.NODE, node, FactKey.NODE_REJECT_PENALTY)).isCloseTo(0.3, within(0.001));
         // FS-03 + CX-01: ZIP3 lane and the coarse lane, each counted once per delivery
-        String lane = LaneDeliveryLearner.laneKey("UPS", node, "100");
+        String lane = LaneDeliveryLearner.laneKey("UPS", "ground", node, "100");
         assertThat(number(SubjectType.LANE, lane, FactKey.LANE_TRANSIT_DAYS_P50)).isCloseTo(2.0, within(0.01));
         // A stable value is republished as evidence grows (so minimum-sample checks are met), never past the 24 deliveries.
         assertThat(facts.active(SubjectType.LANE, lane, FactKey.LANE_TRANSIT_DAYS_P50).orElseThrow().sampleSize()).isBetween(20, 24);
         assertThat(number(SubjectType.LANE, lane, FactKey.LANE_CALIBRATION_OFFSET)).isCloseTo(16.0 / 24 - 0.95, within(0.001));
-        assertThat(facts.active(SubjectType.LANE, LaneDeliveryLearner.laneKey("UPS", node, null), FactKey.LANE_ON_TIME_RATE)).isPresent();
+        assertThat(facts.active(SubjectType.LANE, LaneDeliveryLearner.laneKey("UPS", "ground", node, null), FactKey.LANE_ON_TIME_RATE)).isPresent();
 
         // FS-05: backlog-to-breach curve, rising with backlog
         curveLearner.sweepOnce();
@@ -179,14 +179,15 @@ class FulfilmentLearningIntegrationTest extends PostgresTestBase {
             DecisionRecord rec = decisionRecords.find(choice.decisionRecordId()).orElseThrow();
             assertThat(rec.chosenArm()).isEqualTo(choice.policy());
             assertThat(rec.propensity()).isEqualTo(choice.propensity());
-            assertThat(rec.details()).containsEntry("bucket", "web|ship_as_available|2-3|z1");
+            assertThat(rec.details()).containsEntry("bucket", "web|ship_as_available|2-3|z1|none|any");
             Episode ep = Episode.open(Ids.prefixed("epi"), rec.id(), SourcingPolicyBandit.DECISION_NAME, order, null, null, 1, "order", order, Instant.now());
             episodes.upsertDecisionPoint(ep);
             episodes.updateStatusAndReward(episodes.findByDecisionId(rec.id()).orElseThrow().episodeId(), EpisodeStatus.PROVISIONAL,
                 "ship_complete".equals(choice.policy()) ? 0.9 : 0.4, Map.of("otd", 1.0), null);
         }
         assertThat(banditRewards.sweepOnce()).isGreaterThan(0);
-        LearnedFact bucket = facts.active(SubjectType.SEGMENT, SourcingPolicyBandit.bucketSubject("web|ship_as_available|2-3|z1"), FactKey.SOURCING_POLICY_PROPENSITY).orElseThrow();
+        LearnedFact bucket = facts.active(SubjectType.SEGMENT, SourcingPolicyBandit.bucketSubject("web|ship_as_available|2-3|z1|none|any"), FactKey.SOURCING_POLICY_PROPENSITY).orElseThrow();
+        assertThat(facts.active(SubjectType.SEGMENT, SourcingPolicyBandit.bucketSubject("web|ship_as_available|2-3|z1"), FactKey.SOURCING_POLICY_PROPENSITY)).isPresent();
         Map<String, Double> w = SourcingPolicyBandit.parseWeights(((TypedValue.ListValue) bucket.value()).values());
         assertThat(w.values().stream().mapToDouble(Double::doubleValue).sum()).isCloseTo(1.0, within(0.01));
         assertThat(facts.active(SubjectType.SEGMENT, "default", FactKey.SOURCING_POLICY_PROPENSITY)).isPresent();

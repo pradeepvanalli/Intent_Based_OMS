@@ -106,7 +106,13 @@ public class PlanBuilder {
         return out;
     }
 
+    /** The on-time probability the order is given: the base below plus the node's served lane calibration (CX-01). */
     private double onTime(BuildContext ctx, Candidate c, int transitDays, Iterable<String> skus) {
+        return clamp(onTimeBase(ctx, c, transitDays, skus) + ctx.calibration(c.nodeId()));
+    }
+
+    /** Rate-card probability for the transit time, reduced by learned node penalties, before lane calibration. */
+    private double onTimeBase(BuildContext ctx, Candidate c, int transitDays, Iterable<String> skus) {
         double base = ctx.card().onTimeProbability(transitDays, c.node().reliability());
         double penalty = ctx.penalties().forPackage(c.node(), skus);
         return clamp(base * (1 - penalty) + SimulationContext.current().onTimeDelta());
@@ -266,6 +272,7 @@ public class PlanBuilder {
         ex.put("distanceKm", e.c().distanceKm());
         ex.put("transitDays", transitDays);
         ex.put("onTime", round(onTime));
+        ex.put("onTimeBase", round(onTimeBase(ctx, e.c(), transitDays, skus)));
         ex.put("softScore", round(e.soft()));
         ex.put("unitCost", round(e.unitCost()));
         ex.put("preference", round(e.preference()));

@@ -33,7 +33,8 @@ public enum FactKey {
     // ---- fulfilment and promise (FS-*, CX-*)
     NODE_BACKLOG_BREACH_CURVE(TypedValue.ListValue.class),   // FS-05: subject=NODE, "<backlogUnits>:<breachProbability>" points
     NODE_REJECT_PENALTY(TypedValue.NumberValue.class),       // FS-06: subject=NODE, decaying penalty replacing sourcing.reject_penalty
-    LANE_CALIBRATION_OFFSET(TypedValue.NumberValue.class),   // CX-01: subject=LANE, observed minus stated on-time probability
+    LANE_CALIBRATION_OFFSET(TypedValue.NumberValue.class),   // CX-01: subject=LANE, observed on-time rate minus the probability before lane calibration
+    LANE_CALIBRATION_ERROR(TypedValue.NumberValue.class),    // CX-01: subject=LANE, residual after calibration: observed rate minus the probability orders were given
     PROMISE_BUFFER_DAYS(TypedValue.NumberValue.class),       // CX-02: subject=SEGMENT, buffer that maximises conversion x on-time
     WARN_EARLY_THRESHOLD(TypedValue.NumberValue.class),      // CX-03: subject=DECISION (sla_breach_risk), risk score that triggers a proactive notice
     APPEASEMENT_LEVEL(TypedValue.NumberValue.class),         // CX-04: subject=SEGMENT, credit amount that best retains within budget

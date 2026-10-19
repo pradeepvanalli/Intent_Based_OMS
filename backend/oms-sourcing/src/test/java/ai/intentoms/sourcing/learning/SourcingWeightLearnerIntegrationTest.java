@@ -20,7 +20,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 
-/** FS-04: chosen-plan score components paired with episode rewards become a WeightChange proposal on sourcing.weights. */
+/** FS-04: chosen-plan score components paired with episode rewards become a WeightChange proposal on sourcing.weights, validated by replay. */
 class SourcingWeightLearnerIntegrationTest extends SourcingTestBase {
     @Autowired SourcingWeightLearner learner;
     @Autowired EpisodeRepository episodes;
@@ -35,13 +35,23 @@ class SourcingWeightLearnerIntegrationTest extends SourcingTestBase {
             Map<String, Object> plan = Map.of("explain", Map.of("components", Map.of("cost", cost, "time", time, "soft", 0.5, "split", 1.0)));
             jdbc.sql("insert into sourcing_plan(id, tenant_id, order_id, policy, plan, score, chosen, created_at) values (:id, :t, :o, 'ship_complete', :p, 0.5, true, now())")
                 .param("id", Ids.prefixed("plan")).param("t", tenant).param("o", order).param("p", Jsonb.of(plan)).update();
+            // The plan it did not pick: more likely on time, a bit dearer. Under today's weights it lost; under the proposal it wins.
+            Map<String, Object> alt = Map.of("explain", Map.of("components", Map.of("cost", cost - 0.2, "time", Math.min(1.0, time + 0.3), "soft", 0.5, "split", 1.0)));
+            jdbc.sql("insert into sourcing_plan(id, tenant_id, order_id, policy, plan, score, chosen, created_at) values (:id, :t, :o, 'ship_complete', :p, 0.4, false, now())")
+                .param("id", Ids.prefixed("plan")).param("t", tenant).param("o", order).param("p", Jsonb.of(alt)).update();
             String dr = Ids.prefixed("dr");
             episodes.upsertDecisionPoint(Episode.open(Ids.prefixed("epi"), dr, SoftScorer.DECISION, order, null, null, 1, "order", order, Instant.now()));
             episodes.updateStatusAndReward(episodes.findByDecisionId(dr).orElseThrow().episodeId(), EpisodeStatus.PROVISIONAL, 0.2 + time, Map.of("otd", time), null);
         }
 
         assertThat(learner.sweepOnce()).isEqualTo(1);
-        Proposal p = proposals.byStatus("DRAFT", 50).stream().filter(x -> SourcingWeightLearner.TARGET.equals(x.changeset().target().toString())).findFirst().orElseThrow();
+        Proposal p = proposals.byStatus("EVALUATED", 50).stream().filter(x -> SourcingWeightLearner.TARGET.equals(x.changeset().target().toString())).findFirst().orElseThrow();
+        // Replay: the re-scored plans change some choices, and the reward model says that is better, with an interval above zero.
+        assertThat(p.evaluationReport()).containsEntry("method", "plan_rescoring_replay");
+        assertThat(((Number) p.evaluationReport().get("decisionsChanged")).intValue()).isGreaterThan(0);
+        assertThat(((Number) p.evaluationReport().get("liftEstimate")).doubleValue()).isGreaterThan(0);
+        @SuppressWarnings("unchecked") Map<String, Object> ci = (Map<String, Object>) p.evaluationReport().get("confidenceInterval");
+        assertThat(((Number) ci.get("lower")).doubleValue()).isGreaterThan(0);
         assertThat(p.createdBy()).isEqualTo("system:" + SourcingWeightLearner.KEY);
         assertThat(p.hypothesisId()).isNotNull();
         PolicyChange.WeightChange time = p.changeset().changes().stream().map(c -> (PolicyChange.WeightChange) c).filter(c -> c.weightKey().equals("time")).findFirst().orElseThrow();
