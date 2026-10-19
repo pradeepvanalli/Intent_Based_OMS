@@ -2,7 +2,6 @@ package ai.intentoms.learning.promotion;
 
 import ai.intentoms.decision.record.DecisionRecordRepository;
 import ai.intentoms.learning.experiment.ExperimentMetricsRepository;
-import ai.intentoms.learning.governance.LearnerRegistry;
 import ai.intentoms.learning.model.Proposal;
 import ai.intentoms.learning.store.ProposalRepository;
 import ai.intentoms.platform.ledger.Actor;
@@ -30,8 +29,10 @@ import java.util.Map;
  *   <li>customer-contact rate (episodes with a contact term) at least 2 points above before;</li>
  *   <li>fraud false-positive rate (flagged orders later confirmed good) at least 2 points above before.</li>
  * </ul>
- * A decision change is measured on the version it published against the version it replaced; a config or parameter
- * change on the decisions its learner reads, after versus before the promotion. Each side needs at least
+ * A decision change is measured on the version it published against the version it replaced; a live-use, config or
+ * parameter change on the decisions it affects and its owning learner reads, after versus before the promotion
+ * ({@link ProposalOwnership#watchedDecisions}); a breach of live use rolls the family back (revoked, or to its previous
+ * live range). Each side needs at least
  * {@code oms.learning.guardrail-min-sample} (default 30) decisions. Rows written by the demo seeder are excluded.
  */
 @Component
@@ -45,7 +46,7 @@ public class GuardrailBreachMonitor {
     private final DecisionRecordRepository decisionRecords;
     private final ExperimentMetricsRepository metrics;
     private final PromotionService promotion;
-    private final LearnerRegistry registry;
+    private final ProposalOwnership ownership;
     private final Metrics counters;
     private final ai.intentoms.learning.experiment.ExperimentManager experiments;
 
@@ -53,12 +54,12 @@ public class GuardrailBreachMonitor {
     @Value("${oms.learning.guardrail-min-sample:30}") private int minSample;
 
     public GuardrailBreachMonitor(ProposalRepository proposals, DecisionRecordRepository decisionRecords, ExperimentMetricsRepository metrics,
-                                  PromotionService promotion, LearnerRegistry registry, Metrics counters, ai.intentoms.learning.experiment.ExperimentManager experiments) {
+                                  PromotionService promotion, ProposalOwnership ownership, Metrics counters, ai.intentoms.learning.experiment.ExperimentManager experiments) {
         this.proposals = proposals;
         this.decisionRecords = decisionRecords;
         this.metrics = metrics;
         this.promotion = promotion;
-        this.registry = registry;
+        this.ownership = ownership;
         this.counters = counters;
         this.experiments = experiments;
     }
@@ -129,15 +130,23 @@ public class GuardrailBreachMonitor {
 
     record Comparison(String decision, Integer beforeVersion, Integer afterVersion) {}
 
-    private List<Comparison> comparisons(Proposal p, Map<String, Object> snapshot) {
+    /**
+     * N1: the decisions to compare come from the change itself, not from who typed it ({@link ProposalOwnership#watchedDecisions}):
+     * a decision change's own decision on the version it published against the version it replaced, plus the outcome
+     * decisions of its owning learner; a live-use, config or parameter change's affected decisions and its owning (and,
+     * for live use, declaring) learners' outcome decisions, on every version, after versus before the promotion.
+     */
+    List<Comparison> comparisons(Proposal p, Map<String, Object> snapshot) {
         List<Comparison> out = new ArrayList<>();
-        if ("decision".equals(p.changeset().target().type())) {
-            Integer before = snapshot.get("previousVersion") instanceof Number n ? n.intValue() : null;
-            Integer after = snapshot.get("newVersion") instanceof Number n ? n.intValue() : null;
-            out.add(new Comparison(p.changeset().target().name(), before, after));
-        } else {
-            String learner = PromotionService.learnerKeyOf(p);
-            registry.descriptor(learner).ifPresent(d -> d.outcomeDecisions().forEach(dec -> out.add(new Comparison(dec, null, null))));
+        boolean decisionTarget = "decision".equals(p.changeset().target().type());
+        for (String decision : ownership.watchedDecisions(p)) {
+            if (decisionTarget && decision.equals(p.changeset().target().name())) {
+                Integer before = snapshot.get("previousVersion") instanceof Number n ? n.intValue() : null;
+                Integer after = snapshot.get("newVersion") instanceof Number n ? n.intValue() : null;
+                out.add(new Comparison(decision, before, after));
+            } else {
+                out.add(new Comparison(decision, null, null));
+            }
         }
         return out;
     }
