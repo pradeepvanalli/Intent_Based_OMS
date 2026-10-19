@@ -191,13 +191,16 @@ public class DefaultPromiseService implements PromiseService {
     record BufferChoice(int days, boolean explored) {}
 
     /**
-     * CX-02: the buffer for this promise. While the learned buffer is live, a small share of promises
+     * CX-02: the buffer for this promise. While a learned buffer exists and is served (the family promoted and a
+     * {@code PROMISE_BUFFER_DAYS} fact for the channel or overall), a small share of promises
      * ({@code learning.promise_buffer.exploration}, default 5%, capped at 10%) try one day more or less so the learner
      * keeps evidence on the neighbouring buffers; the storefront reports the buffer it showed with each conversion.
+     * With nothing learned yet the static buffer is never varied (B-5).
      */
     BufferChoice bufferChoice(String channel) {
-        int served = bufferDays(channel);
-        if (!parameters.isLive(PromiseBufferLearner.PARAMETER)) return new BufferChoice(served, false);
+        Buffer b = buffer(channel);
+        int served = b.days();
+        if (!b.learnedServed()) return new BufferChoice(served, false);
         double share = Math.max(0.0, Math.min(0.10, config.getDouble(PromiseBufferLearner.EXPLORATION_KEY, 0.05)));
         java.util.concurrent.ThreadLocalRandom rnd = java.util.concurrent.ThreadLocalRandom.current();
         if (share <= 0 || rnd.nextDouble() >= share) return new BufferChoice(served, false);
@@ -206,12 +209,18 @@ public class DefaultPromiseService implements PromiseService {
     }
 
     /** CX-02: whole days of padding for this channel's promise. */
-    int bufferDays(String channel) {
+    int bufferDays(String channel) { return buffer(channel).days(); }
+
+    /** The buffer served, and whether it is the learned one (a fact exists and the family is promoted for live use). */
+    record Buffer(int days, boolean learnedServed) {}
+
+    Buffer buffer(String channel) {
         double staticBuffer = config.getDouble(PromiseBufferLearner.PARAMETER, 0.0);
         Double learned = number(SubjectType.SEGMENT, PromiseBufferLearner.segment(channel), FactKey.PROMISE_BUFFER_DAYS, 1)
             .or(() -> number(SubjectType.SEGMENT, PromiseBufferLearner.segment(null), FactKey.PROMISE_BUFFER_DAYS, 1)).orElse(null);
-        Double served = parameters.explain(PromiseBufferLearner.PARAMETER, staticBuffer, learned).value();
-        return served == null ? 0 : (int) Math.max(0, Math.round(served));
+        var r = parameters.explain(PromiseBufferLearner.PARAMETER, staticBuffer, learned);
+        Double served = r.value();
+        return new Buffer(served == null ? 0 : (int) Math.max(0, Math.round(served)), learned != null && r.learnedServed());
     }
 
     private LocalDate buffered(LocalDate eta, int buffer) {

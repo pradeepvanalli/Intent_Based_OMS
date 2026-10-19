@@ -22,6 +22,4 @@ annotations, so this page cannot drift from the code without a failing test.
 | Weekly learning digest (XP-04) | `WeeklyLearningDigestService` | Mondays 07:00 UTC | `oms.learning.digest-cron` |
 | Learner metrics gauges (NF-09) | `LearnerMetricsService` | Every minute | `oms.learning.metrics-refresh-ms` |
 | Retention (NF-10) | `LearningRetentionService` | Daily 03:30 UTC | `oms.learning.retention.cron` |
-
-The bandit's propensity weights are refreshed by the FS-01 reward learner (Wave B F2). Its row belongs here once that
-lands.
+| Bandit arm weights (FS-01) | `BanditRewardLearner`: event subscriber on `episode.matured` for `sourcing_policy_bandit` episodes (at most once a minute per tenant), plus a sweep for provisional rewards | On the matured episode; sweep every 10 minutes, so a provisional reward (5-minute reward sweep) reaches the weights within 15 minutes | `oms.learning.fs01.sweep-ms` |

@@ -30,13 +30,18 @@ import java.util.Optional;
  * weights per context bucket. Each episode's anchor record logged the applied policy and the probability it had of
  * being applied, so the value of an arm is the self-normalised inverse-propensity estimate of its reward
  * (sum of reward/propensity over sum of 1/propensity). Provisional rewards count (OC-04: learners use the best current
- * estimate and are corrected as outcomes mature). Values become weights with a softmax; an arm with too little data
- * gets the bucket's mean value, so it keeps a fair share of exploration. Written as {@code SOURCING_POLICY_PROPENSITY}
- * per bucket ({@code SEGMENT:bandit:<bucket>}) and pooled ({@code SEGMENT:default}); {@link SourcingPolicyBandit} reads
- * the bucket's weights, then the pooled ones.
+ * estimate and are corrected as outcomes mature). Values become weights with a softmax. An arm with fewer than
+ * {@code min-arm-episodes} episodes starts from the prior (the mean value of the well-sampled arms) and moves toward
+ * its own estimate in proportion to its sample count (B-4), so two lucky or unlucky explorations neither crown nor bury
+ * it. Written as {@code SOURCING_POLICY_PROPENSITY} per bucket ({@code SEGMENT:bandit:<bucket>}) and pooled
+ * ({@code SEGMENT:default}); {@link SourcingPolicyBandit} reads the bucket's weights, then the pooled ones.
+ *
+ * <p>NF-02: weights refresh within 15 minutes of an outcome. A bandit episode maturing ({@code episode.matured}) re-runs
+ * the tenant's update at once (at most once a minute per tenant), and a sweep every 10 minutes picks up provisional
+ * rewards.
  */
 @Component
-public class BanditRewardLearner implements GovernedLearner {
+public class BanditRewardLearner implements GovernedLearner, ai.intentoms.platform.ledger.EventSubscriber {
     public static final String KEY = "bandit_reward";
     private static final Logger log = LoggerFactory.getLogger(BanditRewardLearner.class);
 
@@ -57,8 +62,10 @@ public class BanditRewardLearner implements GovernedLearner {
         this.governance = governance;
     }
 
-    /** Every 15 minutes by default (NF-02: bandit posteriors updated within 15 minutes of an outcome). */
-    @Scheduled(fixedDelayString = "${oms.learning.fs01.sweep-ms:900000}", initialDelayString = "${oms.learning.fs01.sweep-ms:900000}")
+    private final java.util.concurrent.ConcurrentHashMap<String, Instant> lastEventRun = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Every 10 minutes by default (NF-02: bandit posteriors updated within 15 minutes of an outcome). */
+    @Scheduled(fixedDelayString = "${oms.learning.fs01.sweep-ms:600000}", initialDelayString = "${oms.learning.fs01.sweep-ms:600000}")
     public void scheduled() {
         try { sweepOnce(); } catch (RuntimeException e) { log.error("Bandit reward sweep failed: {}", e.toString()); }
     }
@@ -68,6 +75,22 @@ public class BanditRewardLearner implements GovernedLearner {
         int n = 0;
         for (String tenant : tenants) n += TenantContext.supplyAs(tenant, this::sweepTenant);
         return n;
+    }
+
+    @Override public List<String> eventTypePrefixes() { return List.of("episode.matured"); }
+
+    /** NF-02: a bandit episode matured; refresh that tenant's weights now (throttled to once a minute per tenant). */
+    @Override
+    public void on(ai.intentoms.platform.ledger.Event e) {
+        if (e.tenantId() == null || e.payload() == null || !SourcingPolicyBandit.DECISION_NAME.equals(e.payload().get("decision"))) return;
+        Instant now = Instant.now();
+        Instant last = lastEventRun.get(e.tenantId());
+        if (last != null && last.isAfter(now.minus(Duration.ofMinutes(1)))) return;
+        lastEventRun.put(e.tenantId(), now);
+        var previous = TenantContext.current();
+        try { TenantContext.supplyAs(e.tenantId(), this::sweepTenant); }
+        catch (RuntimeException ex) { log.warn("Bandit refresh after episode {} failed: {}", e.aggregateId(), ex.toString()); }
+        finally { previous.ifPresentOrElse(TenantContext::set, TenantContext::clear); }
     }
 
     /** One logged choice: the context bucket, the applied arm, its propensity and the episode's reward. */
@@ -108,7 +131,10 @@ public class BanditRewardLearner implements GovernedLearner {
         return written;
     }
 
-    /** Self-normalised IPS value per arm, turned into softmax weights. Arms below {@code minArm} get the mean value. */
+    /**
+     * Self-normalised IPS value per arm, turned into softmax weights. An arm with n &lt; {@code minArm} episodes gets
+     * (n x its value + (minArm - n) x prior) / minArm, the prior being the mean value of the arms with enough data.
+     */
     static Map<String, Double> weights(List<Logged> logged, int minArm, double temperature) {
         Map<String, double[]> acc = new LinkedHashMap<>(); // arm -> {sum r/p, sum 1/p, n}
         for (Logged l : logged) {
@@ -128,8 +154,12 @@ public class BanditRewardLearner implements GovernedLearner {
             counted++;
         }
         if (counted == 0) return Map.of();
-        double mean = sum / counted;
-        for (String arm : acc.keySet()) value.putIfAbsent(arm, mean);
+        double prior = sum / counted;
+        for (var e : acc.entrySet()) {
+            if (value.containsKey(e.getKey())) continue;
+            double n = e.getValue()[2], own = e.getValue()[0] / e.getValue()[1];
+            value.put(e.getKey(), (n * own + (minArm - n) * prior) / minArm); // B-4: shrunk toward the prior by sample count
+        }
         double max = value.values().stream().mapToDouble(Double::doubleValue).max().orElse(0);
         double t = Math.max(1e-6, temperature);
         Map<String, Double> w = new LinkedHashMap<>();

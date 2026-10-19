@@ -88,7 +88,7 @@ public class SourcingPolicyBandit implements GovernedLearner {
      */
     public record Draw(String bucket, Map<String, Double> weights, String weightsFrom, double exploration, long seed, String sampled, double sampledPropensity,
                        boolean acted, String applied, String defaultPolicy, List<String> eligible, Map<String, Object> context, LearnerGovernance.Gate gate,
-                       boolean heldOut) {}
+                       boolean heldOut, long startedNanos) {}
 
     /**
      * Draws and logs in one step (the applied policy is the drawn arm or the default). Sourcing uses {@link #draw}
@@ -106,6 +106,7 @@ public class SourcingPolicyBandit implements GovernedLearner {
 
     /** Draws an arm for this context without logging anything. */
     public Draw draw(List<String> eligiblePolicies, String defaultPolicy, Map<String, Object> context) {
+        long startedNanos = System.nanoTime();
         LearnerGovernance.Gate gate = governance.begin(LEARNER_KEY);
         String bucket = bucket(context);
         WeightSource source = currentWeights(eligiblePolicies, bucket);
@@ -123,7 +124,7 @@ public class SourcingPolicyBandit implements GovernedLearner {
         boolean acted = sampled != null && !heldOut && parameters.isLiveFor(routingKey, LIVE_PARAMETER);
         String applied = acted ? sampled : defaultPolicy;
         return new Draw(bucket, weights, source.from(), exploration, seed, sampled, sampledP, acted, applied, defaultPolicy, List.copyOf(eligiblePolicies),
-            new LinkedHashMap<>(context), gate, heldOut);
+            new LinkedHashMap<>(context), gate, heldOut, startedNanos);
     }
 
     /**
@@ -159,8 +160,11 @@ public class SourcingPolicyBandit implements GovernedLearner {
         List<String> arms = new ArrayList<>(d.eligible());
         if (used != null && !arms.contains(used)) arms.add(used);
         Instant now = Instant.now();
+        // 25b: the record's latency is the bandit's real time, from the draw (weights read, gate checked) to this log.
+        long latencyMs = Math.max(0, (System.nanoTime() - d.startedNanos()) / 1_000_000);
+        details.put("latencyMs", latencyMs);
         DecisionRecord record = new DecisionRecord(recordId, DECISION_NAME, 1, Mode.LIVE, "order", orderId, orderId, Layer.L1_SYSTEM_ONE, Band.ACT, "act",
-            used, Map.of(), propensity, "bandit", "fs-01", Json.sha256(ctx), ctx, ctx, List.of(), List.of(), 0, 0, 0, false, null, actorRef,
+            used, Map.of(), propensity, "bandit", "fs-01", Json.sha256(ctx), ctx, ctx, List.of(), List.of(), latencyMs, 0, 0, false, null, actorRef,
             details, null, null, null, null, Map.of(), now, ctx, List.copyOf(arms), used, propensity, 1);
         decisionRecords.insert(record);
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -170,6 +174,7 @@ public class SourcingPolicyBandit implements GovernedLearner {
         payload.put("value", used == null ? "" : used);
         payload.put("propensity", propensity);
         payload.put("acted", d.acted());
+        payload.put("latencyMs", latencyMs);
         events.append("decision", recordId, 0, List.of(new NewEvent("decision.evaluated", payload, Actor.parse(actorRef), null, orderId,
             Map.of("subjectType", "order", "subjectId", orderId))));
         if (d.gate().mayRun()) governance.recordRunThrottled(LEARNER_KEY);

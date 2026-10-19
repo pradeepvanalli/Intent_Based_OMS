@@ -189,6 +189,22 @@ class FulfilmentLiveQualityIntegrationTest extends SourcingTestBase {
         assertThat(explored).isBetween(10, 80);   // about 10% of 400
     }
 
+    /** B-5: the buffer family promoted with nothing learned yet: the static buffer is served as is and never explored. */
+    @Test
+    void noBufferExplorationWithoutALearnedBuffer() {
+        stock("TEE-BLK-M", "DC-NJ", 50);
+        config.set(ai.intentoms.learning.learner.PromiseBufferLearner.EXPLORATION_KEY, 0.5);
+        parameters.promote(ai.intentoms.learning.learner.PromiseBufferLearner.PARAMETER, ai.intentoms.learning.learner.PromiseBufferLearner.KEY, 0.0, 5.0, null, null, "test");
+        factCache.invalidateAll();
+        PromiseRequest req = new PromiseRequest(List.of(new PromiseRequest.PromiseLine("TEE-BLK-M", 1)), "10001", "NY", "web", "ground");
+        for (int i = 0; i < 200; i++) {
+            promiseImpl.invalidateAll();
+            Promise p = promise.promise(req);
+            assertThat(p.bufferExplored()).isFalse();
+            assertThat(p.bufferDays()).isZero();
+        }
+    }
+
     /** FS-05: a node whose learned curve says a breach is likely at its backlog loses the load before the breach. */
     @Test
     void sourcingShiftsLoadAwayFromANodeLikelyToBreach() {
