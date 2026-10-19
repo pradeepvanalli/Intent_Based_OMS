@@ -70,9 +70,11 @@ own tenant from the starter. Kubernetes: `deploy/helm/intent-oms`. Full guide: `
   kept, a chargeback or a clean payment — is measured and joined back to the decision that caused it. Parameter
   learners (node reliability, lane transit times, a sourcing-policy bandit, customer preference facts) tune
   themselves in minutes from that stream, no LLM involved. An Analyst/Author/Critic pipeline proposes policy
-  changes nightly, but nothing goes live without clearing offline replay with a confidence interval, a shadow run,
-  and a canary — autonomy is opt-in per learner and starts at recommend-only for every new tenant. See
-  `docs/UC_SELF_OPTIMIZING_ORCHESTRATION.md`.
+  changes nightly. A change goes live only through a gate that weighs the change's risk tier against the learner's
+  autonomy (recommend-only by default): replay with a confidence interval, a shadow run or canary where required, a
+  second person's approval for anything beyond the lowest tier, and a one-click rollback. Refunds, cancellations,
+  pricing and the objective itself are never changed autonomously. A holdout and lift report show whether it helps.
+  See `docs/UC_SELF_OPTIMIZING_ORCHESTRATION.md` and, per requirement, `docs/SOO_TRACEABILITY.md`.
 * **Typed decisions with confidence bands.** A decision is a YAML object with a risk tier, enumerated options, an
   escape option and a default. Jev (TypeSafe's System One model) answers inside those options and reports a
   calibrated confidence; the band (act, confirm, escalate) decides whether it acts, asks an LLM to confirm, or opens a
@@ -113,7 +115,7 @@ run its script; details in `docs/REFERENCE_IMPLEMENTATIONS.md`.
 Your own tenant: copy one of them, or describe your business to the Bootstrap copilot (`/copilot/bootstrap`) and
 review the change set it proposes.
 
-## Seven scenarios you can run
+## Eight scenarios you can run
 
 Scripted in `scripts/usecases/`, narrated in `docs/DEMO_USE_CASES.md`, with a captured live run in
 `docs/DEMO_SAMPLES.md`.
@@ -127,6 +129,7 @@ Scripted in `scripts/usecases/`, narrated in `docs/DEMO_USE_CASES.md`, with a ca
 | 5 | A policy change before lunch | Draft, lint, impact diff (6 of 33 decisions flipped, calibration error 0.012), golden gate, second approver, canary 25%, live, rollback, kill switch |
 | 6 | Configure the OMS by talking to it | Three sentences become a change set across a decision, a rule and a state model, staged as drafts |
 | 7 | Margin Guardian | Weekly digest with the money at stake and a copilot prompt per finding; ops Q&A over whitelisted SQL; customer-safe explanations; grounded CS drafts |
+| 8 | The OMS that learns from its outcomes | Real orders, a WISMO contact and a signed chargeback become outcomes; learners turn them into facts; a learned value goes live only through a proposal the author cannot approve, then rolls back in one call; lift against the holdout |
 
 ## Architecture
 

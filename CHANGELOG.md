@@ -4,6 +4,27 @@ All notable changes to Intent OMS are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses semantic versioning.
 
 ## [Unreleased]
+- **Self-Optimizing Order Orchestration — fixed and finished.** The first SOO entry below overstated what was built:
+  a strict audit found 6 of 63 functional requirements done, runtime bugs that broke the learning screens, and a
+  task queue that filled with duplicate escalations. This pass fixes those and builds the rest; the status of every
+  requirement, with code and tests, is in `docs/SOO_TRACEABILITY.md`.
+  - Fixed: proposals were stored without their change type and could not be read; a scheduled scorer re-decided every
+    open order every minute, opening a new episode and a new escalation task each time (one demo order collected
+    hundreds of tasks); outcomes attached to only one episode per order; newer episodes never got rewards; the MCP
+    learning tools failed for every caller; most learners ignored autonomy and the kill switch; the bandit logged the
+    wrong propensity; the Tasks page's default view returned nothing.
+  - Migrations fold the existing duplicates: one episode per decision point, and one open escalation task per subject
+    for the scorers that re-evaluate (`sla_breach_risk`, `stuck_order_diagnosis`), with the rest linked to it.
+  - New: learner governance (registry, global/tenant/learner kill switch, pause, autonomy × tier gate, never-autonomous
+    changes), live use of a learned value as a promoted change with range and max step, a decision-fabric hook for
+    learned features, calibration, provider routing and experiment routing, chargeback/contact/COD signals and fraud
+    learners, fulfilment and promise learners, inventory and customer learners, every change type applied and rolled
+    back, shadow/canary/holdout experiments and a lift report, governance events, change cards, digests, retention.
+  - UI: a Learning console built for first-time users (plain-language names and autonomy, captions instead of
+    paragraphs, technical details behind a toggle, demo-data badges), errors shown in plain words, a Tasks badge that
+    counts only the queues you work, and a Why drawer that shows which learned facts a decision used.
+  - Demo tenant reference data (`SooDemoSeeder`), `scripts/usecases/uc8-self-optimizing.sh`, and a local Playwright
+    suite (`make e2e`).
 - **Self-Optimizing Order Orchestration** (`oms-learning`, new module): closes the loop from outcome back to policy.
   Every decision now logs propensity (`decision_record.context_features/arms/chosen_arm/propensity/policy_version`)
   so past decisions can be fairly replayed against a new policy. Episodes are assembled from the existing event

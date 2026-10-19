@@ -167,7 +167,32 @@ about $0.15 with Claude Sonnet via OpenRouter).
 **Where incumbents struggle.** KPIs live in BI tools days later; "explain" agents narrate a rules engine after the
 fact; nothing connects a finding to a governed change. PRD P6, FR-MON-08, FR-XAI-03, FR-CS-05, GR-15, GR-17.
 
-## UC8 — Agentic Control Tower: autonomous root-cause resolution
+## UC8 · The OMS that learns from its outcomes — self-optimizing orchestration
+
+**The story.** Every decision the OMS makes has a consequence days or weeks later: the parcel arrived late, the
+customer asked where it was, the card was charged back. Today those outcomes land in reports nobody connects back to
+the decision, so the same mistakes repeat.
+
+**What you see** (`scripts/usecases/uc8-self-optimizing.sh`, on the seeded demo tenant):
+- Real orders (one that splits, one cash on delivery) are shipped and delivered; a "where is my order" contact and a
+  signed Stripe chargeback arrive. Each becomes a typed outcome joined to the decisions that caused it (a forged
+  webhook is refused).
+- Learners turn outcomes into facts: this store ships on time 53% of the time, at version 43 of what it has learned.
+- A learned value goes live only through a governed change: the strategy lead proposes it, replay evaluates it, the
+  author cannot approve it, an ops analyst is refused, an admin approves, it is promoted, its change card and the
+  lift against the holdout are shown, and one call rolls it back to exactly what it replaced.
+- The split order's Why drawer lists which learned facts and versions its sourcing decision used, and which were
+  held back because they were not promoted for live use.
+
+**Where incumbents struggle.** "AI-optimised" fulfilment is usually a black box retrained offline; nobody can say what
+changed, who approved it, or how to undo it. Here every learned value is a fact with provenance, every change is a
+proposal with evidence, and autonomy is a dial the business sets per learner.
+
+Mechanism: `docs/UC_SELF_OPTIMIZING_ORCHESTRATION.md`; status per requirement: `docs/SOO_TRACEABILITY.md`.
+
+---
+
+## UC9 — Agentic Control Tower: autonomous root-cause resolution
 
 **The story.** An order stalls — a carrier scan goes missing, a hold sits unresolved, a promise date slips — the kind
 of thing an operator today chases by cross-referencing the order, the workflow, the carrier feed and the exception
@@ -190,13 +215,14 @@ Full walkthrough, guardrails and sample run: `docs/UC_AGENTIC_CONTROL_TOWER.md`.
 
 ```bash
 make run                                  # service on :8080 with the seeded demo tenant
-scripts/usecases/run-all.sh               # all seven, ~10 minutes (UC6 needs an LLM key)
+scripts/usecases/run-all.sh               # UC1–UC8, ~12 minutes (UC6 needs an LLM key); BASE=http://host:port to target another app
 scripts/usecases/uc2-returns-margin-recovery.sh   # or one at a time
 ```
 To reset to a clean demo state: stop the service, `docker exec oms-postgres-1 psql -U oms -d postgres -c "drop database oms with (force);" -c "create database oms;"`, start again.
 
 Suggested order on stage: UC1 (the thesis: decisions as data), UC2 (money), UC3 (resilience), UC4 (the agent future),
-UC5 (why the business owns it). Keep the Why drawer open as often as possible — it is the product.
+UC5 (why the business owns it), UC8 (it gets better on its own, under your control). Keep the Why drawer open as
+often as possible — it is the product.
 
 ## Sources
 * NRF / Appriss returns and abuse figures, HereWeShip split-shipment cost, AlixPartners late-delivery risk: PRD section 2.

@@ -353,41 +353,32 @@ specifically, which is the positioning this project already has a real head star
 
 ---
 
-## 10. Self-Optimizing Order Orchestration (new since this document was first written)
+## 10. Self-Optimizing Order Orchestration
 
-A new module, `oms-learning`, closes the loop this document's section 9 implicitly assumed was still open: outcomes
-were measured (section 4's analytics) but nothing turned them back into policy. That gap is now closed, with the
-same engineering discipline as everything else in this inventory — real code, verified compiling and passing the
-full test suite, not a roadmap slide. Full detail in `docs/UC_SELF_OPTIMIZING_ORCHESTRATION.md`; summary here for
-anyone reading this inventory top to bottom.
+`oms-learning` closes the loop from outcome back to policy. **Correction:** an earlier version of this section said
+the module was complete and verified. A strict audit showed otherwise (6 of 63 functional requirements done, broken
+proposal reads, a task queue flooded by duplicate escalations). That has since been fixed and the remaining
+requirements built; the per-requirement status, code and tests are in `docs/SOO_TRACEABILITY.md`, and the mechanism
+in `docs/UC_SELF_OPTIMIZING_ORCHESTRATION.md`.
 
-- **Propensity logging on every decision.** `decision_record` (section 3's table) gained `context_features`,
-  `arms`, `chosen_arm`, `propensity`, `policy_version` columns — the data an off-policy estimator needs to fairly
-  judge a new policy against old, logged traffic.
-- **Episodes and typed outcomes.** `EpisodeAssembler`/`OutcomeObserver` are ledger `EventSubscriber`s, not a new
-  code path bolted onto order capture — every decision already made gets an episode, joined to a typed catalog of
-  what happened next (delivery, return, payment, contact, inventory outcomes), with reward correction as late
-  outcomes land (a return 45 days out, a chargeback 120 days out).
-- **Fast-loop parameter learners**: node reliability (Beta-binomial), lane transit distributions, a contextual
-  bandit over the five sourcing policies (the one place genuinely non-1.0 propensity gets logged, with a seeded,
-  replayable random draw), customer preference facts with cold-start shrinkage, fraud-threshold tuning, and
-  decision-fabric band/calibration self-tuning — all recommend-only or gated by explicit per-learner autonomy,
-  updating in minutes, no LLM in the loop.
-- **Slow-loop Analyst/Author/Critic**, extending `oms-copilot`'s existing policy-from-sentence infrastructure
-  (section 4) rather than duplicating it: nightly hypothesis generation from aggregated outcome digests (never a
-  single order), changeset authoring re-validated against the live artifact, and critic review as evidence for a
-  human, never a gate on its own.
-- **Proof before promotion**: an off-policy evaluator (inverse-propensity + doubly-robust, with a real 95%
-  confidence interval, extending `oms-simulation`'s existing replay machinery from section 1), shadow mode, canary
-  with a persistent holdout, and a tiered promotion gate that only ever auto-promotes a T0/T1 change, never T2/T3,
-  and never a postal-code-scoped one regardless of tier.
-- **Governance that actually blocks**: change budgets (max promotions per week, max step per promotion), freeze
-  windows, automatic rollback on guardrail breach, and coverage/drift monitors that auto-pause learning — not just
-  alert — on silent data loss or a feature-distribution shift.
-- **Honest gaps, stated in the use-case doc rather than hidden**: safety-stock and reservation-TTL tuning are
-  recommend-only proposals, not auto-applied; a weekly transfer-recommendation report, fact decay, cross-tenant
-  shared priors, and a full sequential-testing early-stop for canaries are documented extension points, not built.
+- **Outcome loop**: propensity logging on every decision (the arms a decision could have chosen and the probability
+  of the one applied), one episode per decision point, typed outcomes from real ledger events including chargebacks,
+  customer contacts and stranded stock, seven-term rewards with per-term maturity, and coverage monitoring.
+- **26 governed learners**: node reliability, lane transit and calibration, a contextual sourcing bandit, backlog
+  breach curves, sourcing weights, promise buffers, early delay warnings and appeasement levels; fraud thresholds,
+  abuse rings, drift and agent reputation; stock age, safety stock, reservation TTL, transfers, supplier reliability
+  and backorders; customer preferences and segments; band thresholds, calibration, golden-set growth,
+  override-to-rule, provider routing and rule retirement. Every learner runs through one governance gate.
+- **Live use under control**: a learned value is used live only after a promoted, bounded change, and stops at once
+  when switched off.
+- **Proof before promotion**: replay with confidence intervals, shadow, sticky canary with a sequential test, a
+  persistent holdout and a lift report; all six change types applied and rolled back.
+- **Governance**: autonomy × tier gate, never-autonomous changes, change budgets, freeze windows, governance events,
+  change cards, weekly digests, fairness reports, retention.
+- **People-first UI**: a Learning console written for first-time users and a Why drawer that shows which learned
+  facts a decision used; demo data is badged as such.
+- **Known limits**: acceptance criteria that need weeks of real traffic, holdout routing for config/parameter changes,
+  and storefront/Stripe integrations are described in the use-case doc rather than claimed.
 
-This also resolves part of section 9's Tier 2 roadmap ahead of schedule: agent reputation scoring (item 4) and
-pre-capture payment-fraud scoring (item 7) are now real, working features (`FD-05`'s `AgentReputation` learner and
-the new `payment_risk`/`rto_risk` decisions) rather than proposed next steps.
+Agent reputation scoring and pre-capture payment-fraud scoring from section 9's Tier 2 roadmap are now built
+(`AgentReputationLearner`, the `payment_risk` and `rto_risk` decisions in the order workflow).

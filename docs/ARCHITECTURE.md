@@ -45,7 +45,10 @@ Dependency direction (a module may only depend on modules above it in this list,
   Ids: `Ids.id()` (UUIDv7 string) or `Ids.prefixed("rma")`.
 * **Migrations**: Flyway, file `src/main/resources/db/migration/V<range>__<module>_<topic>.sql`. Version ranges:
   platform 100–199, statemachine 200–299, workflow 300–399, decision 400–499, inventory 500–599, finance 600–699, order 700–799,
-  sourcing 800–899, monitoring 900–999, returns 1000–1099, agent 1100–1199, simulation 1200–1249, analytics 1250–1299, orchestration 1300–1399.
+  sourcing 800–899, monitoring 900–999, returns 1000–1099, agent 1100–1199, simulation 1200–1249, analytics 1250–1299, orchestration 1300–1399,
+  copilot 1400–1499, integrations 1500–1599, learning 1600–1699. Because each module numbers inside its own range, a new migration in a
+  low range (say V403) can appear after a database already has V1604; `spring.flyway.out-of-order: true` in `application.yml` lets Flyway
+  apply it instead of refusing to start. Never renumber or edit an applied migration; add a new one.
   Every table gets an index on `(tenant_id, …)` for its hot lookups. Append-only tables get the `reject_mutation()` trigger (see V100).
 * **Events**: all state changes append to the ledger through `EventStore.append(aggregateType, aggregateId, expectedVersionOr-1, events)` *inside the same transaction*
   as the row changes. Aggregate types: `order`, `return`, `shipment`, `payment`, `refund`, `decision`, `reservation`, `node`, `agent`, `task`, `workflow`, `config`.
@@ -340,21 +343,31 @@ REST: `POST /api/v1/simulations/replay/{orderId}`, `POST /api/v1/simulations/bat
 `StandardShipOrderWorkflow` (type `order.standard_ship`, v1): steps `validate` → `infer_intent` (decision fulfilment_intent) → `payment_authorize` → `source` (SourcingService.source; if requiresApproval → create human task queue `margin_floor_approvals` → WaitTask) → `reserve` (convert cart reservations / reserve) → `release` (line transitions `decision.sourcing_plan` → released; send release to WMS mock; compensation: release reservation, void auth) → `await_fulfilment` (WaitSignal shipped|store_rejected|short_pick|cancel_requested, timeout = SLA) → on `store_rejected`: transition `event.store_rejected`, `resource` → back to `source`; on `shipped`: transition, capture payment → `await_delivery` → `delivered` → Complete. BOPIS workflow `order.bopis` (source=pickup node → `ready_for_pickup` → signal `picked_up`). Return workflow `return.standard`. `HumanTaskEscalationHandler` implements decision `EscalationHandler`. `BulkActionHandler`s: resource, repromise, hold, release, cancel. `PlaybookAction`s. `DemoSeeder` (@Order(100), when `oms.demo.seed=true`): loads `config/tenants/demo/**` (state models, decisions, nodes, order types, taxonomy, playbooks, SLA, golden sets), inventory for ~40 SKUs across 6 nodes, 3 agents, 25 sample orders in various states, a few returns and exceptions. Mock integrations: `POST /webhooks/wms/{nodeId}` (shipped/short_pick/store_rejected), `POST /webhooks/carrier` (scan/delivered), `POST /webhooks/shopify` (order create → capture).
 
 ### 3.14 oms-learning (`ai.intentoms.learning`)
-See `docs/UC_SELF_OPTIMIZING_ORCHESTRATION.md` for the full mechanism. Nine tables: `episode`, `outcome`,
-`learned_fact`, `segment`, `hypothesis`, `proposal`, `experiment`, `objective_profile`, `learner`, plus propensity-
-logging columns (`context_features`, `arms`, `chosen_arm`, `propensity`, `policy_version`) added to `oms-decision`'s
-existing `decision_record` table. `EpisodeAssembler`/`OutcomeObserver` are `EventSubscriber`s on the existing
-ledger (`decision.evaluated`, `order.delivered`, `order.shipped`, `refund.*`, `return.dispositioned`, `cs.wismo`,
-`task.completed`) — no order-path module needs to know this module exists. `RewardMaturityService` moves episodes
-OPEN → PROVISIONAL → MATURE and computes reward from the live `ObjectiveProfile`; `CoverageMonitor` auto-pauses
-learners when outcome coverage drops below threshold. Parameter learners live in `.../learning/learner/`; the
-Analyst/Author/Critic LLM roles extend `oms-copilot`; the off-policy evaluator extends `oms-simulation`; the
-promotion gate and experiment manager live here and drive real changes through `oms-decision`'s existing
-`DecisionStudioService` publish/rollback path — nothing in this module calls `publish()` directly except the
-promotion gate running as the system principal, and only after replay + shadow/canary evidence and the tier-based
-autonomy check in `PromotionGuard` pass.
-REST: `/api/v1/learning/{learners,facts,proposals,objective,kill-switch,experiments}`. MCP: `learning_status`,
-`explain_policy_change` (both read-only).
+See `docs/UC_SELF_OPTIMIZING_ORCHESTRATION.md` for the mechanism and `docs/SOO_TRACEABILITY.md` for each requirement
+→ code → test. Depends only on platform/decision/workflow; sourcing, inventory, monitoring, orchestration, copilot,
+simulation, agent and app depend on it.
+
+* **Episodes and outcomes.** `EpisodeAssembler` listens to `decision.evaluated` and keeps one episode per decision point
+  (decision, subject, line, fulfilment group); a re-evaluation moves `last_decision_id` instead of opening another.
+  `OutcomeObserver` turns ledger events into typed outcomes through `OutcomeMapper` beans and attaches each to the
+  episodes of its order and of its own subject, once per (episode, event). `RewardMaturityService` scores the seven §7
+  terms in [0,1] and closes each term on its own maturity window (`MaturityWindows`, tenant config).
+* **Governance.** Every learner implements `GovernedLearner` (a `LearnerDescriptor`: name, summary, outcome decisions,
+  feature allowlist, live families) and runs through `LearnerGovernance.begin(key)`: global kill switch
+  (`oms.learning.kill-switch`), tenant `learning.enabled` / `learning.kill_switch`, per-learner switch, pause (coverage,
+  drift, a person). `LearnerRegistry` registers every learner per tenant at its default autonomy.
+* **Live use.** A learned value reaches a live path only through `ParameterResolver`, and only after a promoted
+  `ParameterChange` on `parameter:live:<family>` (range, max step); otherwise, or when its learner is off, paused or at
+  L0, the static value is served. `PromotionGuard` is the single place for autonomy × tier and never-autonomous rules.
+* **Decision fabric hook.** `oms-decision` defines `DecisionLearningHooks` (no-op by default); oms-learning implements it
+  with `FeatureContributor`, `ConfidenceCalibration`, `ProviderRouter` and `ExperimentRouter` beans. LIVE and SHADOW
+  evaluations only: learned features are merged before the input is hashed and listed in `details.learnedFacts`.
+
+REST under `/api/v1/learning`: learners (list, detail, autonomy, run, resume), kill-switch, facts, proposals (list,
+get, card, evaluate, approve, reject, promote), promotions/{id}/rollback, live-parameters (list, proposals, revoke),
+experiments (list, get, start, stop, complete, holdout), lift, diff, objective (get, drafts, history, put draft,
+approve, plain-English draft), fairness, metrics, coverage, digests, golden-candidates, jobs/{job}/run, seed-status.
+MCP: `learning_status`, `explain_policy_change` (read-only).
 
 ## 4. UI (ui/, React + Vite + TypeScript)
 Pages: Login · Control Tower (pipeline heatmap, at-risk, exceptions inbox) · Orders (search, order view with line quantity statuses, holds, timeline, decisions with **Why** drawer) · Tasks (queues, claim/complete) · Returns · Policy Studio (decision list, version diff, YAML editor with structured fields, lint, impact diff, golden-set evaluation, approvals, rollout controls, kill switch) · State Models (list, YAML, validation report, versions) · Agents (registry, limits, mandates, evidence pack) · Analytics (KPI tiles, decision calibration curve) · Simulation (replay diff, batch run) · Settings (tenant config). Auth via `/api/v1/auth/login` JWT. Built assets copied to `backend/oms-app/src/main/resources/static` by `scripts/build-ui.sh`; Vite dev proxy to :8080.

@@ -22,6 +22,8 @@ scripts/bootstrap.sh                                   # fresh clone → running
 cd backend && mvn -q -DskipTests clean install          # build everything (NOT `mvn -pl oms-app install` — see gotcha below)
 mvn -q -pl oms-<module> test                            # one module's tests
 cd ui && npm run lint && npm test -- --run && npm run build
+make e2e                                                # Playwright end-to-end on a fresh e2e database (local only, not in CI)
+scripts/usecases/run-all.sh                             # the eight use-case scripts against a running app (BASE=...)
 ```
 
 **Build gotcha**: `mvn -pl oms-app install` without `clean` does not refresh the nested module jars inside
@@ -31,7 +33,9 @@ cd ui && npm run lint && npm test -- --run && npm run build
 the `docker compose` Postgres on `localhost:5440` (same one `scripts/bootstrap.sh`/`dev.sh` use) → a Testcontainers
 `postgres:16-alpine`. If you run many scoped `mvn test` passes against the `:5440` compose instance across
 different module subsets, its Flyway schema-history table can end up inconsistent (a migration resolved on the
-classpath that was never recorded as applied against that specific history). The fix is `scripts/bootstrap.sh
+classpath that was never recorded as applied against that specific history). `spring.flyway.out-of-order: true`
+now lets a new low-range migration (each module numbers inside its own range) apply after higher ones, which was the
+usual cause; if you still hit a validation error, the fix is `scripts/bootstrap.sh
 --stop && docker compose rm -f postgres && docker volume rm oms_pgdata && scripts/bootstrap.sh` — it's a throwaway
 dev volume, reseeded from config every time, never worth debugging the history by hand.
 

@@ -78,27 +78,51 @@ promoted change has a one-click rollback.
   shared across tenants without explicit, separate opt-in.
 * **Kill switches at every level** — global, per-learner, per-tenant — drop instantly to the last-approved policy.
 
-## What's live today versus a documented next step
+## What's live today, and what is not
 
-This was built as a complete first implementation of the architecture above, not a finished product — treat the
-following as an honest status, not a feature list:
+An earlier version of this section called the first build complete. It was not: a strict audit found 6 of the 63
+functional requirements done and runtime bugs in what existed. The work since then fixed the bugs and built the
+rest. The status of every requirement ID, with the code that implements it and the test or live check that proves
+it, is in **`docs/SOO_TRACEABILITY.md`**; that file, not this section, is the source of truth.
 
-* **Fully wired and tested**: episode/outcome capture, propensity logging on every decision, the node-reliability
-  and sourcing-policy-bandit learners (with a seeded, replayable random draw), customer preference and fraud-
-  threshold learners, the Analyst/Author/Critic pipeline, the off-policy evaluator with real confidence intervals,
-  the tiered promotion gate, change budgets, coverage/drift auto-pause, and the Learning Console.
-* **Recommend-only by design, not yet auto-applied**: safety-stock and reservation-TTL proposals, several fraud and
-  decision-fabric tuning proposals — these generate real, evaluated `Proposal` rows for a human to act on rather
-  than being wired to auto-promote, which is the conservative default this architecture is supposed to have.
-* **Documented extension points, not yet built**: a weekly transfer-recommendation report, fact decay by recency,
-  cross-tenant opt-in shared priors, a full sequential-testing early-stop for canaries (today's is a simpler z-score
-  heuristic), and a published load-test benchmark for episode assembly at scale.
+In short, live in the running app:
+
+* **Outcome loop.** One episode per decision point, typed outcomes from real ledger events (deliveries, shipments,
+  refunds, returns, chargebacks via the Stripe webhook, customer contacts, stranded stock), rewards for all seven
+  terms with per-term maturity, and coverage monitoring that pauses only the learners whose data went quiet.
+* **Fast loop.** 26 learners across fulfilment and promise, fraud, inventory, customers and decision quality, every
+  one governed (on/off, pause, autonomy) and listed in the Learning console in plain words.
+* **Live use under control.** A learned value reaches a live decision only after a promoted change that bounds it
+  (range, max step) and only while its learner is on; switching it off takes effect at once.
+* **Proof before promotion.** Replay evaluation with confidence intervals for decision changes, shadow runs, sticky
+  canaries with a sequential test, a persistent holdout and a lift report; every change type can be applied and
+  rolled back exactly.
+* **Governance and explainability.** The autonomy × tier gate, never-autonomous changes (refunds, cancellations,
+  pricing, objective, autonomy), change budgets, freeze windows, a ledger event for every governance step, change
+  cards, a weekly digest, and the Why drawer showing which learned facts and versions a decision used.
+
+Known limits, stated rather than hidden:
+
+* **Acceptance criteria AC2/AC3** (holdout lift with a confidence interval above zero; no guardrail worse than
+  baseline over four weeks) need weeks of real traffic. The mechanism runs end to end on the demo tenant's seeded,
+  labelled history; that is a demonstration, not a measured result.
+* **Holdout routing** covers promoted decision changes; config and live-parameter changes are measured by shadow runs
+  and bounded promotion instead.
+* **Replay evaluation** is counterfactual for decision changes; for config and parameter changes there is no
+  recorded data for the alternative value, so the report is an observational comparison and a person decides.
+* **Storefront conversion (CX-02) and chargebacks** need a real storefront and Stripe account; the ingestion
+  endpoints exist and are exercised with test traffic.
+* **NF-08** is a local k6 run on one machine (`docs/perf/`), not a production-sized load test.
 
 ## Seeing it
 
-Open the **Learning Console** (`/learning`) to see active learners and their autonomy level, the proposal queue
-with each one's replay evidence and critic review, running experiments, and lift against the persistent holdout.
-The REST surface is under `/api/v1/learning` — `GET /learners`, `PUT /learners/{id}/autonomy`, `GET /proposals`,
-`POST /proposals/{id}/evaluate`, `POST /proposals/{id}/approve`, `GET /experiments`, `GET /objective`. Two read-only
-MCP tools, `learning_status` and `explain_policy_change`, let an agent ask what's learning right now and why a
-specific change was made — no MCP tool can approve or promote anything.
+Start the app with the demo tenant (`make try` or `scripts/bootstrap.sh`); the demo seeder fills about 135 days of
+labelled history, so the **Learning console** (`/learning`) is populated on first login: Overview (is learning
+helping, what changed, what needs you, outcome coverage), Learners, Changes (each with its change card), Experiments
+and Settings (objective, test-case candidates, fairness, weekly summaries). Open any order's decision and its **Why**
+drawer shows how learning shaped it. `scripts/usecases/uc8-self-optimizing.sh` drives the whole loop on real orders
+against a running app, and `make e2e` runs the Playwright suite that covers it.
+
+The REST surface is under `/api/v1/learning` (listed in `docs/ARCHITECTURE.md` §3.14). Two read-only MCP tools,
+`learning_status` and `explain_policy_change`, let an agent ask what is learning and why a change was made; no MCP
+tool can approve or promote anything.
