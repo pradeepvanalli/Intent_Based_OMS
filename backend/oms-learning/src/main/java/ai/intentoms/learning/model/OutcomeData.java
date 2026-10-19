@@ -43,9 +43,31 @@ public sealed interface OutcomeData {
         }
     }
 
-    /** A return against this order/line (maturity window: 45 days). */
+    /**
+     * A return against this order/line (maturity window: 45 days). One per return: with {@code rmaId} set, the return's
+     * disposition and refund events are merged into a single outcome ({@link #merge}) rather than each adding one, so a
+     * loss is counted once. {@code refunded} says {@code refundAmount} is the refund actually issued rather than the
+     * value of the returned lines while the refund is pending.
+     */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record ReturnOutcome(String reasonCode, String disposition, boolean fraudConfirmed, double refundAmount) implements OutcomeData {}
+    record ReturnOutcome(String reasonCode, String disposition, boolean fraudConfirmed, double refundAmount, String rmaId, boolean refunded) implements OutcomeData {
+        /** An outcome with no return identity (older rows, synthetic history). */
+        public ReturnOutcome(String reasonCode, String disposition, boolean fraudConfirmed, double refundAmount) {
+            this(reasonCode, disposition, fraudConfirmed, refundAmount, null, false);
+        }
+
+        /**
+         * This return's outcome after a later event of the same return: grading that found fraud stays found, the
+         * issued refund replaces the pending estimate (a refund is issued once per return), and the latest real
+         * disposition wins (an automatic one followed by a person's choice is one outcome, not two).
+         */
+        public ReturnOutcome merge(ReturnOutcome later) {
+            String disp = later.disposition() != null && !"refunded".equals(later.disposition()) ? later.disposition() : disposition != null ? disposition : later.disposition();
+            double amount = later.refunded() ? later.refundAmount() : refunded ? refundAmount : Math.max(refundAmount, later.refundAmount());
+            return new ReturnOutcome(later.reasonCode() != null ? later.reasonCode() : reasonCode, disp, fraudConfirmed || later.fraudConfirmed(), amount,
+                rmaId != null ? rmaId : later.rmaId(), refunded || later.refunded());
+        }
+    }
 
     /**
      * Chargeback or payment-level result (maturity window: 120 days for chargebacks). {@code refused} is a payment that

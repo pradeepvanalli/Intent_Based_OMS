@@ -1087,6 +1087,7 @@ public class ReturnService {
     static Map<String, Object> outcomeFacts(ReturnRma rma, Map<String, Object> payload) {
         Map<String, Object> p = new LinkedHashMap<>(payload);
         p.putIfAbsent("orderId", rma.orderId());
+        p.put("rmaId", rma.rmaId()); // keys the return's single outcome: its disposition and refund events merge into one
         if (rma.customerRef() != null) p.putIfAbsent("customerRef", rma.customerRef());
         if (rma.reasonCode() != null) p.putIfAbsent("reasonCode", rma.reasonCode());
         if (rma.condition() != null) p.putIfAbsent("condition", rma.condition());

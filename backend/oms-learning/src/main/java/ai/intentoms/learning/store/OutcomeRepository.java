@@ -31,6 +31,43 @@ public class OutcomeRepository {
             .param("created", Timestamp.from(o.createdAt())).update() == 1;
     }
 
+    /** Replaces the payload of one outcome (a return's events merged into its single outcome). */
+    public void updatePayload(String outcomeId, OutcomeData payload) {
+        jdbc.sql("update outcome set payload = :payload where tenant_id = :t and outcome_id = :id")
+            .param("payload", Jsonb.of(payload)).param("t", TenantContext.require()).param("id", outcomeId).update();
+    }
+
+    /**
+     * The grand total of the order an episode's outcomes are about, for an episode whose outcomes carry no order value
+     * (opened after shipment, so it never saw {@code order.shipped}; a return's decisions have the return, not the
+     * order, as subject). The order is the episode's own when it has one, else the one its outcome events name. Empty
+     * when the order module is not deployed: checked first, because a failed statement would abort the caller's
+     * transaction.
+     */
+    public java.util.Optional<Double> orderValueForEpisode(String episodeId, String orderId) {
+        if (ordersTable == null) ordersTable = jdbc.sql("select to_regclass('orders') is not null").query(Boolean.class).single();
+        if (!Boolean.TRUE.equals(ordersTable)) return java.util.Optional.empty();
+        String t = TenantContext.require();
+        java.util.Optional<Double> own = orderId == null ? java.util.Optional.empty() : grandTotal(t, orderId);
+        if (own.isPresent()) return own;
+        List<String> named = jdbc.sql("""
+            select distinct coalesce(e.payload->>'orderId', e.correlation_id) from outcome x join event e on e.event_id = x.source_event_id and e.tenant_id = x.tenant_id
+            where x.tenant_id = :t and x.episode_id = :ep and coalesce(e.payload->>'orderId', e.correlation_id) is not null
+            """).param("t", t).param("ep", episodeId).query(String.class).list();
+        for (String o : named) {
+            java.util.Optional<Double> v = grandTotal(t, o);
+            if (v.isPresent()) return v;
+        }
+        return java.util.Optional.empty();
+    }
+
+    private java.util.Optional<Double> grandTotal(String tenant, String orderId) {
+        return jdbc.sql("select grand_total from orders where tenant_id = :t and id = :o").param("t", tenant).param("o", orderId)
+            .query(java.math.BigDecimal.class).list().stream().filter(java.util.Objects::nonNull).findFirst().map(java.math.BigDecimal::doubleValue);
+    }
+
+    private volatile Boolean ordersTable;
+
     public List<OutcomeRecord> forEpisode(String episodeId) {
         String t = TenantContext.require();
         return jdbc.sql("select outcome_id, episode_id, type, payload::text as payload, observed_at, source_event_id, created_at from outcome where tenant_id = :t and episode_id = :ep order by observed_at")

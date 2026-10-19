@@ -28,7 +28,7 @@ class ReturnOutcomeFactsTest {
     void wrongItemIsConfirmedFraudAndThePendingRefundIsTheLinesValue() {
         Map<String, Object> p = ReturnService.outcomeFacts(rma("wrong_item", null), Map.of("source", "decision"));
         assertThat(p).containsEntry("orderId", "ord_1").containsEntry("reasonCode", "not_as_described").containsEntry("condition", "wrong_item")
-            .containsEntry("fraudConfirmed", true).containsEntry("refundAmount", 56.0).containsEntry("source", "decision");
+            .containsEntry("fraudConfirmed", true).containsEntry("refundAmount", 56.0).containsEntry("source", "decision").containsEntry("rmaId", "rma_1");
     }
 
     @Test

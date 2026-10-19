@@ -22,8 +22,8 @@ import java.util.Set;
  *   <li>split = extra parcels: 0 for one parcel, 0.5 for two, 1 for three or more. Every parcel beyond the first counts;
  *       whether a single shipment was feasible is not known at outcome time, so this over-penalises an order no single
  *       node could have shipped (the sourcing decision's own split check carries that context);</li>
- *   <li>fraud = loss / order value (1 when the order value is unknown): confirmed-fraud returns, chargebacks (a won
- *       chargeback cancels its loss) and refused cash-on-delivery parcels;</li>
+ *   <li>fraud = loss / order value (1 when the order value is unknown): confirmed-fraud returns (one loss per return,
+ *       keyed by RMA), chargebacks (a won chargeback cancels its loss) and refused cash-on-delivery parcels;</li>
  *   <li>cx = contacts, a complaint counting 1 and a WISMO 0.5, capped at 1;</li>
  *   <li>inv = 1 when the order sold aged stock, 0 when it left stock stranded.</li>
  * </ul>
@@ -36,8 +36,16 @@ public final class RewardCalculator {
 
     public static final List<String> TERMS = List.of("fill", "otd", "cost", "split", "fraud", "cx", "inv");
 
-    public static Map<String, Double> components(List<OutcomeRecord> outcomes) {
+    public static Map<String, Double> components(List<OutcomeRecord> outcomes) { return components(outcomes, 0.0); }
+
+    /**
+     * As {@link #components(List)}, with the order's value to fall back on when no outcome reports one: an episode
+     * opened after shipment never sees {@code order.shipped}, and a loss there must still be a share of the order
+     * (audit A4), not the whole of it.
+     */
+    public static Map<String, Double> components(List<OutcomeRecord> outcomes, double fallbackOrderValue) {
         double shipped = 0, orderValue = 0, fraudLoss = 0, contacts = 0;
+        Map<String, OutcomeData.ReturnOutcome> returns = new LinkedHashMap<>();
         Map<String, Integer> unitsByGroup = new LinkedHashMap<>();
         Map<String, Double> costByGroup = new LinkedHashMap<>();
         Set<String> parcels = new java.util.HashSet<>();
@@ -55,12 +63,15 @@ public final class RewardCalculator {
                     shipped += f.unitsShipped();
                     orderValue = Math.max(orderValue, f.orderValue());
                 }
-                case OutcomeData.ReturnOutcome r -> { if (r.fraudConfirmed()) fraudLoss += r.refundAmount(); }
+                // One loss per return however many of its events were recorded (older rows were stored per event).
+                case OutcomeData.ReturnOutcome r -> returns.merge(r.rmaId() != null ? r.rmaId() : "row" + row, r, OutcomeData.ReturnOutcome::merge);
                 case OutcomeData.PaymentOutcome p -> { if (p.chargeback() || p.refused()) fraudLoss += p.amount(); }
                 case OutcomeData.ContactOutcome ct -> contacts += ct.complaint() ? 1.0 : 0.5;
                 case OutcomeData.InventoryOutcome inv -> { if (inv.stranded()) invRelief = 0.0; else if (inv.daysToSale() > 0) invRelief = 1.0; } // a backorder resolution is not aged-stock relief
             }
         }
+        for (OutcomeData.ReturnOutcome r : returns.values()) if (r.fraudConfirmed()) fraudLoss += r.refundAmount();
+        if (orderValue <= 0) orderValue = Math.max(0.0, fallbackOrderValue);
         double units = unitsByGroup.values().stream().mapToInt(Integer::intValue).sum();
         double cost = costByGroup.values().stream().mapToDouble(Double::doubleValue).sum();
         int packages = parcels.size() + legacyPackages;
@@ -73,6 +84,20 @@ public final class RewardCalculator {
         c.put("cx", clamp(contacts));
         c.put("inv", invRelief == null ? 0.0 : invRelief);
         return c;
+    }
+
+    /** A loss is recorded but no outcome says what the order was worth: the caller should look the order value up. */
+    public static boolean needsOrderValue(List<OutcomeRecord> outcomes) {
+        boolean loss = false;
+        for (OutcomeRecord o : outcomes) {
+            switch (o.payload()) {
+                case OutcomeData.FulfillmentOutcome f -> { if (f.orderValue() > 0) return false; }
+                case OutcomeData.ReturnOutcome r -> loss |= r.fraudConfirmed();
+                case OutcomeData.PaymentOutcome p -> loss |= p.chargeback() || p.refused();
+                default -> { }
+            }
+        }
+        return loss;
     }
 
     /** Terms that have evidence in these outcomes. A term outside this set is still open until its window closes. */

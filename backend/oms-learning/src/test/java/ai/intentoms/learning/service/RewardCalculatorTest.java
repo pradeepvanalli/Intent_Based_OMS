@@ -102,6 +102,37 @@ class RewardCalculatorTest {
         assertThat(RewardCalculator.components(List.of(shipped, out(new OutcomeData.ReturnOutcome("wrong_item", "restock", true, 40.0)))).get("fraud")).isCloseTo(0.4, within(1e-9));
     }
 
+    @Test void aReturnIsOneLossKeyedByRmaAndTheIssuedRefundReplacesThePendingEstimate() {
+        // Audit A2: the disposition (line value 68.0 while the refund is pending) and the refund (72.5 issued) of one
+        // return were summed (140.5 on a 102.36 order, clamped to 1.0).
+        var shipped = out(new OutcomeData.FulfillmentOutcome(1, false, List.of("n"), false, 2, 2, 5.0, 102.36, "fg1", "sh1"));
+        var disposition = out(new OutcomeData.ReturnOutcome("not_as_described", null, true, 68.0, "rma_1", false));
+        var refund = out(new OutcomeData.ReturnOutcome("not_as_described", "refunded", true, 72.5, "rma_1", true));
+        var manual = out(new OutcomeData.ReturnOutcome("not_as_described", "scrap", true, 72.5, "rma_1", false));
+        assertThat(RewardCalculator.components(List.of(shipped, disposition, refund, manual)).get("fraud")).isCloseTo(72.5 / 102.36, within(1e-9));
+        // Two returns of the same order are two losses.
+        var other = out(new OutcomeData.ReturnOutcome("not_as_described", "scrap", true, 10.0, "rma_2", true));
+        assertThat(RewardCalculator.components(List.of(shipped, disposition, refund, other)).get("fraud")).isCloseTo(82.5 / 102.36, within(1e-9));
+
+        OutcomeData.ReturnOutcome merged = new OutcomeData.ReturnOutcome("not_as_described", null, true, 68.0, "rma_1", false)
+            .merge(new OutcomeData.ReturnOutcome("not_as_described", "refunded", true, 72.5, "rma_1", true))
+            .merge(new OutcomeData.ReturnOutcome("not_as_described", "scrap", true, 68.0, "rma_1", false));
+        assertThat(merged).isEqualTo(new OutcomeData.ReturnOutcome("not_as_described", "scrap", true, 72.5, "rma_1", true));
+        assertThat(merged.merge(new OutcomeData.ReturnOutcome("not_as_described", "refunded", true, 72.5, "rma_1", true))).as("idempotent").isEqualTo(merged);
+    }
+
+    @Test void anEpisodeWithNoOrderValueInItsOutcomesUsesTheOrdersValue() {
+        // Audit A4: an episode opened after shipment never sees order.shipped, so the loss was scored as the whole order.
+        var refund = out(new OutcomeData.ReturnOutcome("not_as_described", "scrap", true, 72.5, "rma_1", true));
+        assertThat(RewardCalculator.needsOrderValue(List.of(refund))).isTrue();
+        assertThat(RewardCalculator.components(List.of(refund)).get("fraud")).isEqualTo(1.0);
+        assertThat(RewardCalculator.components(List.of(refund), 102.36).get("fraud")).isCloseTo(72.5 / 102.36, within(1e-9));
+        var shipped = out(new OutcomeData.FulfillmentOutcome(1, false, List.of("n"), false, 2, 2, 5.0, 200.0, "fg1", "sh1"));
+        assertThat(RewardCalculator.needsOrderValue(List.of(shipped, refund))).isFalse();
+        assertThat(RewardCalculator.components(List.of(shipped, refund), 102.36).get("fraud")).as("an outcome's own value wins").isCloseTo(72.5 / 200.0, within(1e-9));
+        assertThat(RewardCalculator.needsOrderValue(List.of(out(new OutcomeData.ContactOutcome("cs", "wismo", false))))).as("no loss, nothing to look up").isFalse();
+    }
+
     @Test void penaltyTermsAreScaledAgainstTheTenantBaselineAndKeepTheirRawValue() {
         Map<String, Double> c = new java.util.LinkedHashMap<>(Map.of("fill", 1.0, "cost", 0.06, "split", 0.5, "cx", 0.0));
         Map<String, Double> n = RewardCalculator.normalise(c, Map.of("cost", 0.12, "split", 0.25));

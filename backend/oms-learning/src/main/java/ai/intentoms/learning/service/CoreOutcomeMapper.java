@@ -39,13 +39,18 @@ public class CoreOutcomeMapper implements OutcomeMapper {
                 str(p.getOrDefault("fulfilmentGroupId", p.get("fulfillmentGroupId"))), str(p.get("shipmentId")));
             // A return is an outcome for the order it came back from (the event carries orderId): grading sets
             // fraudConfirmed (FD-06) and the refund is the loss when it was abuse.
+            // One outcome per return: rmaId keys the merge of its disposition and refund events (OutcomeObserver).
             case "return.refunded", "return.dispositioned", "refund.issued", "oms.returns.refunded", "oms.returns.disposition" -> new OutcomeData.ReturnOutcome(
                 str(p.get("reasonCode")), p.get("disposition") == null ? ("return.refunded".equals(e.type()) ? "refunded" : null) : str(p.get("disposition")),
-                bool(p.get("fraudConfirmed"), false), num(p.getOrDefault("refundAmount", p.get("amount"))).doubleValue());
+                bool(p.get("fraudConfirmed"), false), num(p.getOrDefault("refundAmount", p.get("amount"))).doubleValue(),
+                p.get("rmaId") != null ? str(p.get("rmaId")) : "return".equals(e.aggregateType()) ? e.aggregateId() : null,
+                REFUND_EVENTS.contains(e.type()));
             case "cs.wismo" -> new OutcomeData.ContactOutcome(p.get("channel") == null ? "cs" : str(p.get("channel")), "wismo", false);
             default -> null;
         };
     }
+
+    private static final java.util.Set<String> REFUND_EVENTS = java.util.Set.of("return.refunded", "refund.issued", "oms.returns.refunded");
 
     static String str(Object o) { return o == null ? null : String.valueOf(o); }
     static boolean bool(Object o, boolean def) { return o instanceof Boolean b ? b : def; }
