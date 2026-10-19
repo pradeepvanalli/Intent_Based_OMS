@@ -70,6 +70,7 @@ public class AgentRegistry {
         if (repo.find(r.id()).isPresent()) throw new ConflictException("Agent " + r.id() + " already exists", Map.of("agentId", r.id()));
         AgentLimits limits = r.limits() == null ? new AgentLimits(List.of("order_get"), null, null, 60, List.of()) : r.limits();
         validatePublicKey(r.publicKey());
+        requireMayGrant(limits);
 
         String secret = newSecret();
         ApiKeyService.Issued key = apiKeys.issue(tenant, Principal.Type.AGENT, r.id(), RolesByTier.roles(tier), ToolPermissions.permissionsFor(limits.allowedActions()), tier, "agent:" + r.id());
@@ -95,6 +96,7 @@ public class AgentRegistry {
         if (tier < 0 || tier > 3) throw new ValidationException("trustTier must be 0..3");
         validatePublicKey(u.publicKey());
         AgentLimits limits = cur.limits().merge(u.limits());
+        requireMayGrant(limits);
         String status = u.active() == null ? cur.status() : (u.active() ? "active" : "suspended");
         AgentRepository.Row next = new AgentRepository.Row(cur.tenantId(), cur.agentId(), u.owner() == null || u.owner().isBlank() ? cur.owner() : u.owner().trim(), cur.protocol(), tier,
             cur.secretHash(), cur.secretEnc(), u.publicKey() == null ? cur.publicKey() : blankToNull(u.publicKey()), cur.apiKeyId(), limits,
@@ -151,6 +153,14 @@ public class AgentRegistry {
     public Principal principalFor(AgentIdentity a) {
         Set<String> roles = RolesByTier.roles(a.trustTier());
         return new Principal(Principal.Type.AGENT, a.id(), TenantContext.require(), roles, ToolPermissions.permissionsFor(a.limits().allowedActions()), a.trustTier());
+    }
+
+    /**
+     * D-1: a person registering or changing an agent may give it only tools whose permissions they hold themselves.
+     * Agents loaded from tenant configuration at startup run with no principal and are reviewed config, not a grant.
+     */
+    private void requireMayGrant(AgentLimits limits) {
+        if (authz.currentPrincipal().isPresent()) authz.requireMayGrant(Set.of(), ToolPermissions.permissionsFor(limits.allowedActions()));
     }
 
     private AgentRepository.Row row(String agentId) { return repo.find(agentId).orElseThrow(() -> new NotFoundException("Agent " + agentId + " not found")); }

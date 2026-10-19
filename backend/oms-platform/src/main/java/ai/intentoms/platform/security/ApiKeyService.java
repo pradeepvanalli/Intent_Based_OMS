@@ -62,6 +62,12 @@ public class ApiKeyService {
         jdbc.sql("update api_key set revoked_at = now() where key_id = :k").param("k", keyId).update();
     }
 
+    /** Revokes a key of {@code tenantId} only; false when that tenant has no such key (the API's revoke path). */
+    public boolean revoke(String tenantId, String keyId) {
+        return jdbc.sql("update api_key set revoked_at = coalesce(revoked_at, now()) where key_id = :k and tenant_id = :t")
+            .param("k", keyId).param("t", tenantId).update() > 0;
+    }
+
     public static String sha256(String s) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8)));
