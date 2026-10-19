@@ -267,10 +267,17 @@ export interface LearnerMetrics {
   learnerKey: string; displayName: string; lastRunAt?: string | null; updateLagSeconds?: number | null; coverage?: number | null;
   proposalsDrafted: number; proposalsPromoted: number; proposalsRolledBack: number; proposalYieldPerWeek: number;
   promotionRate: number; rollbackRate: number; running: boolean; gateReason: string;
+  /** E-3: drafts counted for this learner that a person, the template or LLM author drafted on its target. */
+  proposalsDraftedByOthers?: number;
 }
 export interface LiveParameter {
   parameter: string; learnerKey: string; min?: number | null; max?: number | null; maxStep?: number | null; status: string;
   proposalId?: string | null; promotedBy: string; promotedAt: string; revokedBy?: string | null; revokedAt?: string | null;
+}
+/** B-1: the value domain of a learned family a live path reads; a live-use range must sit inside it. */
+export interface LiveFamilyDomain {
+  family: string; kind: 'NUMBER' | 'SWITCH' | 'TABLE'; min: number | null; max: number | null; maxStepLimit: number | null;
+  units: string; description: string; affectedDecisions: string[];
 }
 export interface LiveUseRequest { family: string; learnerKey: string; min?: number | null; max?: number | null; maxStep?: number | null; enabled?: boolean; reason?: string; }
 export type TypedValue =
@@ -294,7 +301,19 @@ export type PolicyChange =
   | { type: 'ParameterChange'; parameter: string; from: unknown; to: unknown }
   | { type: 'AllowListChange'; listName: string; entry: string; add: boolean };
 export interface PolicyChangeset { target: ArtifactRef; baseVersion: number; changes: PolicyChange[]; motivatedBy?: string | null; tier: RiskTier; }
-export interface Review { verdict: 'LOOKS_SAFE' | 'NEEDS_CHANGES' | 'RISKY'; risks: string[]; }
+/** XP-02: the critic runs after every evaluation; source "llm" (the critic model) or "rules" (no key or budget). */
+export interface Review { verdict: 'LOOKS_SAFE' | 'NEEDS_CHANGES' | 'RISKY'; risks: string[]; source?: 'llm' | 'rules' | null; reviewedAt?: string | null; }
+/** FD-04: one policy on the labelled fraud history. */
+export interface FraudPolicyTally {
+  blocked: number; fraudCaught: number; fraudMissed: number; goodBlocked: number; precision: number; recall: number;
+  falsePositiveRate: number; fraudLoss: number; blockingCost: number; expectedCost: number;
+}
+export interface FraudLabelReport {
+  method: 'fraud_label_replay'; decision?: string; sufficient: boolean; reason?: string; labelled?: number; frauds?: number; goods?: number;
+  blockCost?: number; current?: FraudPolicyTally; proposed?: FraudPolicyTally; expectedCostChange?: number; falsePositiveRateChange?: number;
+  recallChange?: number; verdict?: 'lower_cost' | 'higher_cost' | 'no_change'; summary?: string;
+  window?: { from: string; to: string; chargebackWindowDays: number; rule: string };
+}
 export interface ShadowResult { passed?: boolean; reason?: string; [k: string]: unknown; }
 export interface EvaluationReport {
   method?: string; sampleSize?: number; baselineReward?: number; proposedRewardEstimate?: number; liftEstimate?: number | null;
@@ -322,6 +341,11 @@ export interface ChangeCardReplay {
   /** How much of the evidence rests on final (mature) rewards versus provisional ones. */
   rewards?: { mature: number; provisional: number; matureShare: number };
   reason?: string; next?: string; caveat?: string;
+  /** E-2: "reward": liftEstimate is a difference in mean reward on the 0-1 scale, not a percentage. */
+  liftUnit?: 'reward'; baselineReward?: number; proposedRewardEstimate?: number;
+  /** E-2: what a reviewer must see, e.g. a significantly negative plain-IPS estimate. */
+  concerns?: string[];
+  fraudLabels?: FraudLabelReport;
 }
 /** What the lifecycle lets this person do next (defect 2), and what going live would waive (EX-07). */
 export interface ChangeCardActions {
@@ -337,6 +361,8 @@ export interface PromotionNote { by: string; reason: string; waived: string[]; a
 export interface ChangeCard {
   proposal: Proposal; hypothesis?: Hypothesis | null; evidence: string[]; replay: ChangeCardReplay; criticReview?: Review | null;
   diff: KeyDiff[]; cumulative?: CumulativeDiff | null; actions: ChangeCardActions; promotionNote?: PromotionNote | null;
+  /** N5: the learner whose autonomy, kill switch, pause and budget govern this change (whoever drafted it). */
+  governingLearner?: string | null;
 }
 export interface Experiment {
   experimentId: string; proposalId: string; mode: ExperimentMode; trafficShare: number; status: ExperimentStatus;
@@ -357,6 +383,20 @@ export interface LiftMetric {
 export interface LiftReport {
   windowDays: number; since: string; holdout: { experimentId: string; trafficShare: number; startAt: string } | null; note?: string;
   baselines?: unknown; metrics: LiftMetric[]; byDecision?: Record<string, unknown>; minPerArm?: number;
+  /** §12 AC-2: the perfect-order rate, with learning versus the holdout. */
+  headline?: LiftMetric & { label?: string; definition?: string; unit?: string };
+}
+export type GuardrailVerdict = 'worse' | 'not_worse' | 'insufficient';
+/** §12 AC-3: one guardrail, with learning versus the holdout (or the weeks before). */
+export interface GuardrailReportMetric {
+  metric: 'override_rate' | 'latency_p95_ms' | 'contact_rate' | 'fraud_false_positive_rate' | 'perfect_order_rate';
+  label: string; betterWhen: 'higher' | 'lower'; nTreated: number; nComparison: number; treated?: number | null; comparison?: number | null;
+  difference?: number; significant?: boolean; verdict: GuardrailVerdict; reason?: string;
+}
+export interface GuardrailReport {
+  weeks: number; from: string; to: string; comparedWith: 'holdout' | 'baseline'; comparison: string; minSample: number;
+  metrics: GuardrailReportMetric[]; verdict: GuardrailVerdict; summary: string;
+  weekly: { from: string; to: string; treated: Record<string, number | null>; comparison: Record<string, number | null> }[];
 }
 export type DigestRow = Record<string, unknown>;
 export interface DigestSummary {

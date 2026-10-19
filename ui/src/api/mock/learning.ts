@@ -1,10 +1,11 @@
 /* Mock routes for Self-Optimizing Order Orchestration (oms-learning), mirroring the real endpoint shapes. */
 import type {
-  AutonomyLevel, ChangeCard, Digest, Experiment, GoldenCandidate, Hypothesis, KillSwitchState, LearnedFact, LearnerMetrics, LearnerView, LiftReport,
-  LiveParameter, ObjectiveProfile, ObjectiveWeights, ParityReport, PolicyChange, Proposal, ProposalStatus, Review, RiskTier,
+  AutonomyLevel, ChangeCard, ChangeCardReplay, Digest, Experiment, GoldenCandidate, GuardrailReport, Hypothesis, KillSwitchState, LearnedFact, LearnerMetrics, LearnerView, LiftReport,
+  LiveFamilyDomain, LiveParameter, ObjectiveProfile, ObjectiveWeights, ParityReport, PolicyChange, Proposal, ProposalStatus, Review, RiskTier,
 } from '../types';
 import { getSession } from '../../auth/session';
 import { daysAgo, hoursAgo, minutesAgo, nextId } from './data';
+import { rangeProblems } from '../../pages/learning/liveDomains';
 
 type Ctx = { params: Record<string, string>; query: URLSearchParams; body: Record<string, unknown> };
 type On = (method: string, path: string, handler: (ctx: Ctx) => unknown) => void;
@@ -82,7 +83,7 @@ function mk(p: P): Proposal {
 const good = { method: 'ips_doubly_robust', sampleSize: 412, baselineReward: 0.61, proposedRewardEstimate: 0.67, liftEstimate: 0.06, confidenceInterval: { lower: 0.012, upper: 0.108 }, clippedRecords: 3 };
 const proposals: Proposal[] = [
   mk({ proposalId: 'prop_demo1', hypothesisId: 'hyp_demo1', tier: 'T1', status: 'EVALUATED', target: ['decision', 'sourcing_node_score'], changes: [{ type: 'ThresholdChange', decision: 'sourcing_node_score', band: 'act', from: 0.82, to: 0.78 }],
-    criticReview: { verdict: 'LOOKS_SAFE', risks: ['The DC-NV group is small (35 orders); a short trial before going live everywhere is sensible.'] }, evaluationReport: good, createdBy: 'system:band_threshold', createdAt: hoursAgo(24), evaluatedAt: hoursAgo(2) }),
+    criticReview: { verdict: 'LOOKS_SAFE', risks: ['The DC-NV group is small (35 orders); a short trial before going live everywhere is sensible.'], source: 'llm', reviewedAt: hoursAgo(2) }, evaluationReport: good, createdBy: 'system:band_threshold', createdAt: hoursAgo(24), evaluatedAt: hoursAgo(2) }),
   mk({ proposalId: 'prop_demo2', tier: 'T0', status: 'DRAFT', target: ['parameter', 'live:inventory.reservation_ttl'], changes: [{ type: 'ParameterChange', parameter: 'live:inventory.reservation_ttl', from: { enabled: false }, to: { enabled: true, min: 5, max: 60, maxStep: 10, learner: 'inventory_reservation_ttl' } }],
     createdBy: 'user:strategy', createdAt: hoursAgo(1), updatedAt: hoursAgo(1) }),
   mk({ proposalId: 'prop_demo3', hypothesisId: 'hyp_demo2', tier: 'T2', status: 'DRAFT', target: ['decision', 'payment_risk'], changes: [{ type: 'ThresholdChange', decision: 'payment_risk', band: 'act', from: 0.9, to: 0.93 }],
@@ -132,7 +133,52 @@ const lift: LiftReport = {
   windowDays: 90, since: daysAgo(90), holdout: { experimentId: 'exp_holdout', trafficShare: 0.05, startAt: daysAgo(60) }, baselines: {},
   metrics: [metric('reward', 'higher', 0.642, 0.611, 0.014), metric('otd', 'higher', 0.931, 0.902, 0.018), metric('split', 'lower', 0.118, 0.142, 0.02), metric('cost', 'lower', 0.093, 0.095, 0.006), metric('cx', 'lower', 0.041, 0.044, 0.01), metric('fraud', 'lower', 0.004, 0.004, 0.003)],
   byDecision: {}, minPerArm: 30,
+  headline: { ...metric('perfect_order_rate', 'higher', 0.874, 0.842, 0.019, 1800), label: 'Perfect-order rate', definition: 'share of orders delivered in full and on time with nothing going wrong afterwards', unit: 'share' },
 };
+
+/** §12 AC-3 over the last 4 weeks, with learning versus the holdout. */
+type GrMetric = GuardrailReport['metrics'][number];
+const gr = (metric: GrMetric['metric'], label: string, betterWhen: 'higher' | 'lower', treated: number, comparison: number, verdict: GrMetric['verdict'], reason: string, nTreated = 2280, nComparison = 120): GrMetric =>
+  ({ metric, label, betterWhen, nTreated, nComparison, treated, comparison, difference: +(treated - comparison).toFixed(4), verdict, reason });
+const guardrailReport: GuardrailReport = {
+  weeks: 4, from: daysAgo(28), to: now(), comparedWith: 'holdout', comparison: 'customers in the persistent holdout over the same weeks', minSample: 30,
+  metrics: [
+    gr('override_rate', 'Override rate', 'lower', 0.031, 0.034, 'not_worse', '3.1% with learning vs 3.4% (-0.3 points, within noise)'),
+    gr('latency_p95_ms', 'Decision latency (p95)', 'lower', 212, 205, 'not_worse', '212 ms with learning vs 205 ms'),
+    gr('contact_rate', 'Customer contact rate', 'lower', 0.041, 0.044, 'not_worse', '4.1% with learning vs 4.4% (-0.3 points, within noise)'),
+    gr('fraud_false_positive_rate', 'Fraud false-positive rate', 'lower', 0.02, 0.0, 'insufficient', 'need at least 30 cases on each side (56 with learning, 4 to compare with)', 56, 4),
+    gr('perfect_order_rate', 'Perfect-order rate', 'higher', 0.874, 0.842, 'not_worse', '87.4% with learning vs 84.2% (+3.2 points, significant)', 1800, 95),
+  ],
+  verdict: 'insufficient', summary: 'No guardrail is worse so far, but some have too little data to judge',
+  weekly: [28, 21, 14, 7].map((d) => ({ from: daysAgo(d), to: daysAgo(d - 7), treated: { perfectOrderRate: 0.86 + (28 - d) / 1000, overrideRate: 0.032 }, comparison: { perfectOrderRate: 0.84, overrideRate: 0.034 } })),
+};
+
+/** B-1: the value domain of every learned family (mirrors LiveFamilies on the server). */
+const dom = (family: string, kind: LiveFamilyDomain['kind'], min: number | null, max: number | null, units: string, affectedDecisions: string[]): LiveFamilyDomain => ({
+  family, kind, min, max, maxStepLimit: kind === 'NUMBER' && min != null && max != null ? (max - min) / 2 : null, units,
+  description: kind === 'NUMBER' ? `${units}, from ${min} to ${max}` : kind === 'SWITCH' ? `an on/off switch (${units})` : units, affectedDecisions,
+});
+const DOMAINS: LiveFamilyDomain[] = [
+  dom('sourcing.node_reject_rate', 'NUMBER', 0, 1, 'share of orders a node rejects', ['sourcing_node_score']),
+  dom('sourcing.node_on_time_rate', 'NUMBER', 0, 1, 'share of orders a node ships on time', ['sourcing_node_score']),
+  dom('sourcing.reject_penalty', 'NUMBER', 0, 5, 'sourcing score penalty after a rejection', ['sourcing_node_score']),
+  dom('sourcing.node_backlog_breach', 'NUMBER', 0, 1, "probability that a node's backlog breaks the promise", ['sourcing_node_score', 'sla_breach_risk']),
+  dom('sourcing.policy_bandit', 'SWITCH', null, null, 'the explorer may choose the sourcing policy on a small share of orders', ['sourcing_policy_bandit', 'sourcing_node_score']),
+  dom('sourcing.aged_stock_tiebreak', 'SWITCH', null, null, 'near-equal plans prefer the node with the oldest stock', ['sourcing_node_score']),
+  dom('promise.lane_transit_days', 'NUMBER', 0, 60, 'days in transit on a carrier lane', ['sla_breach_risk', 'sourcing_node_score']),
+  dom('promise.lane_calibration', 'NUMBER', -1, 1, 'correction to a stated on-time probability', ['sla_breach_risk', 'sourcing_node_score']),
+  dom('promise.buffer_days', 'NUMBER', 0, 30, 'days of padding on the delivery promise', ['sla_breach_risk']),
+  dom('monitoring.warn_early_threshold', 'NUMBER', 0, 4, 'SLA breach risk score (0 none, 4 certain)', ['sla_breach_risk']),
+  dom('cs.appeasement_level', 'NUMBER', 0, 1000, 'goodwill credit in the order currency', ['appeasement']),
+  dom('inventory.safety_stock', 'NUMBER', 0, 1000000, 'units of safety stock', ['sourcing_node_score']),
+  dom('inventory.reservation_ttl', 'NUMBER', 1, 10080, 'minutes a cart holds stock', ['sourcing_node_score']),
+  dom('inventory.inbound_reliability', 'NUMBER', 0, 1, 'share of announced inbound stock that arrives', ['sourcing_node_score']),
+  dom('inventory.backorder_conversion', 'NUMBER', 0, 1, 'share of backorders customers wait for', ['backorder_next_action']),
+  dom('customer.preferences', 'TABLE', null, null, "each customer's learned preferences (split tolerance, speed vs cost, pickup, channel)", ['fulfilment_intent']),
+  dom('fraud.address_reuse_count', 'NUMBER', 0, 10000, 'number of customers sharing an address', ['payment_risk']),
+  dom('fraud.signal_risk', 'NUMBER', 0, 1, 'fraud rate of a signal level', ['payment_risk']),
+  dom('decision.calibration', 'SWITCH', null, null, 'decisions use the learned confidence curve', []),
+];
 
 const coverage: Record<string, number> = { sourcing_node_score: 0.91, sourcing_policy_bandit: 0.88, payment_risk: 0.84, sla_breach_risk: 0.71 };
 
@@ -140,6 +186,7 @@ const metricsOf = (): LearnerMetrics[] => learners.map((l, i) => ({
   learnerKey: l.learnerKey, displayName: l.displayName, lastRunAt: l.lastRunAt, updateLagSeconds: l.lastRunAt ? Math.round((Date.now() - Date.parse(l.lastRunAt)) / 1000) : null,
   coverage: l.outcomeDecisions.length ? coverage[l.outcomeDecisions[0]] ?? null : null, proposalsDrafted: i % 3 === 0 ? 4 : i % 3, proposalsPromoted: i % 4 === 0 ? 1 : 0, proposalsRolledBack: l.learnerKey === 'band_threshold' ? 1 : 0,
   proposalYieldPerWeek: 0.4, promotionRate: 0.25, rollbackRate: l.learnerKey === 'band_threshold' ? 0.2 : 0, running: l.running, gateReason: l.gateReason,
+  proposalsDraftedByOthers: l.learnerKey === 'band_threshold' ? 1 : 0,
 }));
 
 let objective: ObjectiveProfile = {
@@ -204,6 +251,38 @@ function concernsOf(p: Proposal): string[] {
 const blockerOf = (): string | null => (globalOff ? 'learning is switched off (global kill switch); nothing is promoted until it is back on'
   : tenantPaused ? 'learning is switched off (tenant kill switch); nothing is promoted until it is back on' : null);
 
+/** N5: the learner owning the change's target (mirrors ProposalOwnership on the server, simplified). */
+function governingLearnerOf(p: Proposal): string | null {
+  const name = p.changeset.target.name;
+  const first = p.changeset.changes[0];
+  if (p.changeset.target.type === 'parameter' && name.startsWith('live:')) {
+    const to = first?.type === 'ParameterChange' ? (first.to as Record<string, unknown> | null) : null;
+    return (to?.learner as string | undefined) ?? learners.find((l) => l.liveParameters.includes(name.slice(5)))?.learnerKey ?? null;
+  }
+  const author = p.createdBy.startsWith('system:') ? p.createdBy.slice(7).replace(/^demo-seed\./, '') : null;
+  if (author && learners.some((l) => l.learnerKey === author)) return author;
+  const fraud = ['payment_risk', 'rto_risk', 'return_risk', 'address_risk'].includes(name);
+  if (first?.type === 'ThresholdChange') return fraud ? 'fraud_threshold_tuner' : 'band_threshold';
+  if (first?.type === 'RuleRetire') return 'rule_utilization';
+  if (first?.type === 'RuleAdd') return fraud ? 'fraud_abuse_scanner' : 'override_to_rule';
+  if (name === 'sourcing.weights') return 'sourcing_weights';
+  return null;
+}
+
+/** The card's replay, with what a reviewer must see (E-2). */
+function replayOf(r: NonNullable<Proposal['evaluationReport']>): ChangeCardReplay {
+  const ips = r.ips as ChangeCardReplay['ips'];
+  const concerns: string[] = [];
+  if (ips?.confidenceInterval && ips.confidenceInterval.upper < 0) {
+    concerns.push(`the plain IPS estimate says it makes outcomes worse (reward ${(ips.liftEstimate ?? 0).toFixed(3)}, 95% interval ${ips.confidenceInterval.lower.toFixed(3)} to ${ips.confidenceInterval.upper.toFixed(3)})`);
+  }
+  return {
+    evaluated: true, method: r.method, liftEstimate: r.liftEstimate, confidenceInterval: r.confidenceInterval, sampleSize: r.sampleSize, shadow: r.shadow,
+    ips, rewards: r.rewards as ChangeCardReplay['rewards'], baselineReward: r.baselineReward, proposedRewardEstimate: r.proposedRewardEstimate,
+    liftUnit: typeof r.liftEstimate === 'number' ? 'reward' : undefined, concerns, fraudLabels: r.fraudLabels as ChangeCardReplay['fraudLabels'], reason: r.reason as string | undefined,
+  };
+}
+
 function card(p: Proposal): ChangeCard {
   const h = hypotheses.find((x) => x.hypothesisId === p.hypothesisId) ?? null;
   const viewer = me();
@@ -213,7 +292,8 @@ function card(p: Proposal): ChangeCard {
   const r = p.evaluationReport;
   return {
     proposal: p, hypothesis: h, evidence: h?.evidence ?? [], criticReview: p.criticReview,
-    replay: r ? { evaluated: true, method: r.method, liftEstimate: r.liftEstimate, confidenceInterval: r.confidenceInterval, sampleSize: r.sampleSize, shadow: r.shadow } : { evaluated: false },
+    replay: r ? replayOf(r) : { evaluated: false },
+    governingLearner: governingLearnerOf(p),
     diff,
     cumulative: { target: `${p.changeset.target.type}:${p.changeset.target.name}`, baseline: p.changeset.target.name === 'sourcing_node_score' ? { proposalId: 'prop_old', approvedBy: 'user:admin', approvedAt: daysAgo(40), promotedAt: daysAgo(40) } : null,
       automaticPromotionsSinceBaseline: p.changeset.target.name === 'sourcing_node_score' ? 2 : 0,
@@ -272,10 +352,13 @@ export function registerLearningRoutes({ on, problem }: { on: On; problem: Probl
   on('GET', '/api/v1/learning/coverage', () => coverage);
 
   on('GET', '/api/v1/learning/live-parameters', () => liveParameters);
+  on('GET', '/api/v1/learning/live-parameters/domains', () => DOMAINS);
   on('POST', '/api/v1/learning/live-parameters/proposals', ({ body }) => {
     const family = String(body.family ?? ''); const learnerKey = String(body.learnerKey ?? '');
     const l = findLearner(learnerKey);
     if (!l.liveParameters.includes(family)) return problem(422, 'validation_failed', `${l.displayName} does not feed '${family}'; it feeds [${l.liveParameters.join(', ')}]`);
+    const problems = body.enabled === false ? [] : rangeProblems(DOMAINS.find((d) => d.family === family), body.min as number | null, body.max as number | null, body.maxStep as number | null);
+    if (problems.length) return problem(422, 'validation_failed', `This range cannot be used for ${family}: ${problems.join('; ')}.`, { family, problems });
     const p = mk({ proposalId: nextId('prop'), tier: 'T1', status: 'DRAFT', target: ['parameter', `live:${family}`], createdBy: me(), createdAt: now(), updatedAt: now(),
       changes: [{ type: 'ParameterChange', parameter: `live:${family}`, from: { enabled: false }, to: { enabled: body.enabled !== false, min: body.min, max: body.max, maxStep: body.maxStep, learner: learnerKey } }] });
     proposals.unshift(p); return p;
@@ -314,6 +397,10 @@ export function registerLearningRoutes({ on, problem }: { on: On; problem: Probl
     p.evaluationReport = { ...(p.changeset.target.type === 'decision'
       ? { ...good, sampleSize: 318, liftEstimate: 0.024, confidenceInterval: { lower: 0.003, upper: 0.045 }, ips: { proposedRewardEstimate: 0.66, liftEstimate: 0.021, confidenceInterval: { lower: -0.004, upper: 0.046 } }, rewards: { mature: 240, provisional: 78, matureShare: 0.755 } }
       : { method: 'no_counterfactual', liftEstimate: null, confidenceInterval: null }), ...kept };
+    // XP-02: the critic reviews every evaluation (the rule-based critic in the mock).
+    p.criticReview = p.evaluationReport.method === 'no_counterfactual'
+      ? { verdict: 'NEEDS_CHANGES', risks: ['No counterfactual estimate: the replay could not say what this change would have done'], source: 'rules', reviewedAt: now() }
+      : { verdict: 'LOOKS_SAFE', risks: [], source: 'rules', reviewedAt: now() };
     p.status = 'EVALUATED'; p.evaluatedAt = now(); p.updatedAt = now(); return p;
   });
   on('POST', '/api/v1/learning/proposals/:id/promote', ({ params, body }) => {
@@ -387,6 +474,7 @@ export function registerLearningRoutes({ on, problem }: { on: On; problem: Probl
     experiments.push(e); return e;
   });
   on('GET', '/api/v1/learning/lift', () => lift);
+  on('GET', '/api/v1/learning/guardrails/report', () => guardrailReport);
 
   on('GET', '/api/v1/learning/fairness/features', () => learners.map((l) => ({ learner: l.learnerKey, declaredFeatures: [], protectedFeatures: [] })));
   on('GET', '/api/v1/learning/fairness/:decision', ({ params }) => {

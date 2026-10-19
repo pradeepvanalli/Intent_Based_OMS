@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '../../api/client';
 import { friendlyError } from '../../api/friendly';
 import { learningApi } from '../../api/learning';
-import type { ChangeCard, ExperimentMode, KeyDiff, Proposal } from '../../api/types';
+import type { ChangeCard, ExperimentMode, FraudLabelReport, KeyDiff, Proposal } from '../../api/types';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { JsonTree } from '../../components/Misc';
@@ -13,7 +13,7 @@ import { fmtDateTime, fmtNum, fmtPct, humanize, relTime, valueLabel } from '../.
 import { toast } from '../../lib/toast';
 import { useSession } from '../../auth/session';
 import { DemoBadge, InfoTip, ReasonDialog, Technical } from './Bits';
-import { METHOD_WORDS, POSTAL_REASON_CODES, STATUS_TONE, STATUS_WORDS, TIER_WORDS, VERDICT, authorName, changeSentence, decisionLabel, familyName, isPostalScoped, proposalTitle, replayPhrase, personName } from './copy';
+import { METHOD_WORDS, POSTAL_REASON_CODES, STATUS_TONE, STATUS_WORDS, TIER_WORDS, VERDICT, authorName, changeSentence, decisionLabel, familyName, isPostalScoped, proposalTitle, replayPhrase, personName, rewardDelta } from './copy';
 
 type Dialogs = 'approve' | 'reject' | 'rollback' | 'override' | null;
 
@@ -62,7 +62,8 @@ function CardBody({ card, names }: { card: ChangeCard; names: Map<string, string
         <div className="section-title">What would change</div>
         <ul style={{ margin: 0, paddingLeft: 18 }}>{p.changeset.changes.map((c, i) => <li key={i}>{changeSentence(c)}</li>)}</ul>
         {card.diff.length > 0 && <DiffTable rows={card.diff} caption="Values" />}
-        <div className="xs muted mt2">Suggested by {authorName(p.createdBy, names)} {relTime(p.createdAt)} · {TIER_WORDS[p.tier]}</div>
+        <div className="xs muted mt2">Suggested by {authorName(p.createdBy, names)} {relTime(p.createdAt)} · {TIER_WORDS[p.tier]}
+          {card.governingLearner && <span data-testid="governing-learner"> · governed by {names.get(card.governingLearner) ?? card.governingLearner}<InfoTip text="The learner that owns this kind of change. Its autonomy level, on/off switch, pause and weekly limit decide what this change may do, whoever suggested it." /></span>}</div>
       </section>
 
       <section>
@@ -77,10 +78,14 @@ function CardBody({ card, names }: { card: ChangeCard; names: Map<string, string
 
       {card.criticReview && (
         <section>
-          <div className="section-title">Second opinion <InfoTip text="An independent AI reviewer reads the change and its evidence and lists risks. It cannot approve anything." /></div>
+          <div className="section-title">Second opinion <InfoTip text="A reviewer reads the change and its evidence after every test and lists risks: the AI critic when one is set up, otherwise fixed checks. It cannot approve anything." /></div>
           <div className="row gap2" style={{ alignItems: 'flex-start' }}>
             <Badge tone={VERDICT[card.criticReview.verdict]?.tone ?? 'neutral'}>{VERDICT[card.criticReview.verdict]?.label ?? humanize(card.criticReview.verdict)}</Badge>
             {card.criticReview.risks.length > 0 ? <ul className="small" style={{ margin: 0, paddingLeft: 16 }}>{card.criticReview.risks.map((r, i) => <li key={i}>{r}</li>)}</ul> : <span className="small muted">No risks listed.</span>}
+          </div>
+          <div className="xs muted mt1" data-testid="critic-source">
+            {card.criticReview.source === 'rules' ? 'Reviewed by fixed checks (no AI critic configured or its budget is spent)' : 'Reviewed by the AI critic'}
+            {card.criticReview.reviewedAt ? ` ${relTime(card.criticReview.reviewedAt)}` : ''}, automatically after testing.
           </div>
         </section>
       )}
@@ -136,7 +141,8 @@ function Replay({ card }: { card: ChangeCard }) {
       <div className="section-title">Tested on past decisions? <InfoTip text="The change is replayed against logged decisions and their real outcomes. The range shows how sure the estimate is; it only counts as better when the whole range is above zero." /></div>
       <div className="row wrap gap3" style={{ alignItems: 'baseline' }}>
         <Badge tone={phrase.tone} lg>{phrase.text}</Badge>
-        {r.confidenceInterval && <span className="small muted">likely between {fmtPct(r.confidenceInterval.lower, 1)} and {fmtPct(r.confidenceInterval.upper, 1)}</span>}
+        {r.confidenceInterval && <span className="small muted">likely between {rewardDelta(r.confidenceInterval.lower)} and {rewardDelta(r.confidenceInterval.upper)} reward</span>}
+        {r.baselineReward !== undefined && r.proposedRewardEstimate !== undefined && <span className="small muted">outcome score {fmtNum(r.baselineReward, 3)} → {fmtNum(r.proposedRewardEstimate, 3)} (0 to 1)</span>}
         {r.sampleSize !== undefined && <span className="small muted">{fmtNum(r.sampleSize)} past decisions</span>}
       </div>
       {r.method && <div className="xs muted mt1">{METHOD_WORDS[r.method] ?? humanize(r.method)}</div>}
@@ -145,6 +151,12 @@ function Replay({ card }: { card: ChangeCard }) {
       )}
       {r.method === 'no_counterfactual' && (r.reason || r.next) && <div className="small muted mt1">{r.reason ? `${r.reason}. ` : ''}{r.next ?? ''}</div>}
       {r.caveat && <div className="xs muted mt1">{r.caveat}</div>}
+      {(r.concerns?.length ?? 0) > 0 && (
+        <div className="callout warn mt2" role="status" data-testid="replay-concerns">
+          <span><b>Look at this before approving:</b><ul className="small" style={{ margin: '4px 0 0', paddingLeft: 18 }}>{r.concerns!.map((c, i) => <li key={i}>{c}</li>)}</ul></span>
+        </div>
+      )}
+      {r.fraudLabels && <FraudLabels f={r.fraudLabels} />}
       {r.ips?.confidenceInterval && (
         <Technical><div className="xs muted mono mt1">IPS cross-check: lift {fmtNum(r.ips.liftEstimate ?? 0, 4)} · CI [{fmtNum(r.ips.confidenceInterval.lower, 4)}, {fmtNum(r.ips.confidenceInterval.upper, 4)}]</div></Technical>
       )}
@@ -154,6 +166,29 @@ function Replay({ card }: { card: ChangeCard }) {
         </div>
       )}
     </section>
+  );
+}
+
+/** FD-04: the change on the decision's labelled fraud history, current policy against proposed. */
+function FraudLabels({ f }: { f: FraudLabelReport }) {
+  if (!f.sufficient || !f.current || !f.proposed) {
+    return <div className="small muted mt2" data-testid="fraud-labels">On labelled fraud history: {f.reason ?? 'not enough confirmed labels yet'}.</div>;
+  }
+  const rows: [string, (t: NonNullable<FraudLabelReport['current']>) => string][] = [
+    ['Frauds caught', (t) => `${t.fraudCaught} of ${f.frauds}`], ['Good orders blocked', (t) => `${t.goodBlocked} of ${f.goods}`],
+    ['Precision', (t) => fmtPct(t.precision, 1)], ['Recall', (t) => fmtPct(t.recall, 1)], ['False-positive rate', (t) => fmtPct(t.falsePositiveRate, 1)],
+    ['Fraud loss let through', (t) => fmtNum(t.fraudLoss, 2)], ['Cost of blocking good orders', (t) => fmtNum(t.blockingCost, 2)], ['Expected cost', (t) => fmtNum(t.expectedCost, 2)],
+  ];
+  return (
+    <div className="mt2" data-testid="fraud-labels">
+      <div className="small"><b>On labelled fraud history</b> ({f.labelled} orders with a confirmed outcome, {f.frauds} fraud; goods and frauds from the same weeks):</div>
+      <div className="table-wrap">
+        <table className="tbl dense" aria-label="Labelled fraud history">
+          <thead><tr><th scope="col">Measure</th><th scope="col" className="num">Now</th><th scope="col" className="num">With this change</th></tr></thead>
+          <tbody>{rows.map(([label, v]) => <tr key={label}><td>{label}</td><td className="num">{v(f.current!)}</td><td className="num">{v(f.proposed!)}</td></tr>)}</tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 

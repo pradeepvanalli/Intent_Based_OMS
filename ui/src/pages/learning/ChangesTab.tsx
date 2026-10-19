@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { learningApi } from '../../api/learning';
-import type { LearnerView, LiveParameter, Proposal, ProposalStatus } from '../../api/types';
+import type { LearnerView, LiveFamilyDomain, LiveParameter, Proposal, ProposalStatus } from '../../api/types';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { Input, Select, Textarea } from '../../components/Form';
@@ -14,6 +14,7 @@ import { toast } from '../../lib/toast';
 import { ChangeDrawer } from './ChangeDrawer';
 import { DemoBadge, InfoTip, Technical } from './Bits';
 import { STATUS_TONE, STATUS_WORDS, TIER_WORDS, authorName, familyName, proposalTitle, replayPhrase } from './copy';
+import { rangeProblems } from './liveDomains';
 
 const REFRESH = 30000;
 const GROUPS: { id: string; label: string; statuses: ProposalStatus[]; empty: string }[] = [
@@ -84,6 +85,8 @@ function ChangeRow({ p, names, onOpen }: { p: Proposal; names: Map<string, strin
 function LiveUsePanel({ canAdmin, learners }: { canAdmin: boolean; learners: LearnerView[] }) {
   const qc = useQueryClient();
   const live = useQuery({ queryKey: ['learning', 'live-parameters'], queryFn: learningApi.liveParameters, refetchInterval: REFRESH });
+  const domains = useQuery({ queryKey: ['learning', 'live-domains'], queryFn: learningApi.liveDomains, staleTime: Infinity });
+  const units = useMemo(() => new Map((domains.data ?? []).map((d) => [d.family, d])), [domains.data]);
   const [proposing, setProposing] = useState(false);
   const [revoking, setRevoking] = useState<LiveParameter | null>(null);
   const names = useMemo(() => new Map(learners.map((l) => [l.learnerKey, l.displayName])), [learners]);
@@ -104,7 +107,7 @@ function LiveUsePanel({ canAdmin, learners }: { canAdmin: boolean; learners: Lea
             <div key={p.parameter} className="row-between wrap gap3">
               <div className="col gap1">
                 <span className="strong">{familyName(p.parameter)}</span>
-                <span className="xs muted">From {names.get(p.learnerKey) ?? p.learnerKey}{p.min != null || p.max != null ? ` · allowed ${p.min ?? '…'} to ${p.max ?? '…'}` : ''}{p.maxStep != null ? ` · at most ${p.maxStep} from standard` : ''} · {p.status === 'LIVE' ? `since ${fmtDateTime(p.promotedAt)}` : `switched off ${fmtDateTime(p.revokedAt)}`}</span>
+                <span className="xs muted">From {names.get(p.learnerKey) ?? p.learnerKey}{p.min != null || p.max != null ? ` · allowed ${p.min ?? '…'} to ${p.max ?? '…'}${units.get(p.parameter)?.kind === 'NUMBER' ? ` (${units.get(p.parameter)!.units})` : ''}` : ''}{p.maxStep != null ? ` · at most ${p.maxStep} from standard` : ''} · {p.status === 'LIVE' ? `since ${fmtDateTime(p.promotedAt)}` : `switched off ${fmtDateTime(p.revokedAt)}`}</span>
                 <Technical><span className="xs muted mono">{p.parameter} · proposal {p.proposalId ?? '—'} · by {p.status === 'LIVE' ? p.promotedBy : p.revokedBy}</span></Technical>
               </div>
               <span className="row gap2">
@@ -116,7 +119,7 @@ function LiveUsePanel({ canAdmin, learners }: { canAdmin: boolean; learners: Lea
           ))}
         </div>
       )}
-      <ProposeLiveUse open={proposing} onClose={() => setProposing(false)} learners={learners} />
+      <ProposeLiveUse open={proposing} onClose={() => setProposing(false)} learners={learners} domains={units} />
       <ConfirmDialog open={!!revoking} onClose={() => setRevoking(null)} onConfirm={() => revoking && revoke.mutate(revoking.parameter)} loading={revoke.isPending} danger
         title="Stop using this learned value?" confirmLabel="Switch off"
         body={<p className="small">{revoking ? familyName(revoking.parameter) : ''} goes back to its standard value for every new decision, straight away. Using it again needs a new approval.</p>} />
@@ -124,14 +127,17 @@ function LiveUsePanel({ canAdmin, learners }: { canAdmin: boolean; learners: Lea
   );
 }
 
-function ProposeLiveUse({ open, onClose, learners }: { open: boolean; onClose: () => void; learners: LearnerView[] }) {
+function ProposeLiveUse({ open, onClose, learners, domains }: { open: boolean; onClose: () => void; learners: LearnerView[]; domains: Map<string, LiveFamilyDomain> }) {
   const qc = useQueryClient();
   const options = learners.flatMap((l) => l.liveParameters.map((f) => ({ family: f, learnerKey: l.learnerKey, learner: l.displayName })));
   const [choice, setChoice] = useState('');
   const [min, setMin] = useState(''); const [max, setMax] = useState(''); const [step, setStep] = useState(''); const [reason, setReason] = useState('');
   const picked = options.find((o) => `${o.learnerKey}|${o.family}` === choice);
   const n = (v: string) => (v.trim() === '' ? undefined : Number(v));
-  const invalid = !picked || [min, max, step].some((v) => v.trim() !== '' && Number.isNaN(Number(v)));
+  const domain = picked ? domains.get(picked.family) : undefined;
+  // B-1: the same domain checks the server makes, shown before the request is sent.
+  const problems = rangeProblems(domain, n(min), n(max), n(step));
+  const invalid = !picked || [min, max, step].some((v) => v.trim() !== '' && Number.isNaN(Number(v))) || problems.length > 0;
   const close = () => { setChoice(''); setMin(''); setMax(''); setStep(''); setReason(''); onClose(); };
   const propose = useMutation({
     mutationFn: () => learningApi.proposeLiveUse({ family: picked!.family, learnerKey: picked!.learnerKey, min: n(min), max: n(max), maxStep: n(step), enabled: true, reason: reason.trim() || undefined }),
@@ -144,11 +150,20 @@ function ProposeLiveUse({ open, onClose, learners }: { open: boolean; onClose: (
         <option value="">Choose…</option>
         {options.map((o) => <option key={`${o.learnerKey}|${o.family}`} value={`${o.learnerKey}|${o.family}`}>{familyName(o.family)} — from {o.learner}</option>)}
       </Select>
+      {domain && (
+        <p className="xs muted" data-testid="live-domain" style={{ margin: 0 }}>
+          Values: {domain.description}{domain.maxStepLimit != null ? ` · one change may move it at most ${domain.maxStepLimit}` : ''}
+          {domain.affectedDecisions.length > 0 ? ` · read by ${domain.affectedDecisions.join(', ')}` : ''}
+        </p>
+      )}
       <div className="grid grid-3">
         <Input label="Lowest allowed" inputMode="decimal" value={min} onChange={(e) => setMin(e.target.value)} placeholder="optional" />
         <Input label="Highest allowed" inputMode="decimal" value={max} onChange={(e) => setMax(e.target.value)} placeholder="optional" />
         <Input label="Biggest step from standard" inputMode="decimal" value={step} onChange={(e) => setStep(e.target.value)} placeholder="optional" />
       </div>
+      {problems.length > 0 && (
+        <div className="callout warn" role="alert" data-testid="live-range-problems"><span>This range cannot be used: <ul className="small" style={{ margin: '4px 0 0', paddingLeft: 18 }}>{problems.map((x, i) => <li key={i}>{x}</li>)}</ul></span></div>
+      )}
       <Textarea label="Why (optional)" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Node reliability has 3 months of data and replay shows fewer late deliveries" />
     </Dialog>
   );
