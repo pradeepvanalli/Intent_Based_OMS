@@ -1,7 +1,10 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** Demo users seeded on every tenant (password equals the user id). */
+/**
+ * Demo users (password equals the user id). `platform` is the dev platform engineer (role platform_engineer, signs in
+ * on the demo tenant): the only user who may list tenants or switch learning off for every tenant.
+ */
 export const ROLES = {
   admin: 'admin',
   ops: 'ops',
@@ -9,6 +12,7 @@ export const ROLES = {
   risk: 'risk',
   finance: 'finance',
   strategy: 'strategy',
+  platform: 'platform',
 } as const;
 export type Role = keyof typeof ROLES;
 

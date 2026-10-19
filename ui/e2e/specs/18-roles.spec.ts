@@ -5,11 +5,13 @@ import type { Role } from '../support/roles';
 /**
  * Who may see and change learning (§9.3 permissions, Wave A role grants): learning.read for admin, strategy lead,
  * ops analyst and risk analyst; learning.admin (changes) for admin and strategy lead only; autonomy also needs
- * config.admin. CS reps and finance controllers have no learning access.
+ * config.admin. CS reps and finance controllers have no learning access. The platform engineer holds every permission
+ * on the tenant it signs in to.
  */
 const MATRIX: Record<Role, { read: boolean; change: boolean }> = {
   admin: { read: true, change: true },
   strategy: { read: true, change: true },
+  platform: { read: true, change: true },
   ops: { read: true, change: false },
   risk: { read: true, change: false },
   cs: { read: false, change: false },
