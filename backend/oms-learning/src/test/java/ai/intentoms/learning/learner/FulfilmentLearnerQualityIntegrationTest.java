@@ -56,6 +56,7 @@ class FulfilmentLearnerQualityIntegrationTest extends PostgresTestBase {
     @Autowired PromiseConversionRepository conversions;
     @Autowired WarnEarlyThresholdLearner warnEarly;
     @Autowired ai.intentoms.learning.store.OutcomeRepository outcomes;
+    @Autowired NodeAssignmentRepository assignments;
 
     String tenant;
 
@@ -216,5 +217,53 @@ class FulfilmentLearnerQualityIntegrationTest extends PostgresTestBase {
         assertThat(number(SubjectType.LANE, lane, FactKey.LANE_CALIBRATION_ERROR)).isCloseTo(0.70 - 0.72, within(0.001));
         // Services are never pooled: an express lane from the same node has learned nothing.
         assertThat(facts.active(SubjectType.LANE, LaneDeliveryLearner.laneKey("UPS", "express", node, "606"), FactKey.LANE_TRANSIT_DAYS_P50)).isEmpty();
+    }
+
+    /**
+     * One order.delivered per fulfilment group: only the group's nodes are credited, a partial scan credits nobody, and
+     * a redelivered event for the same group changes nothing.
+     */
+    @Test
+    void aGroupDeliveryCreditsOnlyThatGroupsNode() {
+        String nodeA = "NA-" + Ids.shortId();
+        String nodeB = "NB-" + Ids.shortId();
+        String order = "ord-" + Ids.shortId();
+        LocalDate day = LocalDate.now(ZoneOffset.UTC).minusDays(4);
+        List<Map<String, Object>> pkgs = List.of(
+            Map.of("nodeId", nodeA, "eta", day.plusDays(3).toString(), "onTime", 0.9, "skuClass", "default"),
+            Map.of("nodeId", nodeB, "eta", day.plusDays(3).toString(), "onTime", 0.9, "skuClass", "default"));
+        nodeLearner.on(event("order.sourced", order, Map.of("packages", pkgs, "destinationZip3", "100", "shipMethod", "ground"), day.atTime(9, 0).toInstant(ZoneOffset.UTC)));
+        for (String n : List.of(nodeA, nodeB)) laneLearner.on(event("order.shipped", order, Map.of("nodeId", n, "carrier", "UPS"), day.atTime(14, 0).toInstant(ZoneOffset.UTC)));
+
+        Event partial = event("order.delivered", order, Map.of("orderId", order, "fulfilmentGroupId", "fg1", "nodeIds", List.of(nodeA), "groupDelivered", false,
+            "allDelivered", false, "onTime", true), day.plusDays(1).atTime(12, 0).toInstant(ZoneOffset.UTC));
+        nodeLearner.on(partial);
+        laneLearner.on(partial);
+        assertThat(assignments.assignmentsFor(order)).allMatch(a -> a.deliveredAt() == null);
+
+        Event groupA = event("order.delivered", order, Map.of("orderId", order, "fulfilmentGroupId", "fg1", "nodeIds", List.of(nodeA), "groupDelivered", true,
+            "allDelivered", false, "onTime", true), day.plusDays(2).atTime(12, 0).toInstant(ZoneOffset.UTC));
+        nodeLearner.on(groupA);
+        laneLearner.on(groupA);
+        var after = assignments.assignmentsFor(order);
+        assertThat(after.stream().filter(a -> a.nodeId().equals(nodeA)).findFirst().orElseThrow().deliveredAt()).isNotNull();
+        assertThat(after.stream().filter(a -> a.nodeId().equals(nodeB)).findFirst().orElseThrow().deliveredAt()).isNull();
+        int creditedA = stats.pooled(nodeA, null).sampleSize();
+        assertThat(creditedA).isPositive();
+        assertThat(stats.pooled(nodeB, null).sampleSize()).isZero();
+
+        nodeLearner.on(groupA); // redelivered: counted once
+        laneLearner.on(groupA);
+        Event groupB = event("order.delivered", order, Map.of("orderId", order, "fulfilmentGroupId", "fg2", "nodeIds", List.of(nodeB), "groupDelivered", true,
+            "allDelivered", true, "onTime", false), day.plusDays(5).atTime(12, 0).toInstant(ZoneOffset.UTC));
+        nodeLearner.on(groupB);
+        laneLearner.on(groupB);
+        assertThat(stats.pooled(nodeA, null).sampleSize()).isEqualTo(creditedA);
+        assertThat(stats.pooled(nodeB, null).sampleSize()).isEqualTo(creditedA);
+        Integer laneRows = jdbc.sql("select count(*) from lane_delivery_sample where tenant_id = :t and order_id = :o")
+            .param("t", tenant).param("o", order).query(Integer.class).single();
+        assertThat(laneRows).isEqualTo(4); // two nodes x (ZIP3 lane + carrier/service/origin lane), each once
+        // Node B's parcel arrived after its ETA and is judged on its own group, not on node A's.
+        assertThat(assignments.assignmentsFor(order).stream().filter(a -> a.nodeId().equals(nodeB)).findFirst().orElseThrow().deliveredOnTime()).isFalse();
     }
 }

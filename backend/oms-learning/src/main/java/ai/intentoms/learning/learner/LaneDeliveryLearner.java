@@ -80,7 +80,7 @@ public class LaneDeliveryLearner implements EventSubscriber, GovernedLearner {
     }
 
     private void onDelivered(Event e) {
-        for (NodeAssignmentRepository.Assignment a : assignments.assignmentsFor(e.aggregateId())) {
+        for (NodeAssignmentRepository.Assignment a : NodeAssignmentRepository.deliveredBy(assignments.assignmentsFor(e.aggregateId()), e.payload())) {
             if (a.carrier() == null || a.shippedAt() == null) continue; // no lane without both ends known
             double transitDays = Math.max(0, Duration.between(a.shippedAt(), e.occurredAt()).toMinutes() / 1440.0);
             boolean onTime = a.promisedEta() == null || !e.occurredAt().atZone(ZoneOffset.UTC).toLocalDate().isAfter(a.promisedEta());

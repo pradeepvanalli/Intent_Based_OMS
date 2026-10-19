@@ -117,6 +117,22 @@ public class NodeAssignmentRepository {
             """).param("t", TenantContext.require()).param("m", shipMethod).param("n", nodeId).query(String.class).optional();
     }
 
+    /**
+     * The assignments one {@code order.delivered} event speaks for. The workflow appends one event per fulfilment group
+     * with that group's {@code nodeIds}, so only those nodes are credited; a partial scan ({@code groupDelivered=false})
+     * credits nobody yet, the group is judged when its last parcel arrives. An older event that names no node speaks for
+     * the whole order. Redelivered events change nothing: each (order, node) is counted once.
+     */
+    public static List<Assignment> deliveredBy(List<Assignment> assignments, Map<String, Object> payload) {
+        if (payload == null) return assignments;
+        if (Boolean.FALSE.equals(payload.get("groupDelivered"))) return List.of();
+        java.util.Set<String> nodes = new java.util.HashSet<>();
+        if (payload.get("nodeIds") instanceof List<?> ids) for (Object id : ids) if (id != null) nodes.add(String.valueOf(id));
+        if (nodes.isEmpty() && payload.get("nodeId") != null) nodes.add(String.valueOf(payload.get("nodeId")));
+        if (nodes.isEmpty()) return assignments;
+        return assignments.stream().filter(a -> nodes.contains(a.nodeId())).toList();
+    }
+
     private static Assignment hydrate(Map<String, Object> r) {
         Object eta = r.get("promised_eta");
         Object shipBy = r.get("ship_by");

@@ -140,7 +140,7 @@ public class NodeReliabilityLearner implements EventSubscriber, GovernedLearner 
 
     private void onDelivered(Event e) {
         LocalDate deliveredOn = e.occurredAt().atZone(ZoneOffset.UTC).toLocalDate();
-        for (NodeAssignmentRepository.Assignment a : assignments.assignmentsFor(e.aggregateId())) {
+        for (NodeAssignmentRepository.Assignment a : NodeAssignmentRepository.deliveredBy(assignments.assignmentsFor(e.aggregateId()), e.payload())) {
             boolean onTime = a.promisedEta() == null || !deliveredOn.isAfter(a.promisedEta());
             if (!assignments.recordDelivered(e.aggregateId(), a.nodeId(), e.occurredAt(), onTime)) continue; // already counted
             String skuClass = a.skuClass() == null ? SKU_CLASS : a.skuClass();
