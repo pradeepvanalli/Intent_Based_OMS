@@ -135,7 +135,7 @@ class SooDemoSeederIntegrationTest extends PostgresTestBase {
             assertThat(jdbc.sql("select value::text from tenant_config where tenant_id = :t and key = 'learning.exploration.exception_classify'")
                 .param("t", DEMO).query(String.class).optional()).hasValueSatisfying(v -> assertThat(Double.parseDouble(v.replace("\"", ""))).isEqualTo(0.1));
             // C-N2: labelled resolutions are stored the way the live path stores them (escalated, L3_HUMAN), and they still calibrate.
-            assertThat(jdbc.sql("select count(*) from decision_record where tenant_id = :t and labels ? 'human_resolution' and layer <> 'L3_HUMAN'")
+            assertThat(jdbc.sql("select count(*) from decision_record where tenant_id = :t and labels->'human_resolution' is not null and layer <> 'L3_HUMAN'")
                 .param("t", DEMO).query(Long.class).single()).as("seeded resolutions not stored as escalations").isZero();
             // DF-02: decision.calibration is live through the governed path, so a curve with a filled bin reaches decisions.
             assertThat(curveCalibration.calibrate("return_risk", 2, 0.65)).as("return_risk's learned curve is applied live").isPresent();
