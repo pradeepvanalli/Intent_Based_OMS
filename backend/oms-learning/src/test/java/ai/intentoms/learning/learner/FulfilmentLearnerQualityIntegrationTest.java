@@ -117,6 +117,56 @@ class FulfilmentLearnerQualityIntegrationTest extends PostgresTestBase {
     }
 
     /** FS-01: when sourcing ends up using another policy than the bandit's, the record says so and the reward learner ignores it. */
+    /** Logs a choice of {@code arm} with probability {@code p}, as the live bandit would after drawing it, and rewards its episode. */
+    private String banditChoice(String arm, double p, Map<String, Object> ctx, EpisodeStatus status, double reward) {
+        String order = "ord-" + Ids.shortId();
+        SourcingPolicyBandit.Draw real = bandit.draw(List.of("ship_as_available", "ship_complete"), "ship_as_available", ctx);
+        SourcingPolicyBandit.Draw drawn = new SourcingPolicyBandit.Draw(real.bucket(), real.weights(), real.weightsFrom(), real.exploration(), real.seed(), arm, p, true, arm,
+            "ship_as_available", real.eligible(), real.context(), real.gate(), false, real.startedNanos());
+        var c = bandit.log(order, drawn, arm, null, "system:test");
+        episodes.upsertDecisionPoint(Episode.open(Ids.prefixed("epi"), c.decisionRecordId(), SourcingPolicyBandit.DECISION_NAME, order, null, null, 1, "order", order, Instant.now()));
+        String episodeId = episodes.findByDecisionId(c.decisionRecordId()).orElseThrow().episodeId();
+        episodes.updateStatusAndReward(episodeId, status, reward, Map.of("otd", 1.0), status == EpisodeStatus.MATURE ? Instant.now() : null);
+        return episodeId;
+    }
+
+    private Map<String, Double> bucketWeights(String bucket) {
+        LearnedFact f = facts.active(SubjectType.SEGMENT, SourcingPolicyBandit.bucketSubject(bucket), FactKey.SOURCING_POLICY_PROPENSITY).orElseThrow();
+        return SourcingPolicyBandit.parseWeights(((TypedValue.ListValue) f.value()).values());
+    }
+
+    /**
+     * B3-4 (FS-01, B-4 residue) as the audit saw it: the default arm has 28 matured rewards around 1.9; two explorations of
+     * another arm came back with provisional rewards of 2.149. Provisional rewards must not make that arm the greedy one,
+     * not even with ten of them; once five have matured it may win. Exploration (epsilon / n per arm) is unchanged.
+     */
+    @Test
+    void provisionalRewardsCannotMakeAnArmGreedy() {
+        Map<String, Object> ctx = Map.of("channel", "web", "intentPolicy", "ship_as_available", "basketUnits", 2, "destinationZip", "60606", "networkLoad", "calm");
+        String bucket = SourcingPolicyBandit.bucket(ctx);
+        for (int i = 0; i < 28; i++) banditChoice("ship_as_available", 0.95, ctx, EpisodeStatus.MATURE, 1.85 + (i % 3) * 0.05);
+        List<String> explored = new java.util.ArrayList<>();
+        for (int i = 0; i < 2; i++) explored.add(banditChoice("ship_complete", 0.05, ctx, EpisodeStatus.PROVISIONAL, 2.149));
+        banditRewards.sweepOnce();
+        Map<String, Double> w = bucketWeights(bucket);
+        assertThat(w.get("ship_as_available")).as("weights " + w).isGreaterThan(w.get("ship_complete"));
+        SourcingPolicyBandit.Draw next = bandit.draw(List.of("ship_as_available", "ship_complete"), "ship_as_available", ctx);
+        assertThat(SourcingPolicyBandit.drawProbability("ship_as_available", next.eligible(), next.weights(), next.exploration())).isCloseTo(0.95, within(1e-9));
+        assertThat(SourcingPolicyBandit.drawProbability("ship_complete", next.eligible(), next.weights(), next.exploration())).as("exploration floor").isCloseTo(0.05, within(1e-9));
+
+        // Ten provisional rewards are enough samples, but none is final yet: still not greedy.
+        for (int i = 0; i < 8; i++) explored.add(banditChoice("ship_complete", 0.05, ctx, EpisodeStatus.PROVISIONAL, 2.149));
+        banditRewards.sweepOnce();
+        w = bucketWeights(bucket);
+        assertThat(w.get("ship_as_available")).as("weights " + w).isGreaterThan(w.get("ship_complete"));
+
+        // Five of them mature with the same reward: now the arm has proven itself and takes the greedy slot.
+        for (String id : explored.subList(0, 5)) episodes.updateStatusAndReward(id, EpisodeStatus.MATURE, 2.149, Map.of("otd", 1.0), Instant.now());
+        banditRewards.sweepOnce();
+        w = bucketWeights(bucket);
+        assertThat(w.get("ship_complete")).as("weights " + w).isGreaterThan(w.get("ship_as_available"));
+    }
+
     @Test
     void anOverriddenDrawIsLoggedAsSuchAndLeftOutOfTheReward() {
         parameters.promote(SourcingPolicyBandit.LIVE_PARAMETER, SourcingPolicyBandit.LEARNER_KEY, null, null, null, null, "test");
@@ -132,7 +182,7 @@ class FulfilmentLearnerQualityIntegrationTest extends PostgresTestBase {
             assertThat(rec.propensity()).isEqualTo(1.0);
             assertThat(rec.details()).containsEntry("overridden", true).containsEntry("banditPolicy", d.applied());
             episodes.upsertDecisionPoint(Episode.open(Ids.prefixed("epi"), rec.id(), SourcingPolicyBandit.DECISION_NAME, order, null, null, 1, "order", order, Instant.now()));
-            episodes.updateStatusAndReward(episodes.findByDecisionId(rec.id()).orElseThrow().episodeId(), EpisodeStatus.PROVISIONAL, 0.9, Map.of("otd", 1.0), null);
+            episodes.updateStatusAndReward(episodes.findByDecisionId(rec.id()).orElseThrow().episodeId(), EpisodeStatus.MATURE, 0.9, Map.of("otd", 1.0), Instant.now());
         }
         banditRewards.sweepOnce();
         assertThat(facts.active(SubjectType.SEGMENT, "default", FactKey.SOURCING_POLICY_PROPENSITY)).isEmpty();
