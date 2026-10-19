@@ -690,7 +690,7 @@ public class DecisionRuntime implements DecisionService {
         DecisionRecord record = new DecisionRecord(ev.recordId, ev.def.name(), ev.def.version(), ev.opts.mode(), ev.opts.subjectType(), ev.opts.subjectId(), ev.opts.correlationId(),
             ev.layer, ev.band, ev.action, ev.value, ev.answers, ev.confidence, ev.provider, ev.modelVersion, ev.inputHash, ev.state, ev.input, ev.rulesFired, ev.reasonCodes, latency,
             ev.costUsd, ev.inputTokens, ev.requiresHuman, ev.escalationId, ev.opts.actor().ref(), details, null, null, null, null, Map.of(), ev.startedAt,
-            ev.state, arms, chosenArm, 1.0, ev.def.version());
+            contextFeatures(ev), arms, chosenArm, 1.0, ev.def.version());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("decision", ev.def.name());
         payload.put("version", ev.def.version());
@@ -730,6 +730,22 @@ public class DecisionRuntime implements DecisionService {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /**
+     * OC-01: every record logs the same typed context features, the tokenised state of its input: the state sent to the
+     * provider when one was asked, else (an L0 rule, a cache hit, a kill switch or a failed pre-check) the state built
+     * the same way from the same input, so a rule-decided record is as replayable and learnable as a model-decided one.
+     */
+    private Map<String, Object> contextFeatures(Eval ev) {
+        if (ev.state != null && !ev.state.isEmpty()) return ev.state;
+        try {
+            Map<String, Object> built = stateBuilder.build(ev.def, ev.input == null ? Map.of() : ev.input);
+            return built == null ? Map.of() : built;
+        } catch (RuntimeException e) {
+            log.debug("Context features for {} could not be built: {}", ev.def.key(), e.toString());
+            return Map.of();
+        }
+    }
 
     /**
      * Every candidate a decision could have chosen (OC-01): ranked candidates (top-K decisions, by candidate id), the
@@ -786,7 +802,7 @@ public class DecisionRuntime implements DecisionService {
         DecisionRecord record = new DecisionRecord(ev.recordId, ev.def.name(), ev.def.version(), ev.opts.mode(), ev.opts.subjectType(), ev.opts.subjectId(), ev.opts.correlationId(),
             c.layer(), c.band(), c.action(), c.value(), c.answers(), c.confidence(), c.provider(), c.modelVersion(), ev.inputHash, Map.of(), ev.input, c.rulesFired(), c.reasonCodes(),
             latency, 0.0, 0, c.requiresHuman(), null, ev.opts.actor().ref(), details, null, null, null, null, Map.of(), ev.startedAt,
-            Map.of(), arms, chosenArm, 1.0, ev.def.version());
+            contextFeatures(ev), arms, chosenArm, 1.0, ev.def.version());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("decision", ev.def.name());
         payload.put("version", ev.def.version());
