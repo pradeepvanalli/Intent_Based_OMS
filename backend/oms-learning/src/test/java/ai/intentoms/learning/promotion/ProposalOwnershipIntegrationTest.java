@@ -86,6 +86,40 @@ class ProposalOwnershipIntegrationTest extends DecisionFabricTestBase {
         assertThat(parameters.isLive(family)).isFalse();
     }
 
+    /**
+     * B3-5 as the audit reproduced it: a person promotes live use of inventory.inbound_reliability, then sourcing_node_score
+     * gets overridden more often for reasons that have nothing to do with inbound stock. No decision reads the inventory
+     * number, so no decision's guardrail is its guardrail: the job must leave the promotion alone.
+     */
+    @Test
+    void anInventoryNumberIsNotRolledBackOnUnrelatedNodeScoreOverrides() {
+        ownTenant("b35");
+        String family = "inventory.inbound_reliability";
+        String unrelated = "sourcing_node_score";
+        Instant before = Instant.now().minus(2, ChronoUnit.HOURS);
+        for (int i = 0; i < 10; i++) insertRecord(unrelated, 1, before.plusSeconds(i), "{}", 0.9, 40, null, null, "system:test");
+
+        Proposal p = proposal("user:strategy", new ArtifactRef("parameter", "live:" + family), 0, PolicyChangeset.RiskTier.T1, ProposalStatus.APPROVED,
+            new PolicyChange.ParameterChange("live:" + family, Map.of("enabled", false),
+                Map.of("enabled", true, "min", 0.5, "max", 1.0, "maxStep", 0.25, "learner", "inventory_inbound_reliability")));
+        assertThat(ownership.watchedDecisions(p)).doesNotContain(unrelated);
+        promotion.promote(p.proposalId(), HUMAN, OVERRIDE);
+        assertThat(parameters.isLive(family)).isTrue();
+
+        Instant after = Instant.now().plusMillis(50);
+        for (int i = 0; i < 10; i++) {
+            var r = insertRecord(unrelated, 1, after, "{}", 0.9, 40, null, null, "system:test");
+            if (i < 4) records.override(r.id(), "{}", "ops preferred another node", "user:ops", after);
+        }
+        while (!Instant.now().isAfter(after.plusMillis(10))) Thread.onSpinWait();
+
+        Map<String, Object> run = learning.runJob("guardrails");
+        assertThat(((Number) run.get("result")).intValue()).isZero();
+        assertThat(proposals.get(p.proposalId()).status()).isEqualTo(ProposalStatus.PROMOTED);
+        assertThat(liveParameters.find(family).orElseThrow().status()).isEqualTo("LIVE");
+        assertThat(parameters.isLive(family)).isTrue();
+    }
+
     @Test
     void aSeededLearnerProposalIsGovernedByThatLearnersRealState() {
         ownTenant("n5");
