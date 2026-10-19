@@ -119,6 +119,13 @@ class SooDemoSeederIntegrationTest extends PostgresTestBase {
             // Reference data the learners need: matured fraud labels (FD-01, FD-03), labelled resolutions (DF-02), lane
             // samples with a moderate stated-vs-actual gap (CX-01), storefront impressions (CX-02).
             assertThat(factCount("FRAUD_SIGNAL_RATE")).as("fraud signal rates from the matured cohort").isGreaterThanOrEqualTo(5);
+            // fraud.signal_risk is live: a clean order (no velocity or linkage, a sandbox token many customers share)
+            // must keep a learned rate under the clean-order rule's 0.2, or every new demo order would wait for review.
+            for (String level : List.of("velocity_1h|0", "velocity_24h|0", "address_linkage_count|0", "device_linkage_count|0", "token_customer_count|4+")) {
+                Double rate = jdbc.sql("select (value->>'value')::float from learned_fact where tenant_id = :t and fact_key = 'FRAUD_SIGNAL_RATE' and subject_id = :s and valid_to is null")
+                    .param("t", DEMO).param("s", "payment_risk|" + level).query(Double.class).optional().orElse(0.0);
+                assertThat(rate).as("learned fraud rate of %s", level).isLessThan(0.2);
+            }
             assertThat(jdbc.sql("select count(*) from proposal where tenant_id = :t and created_by = 'system:fraud_threshold_tuner'").param("t", DEMO).query(Long.class).single())
                 .as("the fraud threshold tuner proposed from the matured cohort").isPositive();
             assertThat(jdbc.sql("select count(*) from learned_fact where tenant_id = :t and fact_key = 'CALIBRATION_CURVE' and subject_id = 'sla_breach_risk' and valid_to is null")

@@ -588,12 +588,17 @@ public class SooDemoHistory {
             String orderId = FRAUD_PREFIX + String.format(Locale.ROOT, "%04d", i + 1);
             double ageDays = i % 3 == 0 ? 122.0 + rnd.nextDouble() * 26.0 : 152.0 + rnd.nextDouble() * 148.0;
             Instant at = now.minus(Duration.ofMinutes(Math.round(ageDays * 1440)));
-            int v1 = rnd.nextDouble() < 0.6 ? 0 : rnd.nextDouble() < 0.6 ? 1 : 2 + rnd.nextInt(4);
-            int v24 = v1 + (rnd.nextDouble() < 0.5 ? 0 : 1 + rnd.nextInt(4));
-            int address = rnd.nextDouble() < 0.65 ? 0 : rnd.nextDouble() < 0.5 ? 1 : 2 + rnd.nextInt(5);
-            int device = rnd.nextDouble() < 0.7 ? 0 : rnd.nextDouble() < 0.5 ? 1 : 2 + rnd.nextInt(3);
-            int tokenCustomers = rnd.nextDouble() < 0.85 ? 1 : 2 + rnd.nextInt(3);
-            double risk = 0.01 + 0.05 * Math.min(v1, 4) + 0.03 * Math.min(v24, 6) + 0.06 * Math.min(address, 4) + 0.07 * Math.min(device, 3) + 0.08 * (tokenCustomers - 1);
+            double r1 = rnd.nextDouble(), r24 = rnd.nextDouble(), ra = rnd.nextDouble(), rd = rnd.nextDouble();
+            int v1 = r1 < 0.6 ? 0 : r1 < 0.85 ? 1 : 2 + rnd.nextInt(4);
+            int v24 = v1 + (r24 < 0.55 ? 0 : r24 < 0.85 ? 1 : 2 + rnd.nextInt(4));
+            int address = ra < 0.7 ? 0 : ra < 0.85 ? 1 : ra < 0.95 ? 2 : 3 + rnd.nextInt(4);
+            int device = rd < 0.75 ? 0 : rd < 0.9 ? 1 : 2 + rnd.nextInt(3);
+            // Sandbox and gateway test tokens are shared by many customers, so the card-sharing count says little here
+            // (payment_risk.yaml leaves it to the model); fraud does not depend on it.
+            int tokenCustomers = rnd.nextDouble() < 0.4 ? 1 : 4 + rnd.nextInt(20);
+            // About one order in ten was fraud, nearly all of them with a velocity or linkage signal; a clean order
+            // almost never was, so a clean live order's learned signal rates stay low and its L0 rule still clears it.
+            double risk = 0.01 + (v1 >= 2 ? 0.2 : 0) + (v24 >= 4 ? 0.12 : 0) + (address >= 3 ? 0.25 : address == 2 ? 0.08 : 0) + (device >= 2 ? 0.25 : 0);
             boolean fraud = rnd.nextDouble() < clamp(risk, 0.01, 0.85);
             double total = round2(40 + rnd.nextDouble() * 260);
             Map<String, Object> payment = new LinkedHashMap<>();
@@ -605,7 +610,8 @@ public class SooDemoHistory {
             payment.put("billing_shipping_mismatch", address > 1 && rnd.nextDouble() < 0.5);
             Map<String, Object> input = Map.of("order", Map.of("id", orderId, "total", total, "channel", CHANNELS.get(rnd.nextInt(CHANNELS.size()))),
                 "payment", payment, "agent", Map.of("mandate_present", false));
-            boolean clean = v1 == 0 && v24 <= 1 && address == 0 && device == 0 && tokenCustomers == 1;
+            // The decision's own L0 rule (no_risk_signals) cleared these without a model call.
+            boolean clean = v1 <= 1 && v24 <= 2 && address <= 2 && device <= 1 && !Boolean.TRUE.equals(payment.get("billing_shipping_mismatch"));
             String id = recordId("payment_risk", orderId);
             if (clean) {
                 insert(id, "payment_risk", version, "order", orderId, orderId, Layer.L0_RULE, Band.ACT, false, 1.0, input, List.of("no_risk_signals"), List.of("no_risk_signals"),
