@@ -69,12 +69,21 @@ public class ProposalEvaluationService {
     private final EpisodeRepository episodes;
     private final LearnerRegistry registry;
     private final LearningEvents events;
+    private final ai.intentoms.learning.promotion.HardConstraints hardConstraints;
 
     @Value("${oms.learning.replay.max-resimulated:300}") private int maxResimulated;
     @Value("${oms.learning.replay.min-cohort:20}") private int minCohort;
 
     public ProposalEvaluationService(ProposalRepository proposals, DecisionRecordRepository decisionRecords, DecisionDefinitionRepository definitions,
                                      DecisionDefinitionParser parser, DecisionRuntime runtime, EpisodeRepository episodes, LearnerRegistry registry, LearningEvents events) {
+        this(proposals, decisionRecords, definitions, parser, runtime, episodes, registry, events, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ProposalEvaluationService(ProposalRepository proposals, DecisionRecordRepository decisionRecords, DecisionDefinitionRepository definitions,
+                                     DecisionDefinitionParser parser, DecisionRuntime runtime, EpisodeRepository episodes, LearnerRegistry registry, LearningEvents events,
+                                     ai.intentoms.learning.promotion.HardConstraints hardConstraints) {
+        this.hardConstraints = hardConstraints;
         this.proposals = proposals;
         this.decisionRecords = decisionRecords;
         this.definitions = definitions;
@@ -89,6 +98,17 @@ public class ProposalEvaluationService {
         Proposal proposal = proposals.get(proposalId);
         // Only a draft or an evaluated change is (re-)tested; an approved, live, rejected or rolled-back one is not reopened.
         ai.intentoms.learning.model.ProposalLifecycle.require(proposal, ai.intentoms.learning.model.ProposalStatus.EVALUATED, "re-test");
+        // §7: a change that breaches a hard constraint is refused before any evaluation, never traded off against reward.
+        if (hardConstraints != null) {
+            var violation = hardConstraints.check(proposal.changeset());
+            if (violation.isPresent()) {
+                String reason = "Hard constraint " + violation.get().code() + ": " + violation.get().reason();
+                proposals.reject(proposalId, reason, Instant.now());
+                events.proposalRejected(proposalId, Actor.parse(actorRef), Map.of("target", proposal.changeset().target().toString(), "reason", reason,
+                    "constraint", violation.get().code()));
+                return proposals.get(proposalId);
+            }
+        }
         ArtifactRef target = proposal.changeset().target();
         Map<String, Object> report = switch (target.type()) {
             case "decision" -> evaluateDecision(proposal, target.name());

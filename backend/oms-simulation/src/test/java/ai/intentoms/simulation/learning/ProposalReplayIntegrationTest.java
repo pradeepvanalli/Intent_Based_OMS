@@ -175,4 +175,28 @@ class ProposalReplayIntegrationTest extends PostgresTestBase {
         Proposal weights = draft(new ArtifactRef("config", "sourcing.weights"), 0, new PolicyChange.WeightChange("sourcing.weights", "cost", 0.5, 0.4));
         assertThat(evaluations.evaluate(weights.proposalId(), "user:tester").evaluationReport().get("method")).isEqualTo("no_counterfactual");
     }
+
+    /** §7: a change that breaches a hard constraint is refused before evaluation, with the constraint named. */
+    @Test
+    void hardConstraintViolationsAreRefusedBeforeEvaluation() {
+        Proposal floor = draft(new ArtifactRef("config", "sourcing.margin_floor"), 0, new PolicyChange.ParameterChange("sourcing.margin_floor", 0.12, -0.5));
+        Proposal f = evaluations.evaluate(floor.proposalId(), "user:tester");
+        assertThat(f.status()).isEqualTo(ProposalStatus.REJECTED);
+        assertThat(f.rejectedReason()).startsWith("Hard constraint HC-1");
+
+        Proposal compliance = draft(new ArtifactRef("decision", "payment_risk"), 1, new PolicyChange.RuleRetire("payment_risk", "sanctions_screening", "never fires"));
+        assertThat(evaluations.evaluate(compliance.proposalId(), "user:tester").rejectedReason()).startsWith("Hard constraint HC-2");
+
+        Proposal refund = draft(new ArtifactRef("config", "autonomy.allowed_actions"), 0, new PolicyChange.AllowListChange("autonomy.allowed_actions", "refund", true));
+        assertThat(evaluations.evaluate(refund.proposalId(), "user:tester").rejectedReason()).startsWith("Hard constraint HC-3");
+
+        Proposal cap = draft(new ArtifactRef("config", "autonomy.max_refund_usd_per_day"), 0, new PolicyChange.ParameterChange("autonomy.max_refund_usd_per_day", 200, 5000));
+        assertThat(evaluations.evaluate(cap.proposalId(), "user:tester").rejectedReason()).startsWith("Hard constraint HC-4");
+
+        Proposal capacity = draft(new ArtifactRef("config", "node.DC-NJ.capacity_units"), 0, new PolicyChange.ParameterChange("node.DC-NJ.capacity_units", 1000, 1500));
+        assertThat(evaluations.evaluate(capacity.proposalId(), "user:tester").rejectedReason()).startsWith("Hard constraint HC-5");
+
+        Proposal protectedRule = draft(new ArtifactRef("decision", "payment_risk"), 1, new PolicyChange.RuleAdd("payment_risk", "input.customer.gender == 'f'", "true", "x"));
+        assertThat(evaluations.evaluate(protectedRule.proposalId(), "user:tester").rejectedReason()).startsWith("Hard constraint HC-6");
+    }
 }
