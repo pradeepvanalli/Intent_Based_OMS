@@ -48,7 +48,8 @@ import java.util.Optional;
  *
  * <p>Without a model key, or once the monthly learning budget is spent, the {@link TemplateAuthor} writes what a
  * hypothesis states precisely (a rule people agreed on, a rule to retire, an abuse rule, an allow-list change), labelled
- * as template output. The model is always preferred when it is available.
+ * as template output. The model is always preferred when it is available, except for changes a hypothesis states
+ * exactly: allow-list changes and plan-score weight changes (FS-04) are written as stated in either case.
  */
 @Service
 public class AuthorService {
@@ -97,6 +98,8 @@ public class AuthorService {
         Hypothesis h = hypotheses.find(hypothesisId).orElseThrow(() -> new ValidationException("Hypothesis " + hypothesisId + " not found"));
         if (h.status() != Hypothesis.Status.OPEN) return Optional.empty();
         if (TemplateAuthor.allowList(h)) return template.draft(h); // a config list change: exact, no model needed
+        // FS-04: a weight hypothesis states exact numbers its learner derived and replays; there is nothing for a model to add.
+        if (ai.intentoms.learning.model.WeightLever.of(h).isPresent()) return template.draft(h);
         if (!llm.available()) { log.info("Author: no copilot model key configured, using the template author"); return template.draft(h); }
         String leverTarget = leverTarget(h);
         ArtifactRef ref;

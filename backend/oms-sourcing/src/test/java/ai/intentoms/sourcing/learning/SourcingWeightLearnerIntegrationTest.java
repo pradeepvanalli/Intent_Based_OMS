@@ -3,8 +3,10 @@ package ai.intentoms.sourcing.learning;
 import ai.intentoms.learning.model.Episode;
 import ai.intentoms.learning.model.EpisodeStatus;
 import ai.intentoms.learning.model.PolicyChange;
-import ai.intentoms.learning.model.Proposal;
+import ai.intentoms.learning.model.Hypothesis;
+import ai.intentoms.learning.model.WeightLever;
 import ai.intentoms.learning.store.EpisodeRepository;
+import ai.intentoms.learning.store.HypothesisRepository;
 import ai.intentoms.learning.store.ProposalRepository;
 import ai.intentoms.platform.ids.Ids;
 import ai.intentoms.platform.jdbc.Jsonb;
@@ -20,14 +22,19 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 
-/** FS-04: chosen-plan score components paired with episode rewards become a WeightChange proposal on sourcing.weights, validated by replay. */
+/**
+ * FS-04: chosen-plan score components paired with episode rewards become a typed weight hypothesis on sourcing.weights,
+ * and the learner serves the replay that validates it (the Author turns it into the WeightChange proposal, see
+ * oms-copilot's WeightChangeAuthorIntegrationTest).
+ */
 class SourcingWeightLearnerIntegrationTest extends SourcingTestBase {
     @Autowired SourcingWeightLearner learner;
     @Autowired EpisodeRepository episodes;
     @Autowired ProposalRepository proposals;
+    @Autowired HypothesisRepository hypotheses;
 
-    @Test
-    void outcomesThatFollowOnTimePlansShiftWeightTowardTime() {
+    /** 60 orders whose reward follows the on-time component; each also has a dearer, more on-time plan it did not pick. */
+    static void rewardedHistory(org.springframework.jdbc.core.simple.JdbcClient jdbc, EpisodeRepository episodes, String tenant) {
         for (int i = 0; i < 60; i++) {
             String order = "ord-" + Ids.shortId();
             double time = (i % 10) / 10.0;                       // on-time component varies 0..0.9
@@ -43,21 +50,31 @@ class SourcingWeightLearnerIntegrationTest extends SourcingTestBase {
             episodes.upsertDecisionPoint(Episode.open(Ids.prefixed("epi"), dr, SoftScorer.DECISION, order, null, null, 1, "order", order, Instant.now()));
             episodes.updateStatusAndReward(episodes.findByDecisionId(dr).orElseThrow().episodeId(), EpisodeStatus.PROVISIONAL, 0.2 + time, Map.of("otd", time), null);
         }
+    }
+
+    @Test
+    void outcomesThatFollowOnTimePlansShiftWeightTowardTime() {
+        rewardedHistory(jdbc, episodes, tenant);
 
         assertThat(learner.sweepOnce()).isEqualTo(1);
-        Proposal p = proposals.byStatus("EVALUATED", 50).stream().filter(x -> SourcingWeightLearner.TARGET.equals(x.changeset().target().toString())).findFirst().orElseThrow();
-        // Replay: the re-scored plans change some choices, and the reward model says that is better, with an interval above zero.
-        assertThat(p.evaluationReport()).containsEntry("method", "plan_rescoring_replay");
-        assertThat(((Number) p.evaluationReport().get("decisionsChanged")).intValue()).isGreaterThan(0);
-        assertThat(((Number) p.evaluationReport().get("liftEstimate")).doubleValue()).isGreaterThan(0);
-        @SuppressWarnings("unchecked") Map<String, Object> ci = (Map<String, Object>) p.evaluationReport().get("confidenceInterval");
-        assertThat(((Number) ci.get("lower")).doubleValue()).isGreaterThan(0);
-        assertThat(p.createdBy()).isEqualTo("system:" + SourcingWeightLearner.KEY);
-        assertThat(p.hypothesisId()).isNotNull();
-        PolicyChange.WeightChange time = p.changeset().changes().stream().map(c -> (PolicyChange.WeightChange) c).filter(c -> c.weightKey().equals("time")).findFirst().orElseThrow();
+        Hypothesis h = hypotheses.byStatus("OPEN", 50).stream().filter(x -> WeightLever.of(x).isPresent()).findFirst().orElseThrow();
+        WeightLever lever = WeightLever.of(h).orElseThrow();
+        assertThat(lever.target()).isEqualTo(SourcingWeightLearner.TARGET);
+        assertThat(lever.current()).isEqualTo(learner.liveWeights());
+        assertThat(lever.samples()).isEqualTo(60);
+        PolicyChange.WeightChange time = lever.changes().stream().map(c -> (PolicyChange.WeightChange) c).filter(c -> c.weightKey().equals("time")).findFirst().orElseThrow();
         assertThat(time.to()).isGreaterThan(time.from());
         assertThat(time.to() - time.from()).isLessThanOrEqualTo(0.05 + 1e-9);
-        // A second run does not stack another proposal on the same target while this one is open.
+        assertThat(proposals.existsOpenFor(SourcingWeightLearner.TARGET)).as("the Author drafts the proposal, not the learner").isFalse();
+
+        // Replay: the re-scored plans change some choices, and the reward model says that is better, with an interval above zero.
+        Map<String, Object> report = learner.report(lever.current(), lever.proposed());
+        assertThat(report).containsEntry("method", "plan_rescoring_replay");
+        assertThat(((Number) report.get("decisionsChanged")).intValue()).isGreaterThan(0);
+        assertThat(((Number) report.get("liftEstimate")).doubleValue()).isGreaterThan(0);
+        @SuppressWarnings("unchecked") Map<String, Object> ci = (Map<String, Object>) report.get("confidenceInterval");
+        assertThat(((Number) ci.get("lower")).doubleValue()).isGreaterThan(0);
+        // A second run does not stack another hypothesis on the same target while this one is open.
         assertThat(learner.sweepOnce()).isZero();
     }
 

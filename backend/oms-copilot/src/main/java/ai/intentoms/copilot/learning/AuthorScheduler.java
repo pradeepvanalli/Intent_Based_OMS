@@ -26,7 +26,7 @@ import java.util.Set;
 @Component
 public class AuthorScheduler {
     private static final Logger log = LoggerFactory.getLogger(AuthorScheduler.class);
-    static final Set<String> AUTHORED_ACTIONS = Set.of("add_rule", "retire_rule", "allow_list_change");
+    static final Set<String> AUTHORED_ACTIONS = Set.of("add_rule", "retire_rule", "allow_list_change", ai.intentoms.learning.model.WeightLever.ACTION);
 
     private final AuthorService author;
     private final HypothesisRepository hypotheses;
