@@ -176,14 +176,31 @@ export function proposalTitle(p: Proposal): string {
   return p.changeset.changes.length > 1 ? `${s} (+${p.changeset.changes.length - 1} more)` : s;
 }
 
+/** System actors that draft, review or change proposals, in words a person would use. */
+const SYSTEM_ACTORS: Record<string, string> = {
+  author: 'the AI change drafter',
+  'template-author': 'the change drafter (template, no AI)',
+  analyst: 'the AI analyst',
+  'promotion-service': 'the promotion gate',
+  'guardrail-breach-monitor': 'the guardrail monitor',
+  'experiment-manager': 'the experiment manager',
+  'coverage-monitor': 'the coverage monitor',
+  'fraud-drift-monitor': 'the fraud drift monitor',
+  'learning-governance': 'learning governance',
+  'crypto-shred': 'customer erasure',
+};
+
+/** A seeded actor's "who": a person's role, a system actor, or a learner key. */
+function seededWho(who: string, learnerNames?: Map<string, string>): string {
+  return learnerNames?.get(who) ?? SYSTEM_ACTORS[who] ?? (who === 'strategy' ? 'strategy lead' : who);
+}
+
 /** An actor reference as a person would read it: "user:alice" → "alice", a seeded actor → "admin (demo)". */
 export function personName(ref: string | null | undefined): string | undefined {
   if (!ref) return undefined;
   if (ref === 'system:demo-seed') return 'demo data';
-  if (ref.startsWith('system:demo-seed.')) {
-    const who = ref.slice('system:demo-seed.'.length);
-    return `${who === 'strategy' ? 'strategy lead' : who} (demo)`;
-  }
+  if (ref.startsWith('system:demo-seed.')) return `${seededWho(ref.slice('system:demo-seed.'.length))} (demo)`;
+  if (ref.startsWith('system:') && SYSTEM_ACTORS[ref.slice(7)]) return SYSTEM_ACTORS[ref.slice(7)];
   return ref.replace(/^(user|system):/, '');
 }
 
@@ -191,14 +208,10 @@ export function personName(ref: string | null | undefined): string | undefined {
 export function authorName(createdBy: string | null | undefined, learnerNames: Map<string, string>): string {
   if (!createdBy) return 'unknown';
   if (createdBy === 'system:demo-seed') return 'demo data';
-  if (createdBy.startsWith('system:demo-seed.')) {
-    // Seeded on behalf of a person or a learner: say who, and that it is demo data.
-    const who = createdBy.slice('system:demo-seed.'.length);
-    const name = learnerNames.get(who) ?? (who === 'strategy' ? 'strategy lead' : who);
-    return `${name} (demo)`;
-  }
-  if (createdBy === 'system:author') return 'the AI change drafter';
+  // Seeded on behalf of a person, a system actor or a learner: say who, and that it is demo data.
+  if (createdBy.startsWith('system:demo-seed.')) return `${seededWho(createdBy.slice('system:demo-seed.'.length), learnerNames)} (demo)`;
   const key = createdBy.replace(/^system:/, '');
+  if (createdBy.startsWith('system:') && SYSTEM_ACTORS[key]) return SYSTEM_ACTORS[key];
   if (learnerNames.has(key)) return learnerNames.get(key)!;
   return createdBy.replace(/^(user|system):/, '');
 }
