@@ -184,7 +184,7 @@ public class StuckOrderDiagnosisInputBuilder {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("notes_count", notes.size());
         Note latest = notes.get(notes.size() - 1);
-        if (latest.text() != null && !latest.text().isBlank()) m.put("latest_note", latest.text());
+        if (latest.text() != null && !latest.text().isBlank()) m.put("latest_note", ai.intentoms.platform.pii.FreeTextRedactor.redact(latest.text())); // NF-07
         return Optional.of(m);
     }
 

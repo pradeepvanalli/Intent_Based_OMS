@@ -73,7 +73,9 @@ public class CsReplyService {
     public CsDraft draft(String orderId, String customerMessage, String intentHint) {
         if (customerMessage == null || customerMessage.isBlank()) throw new ValidationException("The customer message is required");
         OrderView view = orders.view(orderId);
-        Map<String, Object> classification = classify(view, customerMessage, intentHint);
+        // NF-07: contact details typed into the message never reach the decision log or the model prompt.
+        String redacted = ai.intentoms.platform.pii.FreeTextRedactor.redact(customerMessage);
+        Map<String, Object> classification = classify(view, redacted, intentHint);
         String intent = String.valueOf(classification.get("intent"));
         recordWismo(orderId, intent, customerMessage);
         Map<String, Object> facts = facts(view);
@@ -81,7 +83,7 @@ public class CsReplyService {
         if (llm.available()) {
             try {
                 Map<String, Object> payload = new LinkedHashMap<>();
-                payload.put("customerMessage", Untrusted.text("customer", customerMessage));
+                payload.put("customerMessage", Untrusted.text("customer", redacted));
                 payload.put("classifiedIntent", intent);
                 payload.put("facts", facts);
                 payload.put("slots", slots);
