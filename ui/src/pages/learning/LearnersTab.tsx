@@ -88,7 +88,7 @@ export function LearnersTab({ canAdmin, canConfigure, killSwitch }: { canAdmin: 
         body={<p className="small">Every learner stops, and live decisions go back to their standard values straight away. Nothing already learned is lost; you can resume at any time.</p>} />
       <ConfirmDialog open={confirmGlobal} onClose={() => setConfirmGlobal(false)} onConfirm={() => global.mutate(false)} loading={global.isPending} danger
         title="Stop learning for every tenant?" confirmLabel="Stop learning everywhere"
-        body={<p className="small">This is the platform-wide kill switch. Every tenant's learners stop, nothing is promoted, and live decisions everywhere go back to their standard values until a platform administrator restarts learning.</p>} />
+        body={<p className="small">This is the platform-wide kill switch. Every tenant's learners stop, nothing is promoted, and live decisions everywhere go back to their standard values until a platform engineer restarts learning.</p>} />
     </div>
   );
 }

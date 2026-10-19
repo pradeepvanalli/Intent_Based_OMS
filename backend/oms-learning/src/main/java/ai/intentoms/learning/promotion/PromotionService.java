@@ -82,8 +82,9 @@ public class PromotionService {
     private final ai.intentoms.learning.store.HypothesisRepository hypotheses;
     private final ai.intentoms.learning.experiment.ExperimentManager experiments;
     private final List<ConfigDefaults> configDefaults;
+    private final ProposalOwnership ownership;
 
-    /** Promotions of one target per week when the proposal has no governing learner (a person drafted it), GV-02. */
+    /** Promotions of one target per week when no learner owns the proposal's target, GV-02. */
     public static final String TARGET_BUDGET_KEY = "learning.max_promotions_per_target_per_week";
 
     public PromotionService(ProposalRepository proposals, LearnerRepository learners, ObjectiveProfileRepository objectives, LearnedFactRepository facts,
@@ -91,7 +92,8 @@ public class PromotionService {
                              ai.intentoms.decision.record.DecisionRecordRepository decisionRecords, ParameterResolver parameters, LiveParameterRepository liveParameters,
                              LearnerRegistry registry, TenantConfigStore config, LearningBaselineRepository baselines,
                              ai.intentoms.learning.governance.LearnerGovernance governance, ai.intentoms.learning.store.HypothesisRepository hypotheses,
-                             ai.intentoms.learning.experiment.ExperimentManager experiments, List<ConfigDefaults> configDefaults) {
+                             ai.intentoms.learning.experiment.ExperimentManager experiments, List<ConfigDefaults> configDefaults, ProposalOwnership ownership) {
+        this.ownership = ownership;
         this.governance = governance;
         this.hypotheses = hypotheses;
         this.experiments = experiments;
@@ -310,7 +312,7 @@ public class PromotionService {
         String by = "proposal:" + p.proposalId();
         if (Boolean.FALSE.equals(to.get("enabled"))) parameters.revoke(family, by);
         else {
-            String learner = to.get("learner") == null ? learnerKeyOf(p) : String.valueOf(to.get("learner"));
+            String learner = to.get("learner") != null ? String.valueOf(to.get("learner")) : governingLearner(p);
             parameters.promote(family, learner, num(to.get("min")), num(to.get("max")), num(to.get("maxStep")), p.proposalId(), by);
         }
         return s;
@@ -422,7 +424,8 @@ public class PromotionService {
         liveParameters.find(family).map(LiveParameterRepository.LiveParameter::proposalId).flatMap(proposals::find).ifPresent(p -> {
             if (p.status() != ProposalStatus.PROMOTED) return;
             String why = "live use of " + family + " switched off by " + by.ref();
-            proposals.rollback(p.proposalId(), why, Instant.now());
+            // N4: a precautionary switch-off, not evidence against the change; people may propose it again at once.
+            proposals.rollback(p.proposalId(), why, Instant.now(), false);
             events.proposalRolledBack(p.proposalId(), by, Map.of("target", p.changeset().target().toString(), "reason", why, "restored", Map.of("kind", "live", "family", family, "live", false)));
         });
     }
@@ -438,17 +441,25 @@ public class PromotionService {
 
     // ------------------------------------------------------------------ helpers
 
-    /** The governing learner's state; a proposal a person authored has no learner, so only tier rules apply to it. */
+    /**
+     * N5: the state of the learner that owns the proposal's target ({@link ProposalOwnership}), whoever drafted it, so
+     * that learner's autonomy, kill switch, pause and budget apply. Only a change no learner owns gets the tier-only
+     * default (L1 and the tenant's per-target budget).
+     */
     private LearnerState learnerFor(Proposal p) {
-        String key = learnerKeyOf(p);
-        if (registry.descriptor(key).isPresent()) return learners.getOrCreate(key);
-        return new LearnerState(key, AutonomyLevel.L1_RECOMMEND, true, Integer.MAX_VALUE, null, null, "system", Instant.now(), null);
+        var owner = ownership.owner(p);
+        if (owner.isPresent()) return learners.getOrCreate(owner.get());
+        return new LearnerState(learnerKeyOf(p), AutonomyLevel.L1_RECOMMEND, true, Integer.MAX_VALUE, null, null, "system", Instant.now(), null);
     }
 
-    /** Proposals are authored as {@code system:<learner_key>}; the governance row is keyed by the bare learner key. */
+    /** The key of the learner governing this proposal, or the bare author when no learner owns its target. */
+    public String governingLearner(Proposal p) { return ownership.owner(p).orElse(learnerKeyOf(p)); }
+
+    /** The author without its {@code system:} or {@code system:demo-seed.} prefix (a learner key when a learner drafted it). */
     static String learnerKeyOf(Proposal p) {
         String by = p.createdBy() == null ? "" : p.createdBy();
-        return by.startsWith("system:") ? by.substring("system:".length()) : by;
+        String learner = ProposalOwnership.authorLearner(by);
+        return learner != null ? learner : by;
     }
 
     /** Tenant config stores JSON; a plain string must be written as a JSON string, not as raw JSON text. */

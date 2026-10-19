@@ -20,6 +20,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /** Persistence for {@code proposal} — the author LLM's or a learner's draft changeset (§6.2, §9.1). */
 @Repository
@@ -70,7 +71,11 @@ public class ProposalRepository {
         int days = config == null ? DEFAULT_COOLDOWN_DAYS : Math.max(0, config.getInt(COOLDOWN_KEY, DEFAULT_COOLDOWN_DAYS));
         if (days > 0) {
             String fp = fingerprint(target, p.changeset().changes());
+            // N4: a precautionary switch-off of live use is no evidence against the change, so it only holds learners back.
+            boolean byLearner = p.createdBy() != null && p.createdBy().startsWith("system:");
+            Set<String> forCause = rolledBackForCauseSince(target, Instant.now().minus(java.time.Duration.ofDays(days)));
             for (Proposal rb : rolledBackSince(target, Instant.now().minus(java.time.Duration.ofDays(days)))) {
+                if (!byLearner && !forCause.contains(rb.proposalId())) continue;
                 if (fp.equals(fingerprint(target, rb.changeset().changes()))) {
                     String when = rb.rolledBackAt() == null ? "recently" : "on " + rb.rolledBackAt().toString().substring(0, 10);
                     String why = rb.rolledBackReason() == null ? "no reason given" : rb.rolledBackReason();
@@ -141,11 +146,22 @@ public class ProposalRepository {
             .param("r", Json.write(report)).param("at", Timestamp.from(at)).param("kept", KEPT_SECTIONS).param("t", TenantContext.require()).param("id", id)
             .param("from", ProposalLifecycle.sourcesOf(ProposalStatus.EVALUATED)).update();
         if (n == 0) throw refused(id, "re-test");
+        if (publisher != null) publisher.publishEvent(new Evaluated(TenantContext.require(), id));
     }
 
+    /** XP-02: published whenever a proposal is (re-)evaluated, so the critic reviews it ({@code AutoCritic}). */
+    public record Evaluated(String tenantId, String proposalId) {}
+
+    private org.springframework.context.ApplicationEventPublisher publisher;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setPublisher(org.springframework.context.ApplicationEventPublisher publisher) { this.publisher = publisher; }
+
+    /** Stores the critic's review, stamped with when it was made. */
     public void setCriticReview(String id, Review review) {
+        Review stamped = review.reviewedAt() != null ? review : new Review(review.verdict(), review.risks(), review.source(), Instant.now());
         jdbc.sql("update proposal set critic_review = :r where tenant_id = :t and proposal_id = :id")
-            .param("r", Jsonb.of(review)).param("t", TenantContext.require()).param("id", id).update();
+            .param("r", Jsonb.of(stamped)).param("t", TenantContext.require()).param("id", id).update();
     }
 
     public void approve(String id, String by, Instant at) {
@@ -176,11 +192,25 @@ public class ProposalRepository {
         if (n == 0) throw refused(id, "promote");
     }
 
-    public void rollback(String id, String reason, Instant at) {
-        int n = jdbc.sql("update proposal set status = 'ROLLED_BACK', rolled_back_reason = :r, rolled_back_at = :at, updated_at = :at where tenant_id = :t and proposal_id = :id and status in (:from)")
-            .param("r", reason).param("at", Timestamp.from(at)).param("t", TenantContext.require()).param("id", id)
+    /** A rollback for cause: a guardrail breach, a failed trial, or a person rolling the change back. */
+    public void rollback(String id, String reason, Instant at) { rollback(id, reason, at, true); }
+
+    /**
+     * N4: {@code forCause} false for a precautionary switch-off (a person revoking live use at once): people may propose
+     * the same change again straight away, while learners still wait out the cooldown.
+     */
+    public void rollback(String id, String reason, Instant at, boolean forCause) {
+        int n = jdbc.sql("update proposal set status = 'ROLLED_BACK', rolled_back_reason = :r, rolled_back_at = :at, rolled_back_for_cause = :cause, updated_at = :at " +
+                "where tenant_id = :t and proposal_id = :id and status in (:from)")
+            .param("r", reason).param("at", Timestamp.from(at)).param("cause", forCause).param("t", TenantContext.require()).param("id", id)
             .param("from", ProposalLifecycle.sourcesOf(ProposalStatus.ROLLED_BACK)).update();
         if (n == 0) throw refused(id, "roll back");
+    }
+
+    /** Ids of proposals on this target rolled back for cause since an instant (N4). */
+    public Set<String> rolledBackForCauseSince(String targetRef, Instant since) {
+        return new java.util.HashSet<>(jdbc.sql("select proposal_id from proposal where tenant_id = :t and target_ref = :target and status = 'ROLLED_BACK' and rolled_back_for_cause and rolled_back_at >= :since")
+            .param("t", TenantContext.require()).param("target", targetRef).param("since", Timestamp.from(since)).query(String.class).list());
     }
 
     /** 404 when the proposal does not exist, else the lifecycle's 409 for its current status. */
@@ -275,6 +305,12 @@ public class ProposalRepository {
     }
 
     /** Proposals in any of these statuses created by an author, newest first (author quality metric). */
+    /** Every proposal drafted since an instant, newest first (NF-09 metrics), at most {@code limit}. */
+    public List<Proposal> createdSince(Instant since, int limit) {
+        return jdbc.sql("select " + COLS + " from proposal where tenant_id = :t and created_at >= :since order by created_at desc limit :lim")
+            .param("t", TenantContext.require()).param("since", Timestamp.from(since)).param("lim", limit).query().listOfRows().stream().map(ProposalRepository::hydrate).toList();
+    }
+
     public List<Proposal> byCreator(String createdBy, int limit) {
         String t = TenantContext.require();
         return jdbc.sql("select " + COLS + " from proposal where tenant_id = :t and created_by = :by order by created_at desc limit :lim")

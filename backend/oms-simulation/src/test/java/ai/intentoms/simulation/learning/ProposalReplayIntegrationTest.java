@@ -47,6 +47,7 @@ class ProposalReplayIntegrationTest extends PostgresTestBase {
     @Autowired DecisionRecordRepository records;
     @Autowired EpisodeRepository episodes;
     @Autowired ProposalRepository proposals;
+    @Autowired ai.intentoms.platform.config.TenantConfigStore config;
 
     static String yaml(String name) {
         return """
@@ -171,9 +172,101 @@ class ProposalReplayIntegrationTest extends PostgresTestBase {
             new PolicyChange.ParameterChange("sourcing.node_reject_rate", Map.of("enabled", false), Map.of("enabled", true)));
         Map<String, Object> r2 = evaluations.evaluate(live.proposalId(), "user:tester").evaluationReport();
         assertThat(r2.get("method")).isEqualTo("no_counterfactual");
+        assertThat(String.valueOf(r2.get("reason"))).contains("sourcing_node_score: only").contains("decisions that used a learned value");
+
+        // N6: the reason names what is actually missing. promise_buffer learns promise.buffer_days and declares no outcome
+        // decision of its own; the family is read by sla_breach_risk, which has no rewarded decisions on either value yet.
+        Proposal buffer = draft(new ArtifactRef("parameter", "live:promise.buffer_days"), 0,
+            new PolicyChange.ParameterChange("live:promise.buffer_days", Map.of("enabled", false), Map.of("enabled", true, "min", 0.0, "max", 3.0)));
+        String bufferReason = String.valueOf(evaluations.evaluate(buffer.proposalId(), "user:tester").evaluationReport().get("reason"));
+        assertThat(bufferReason).doesNotContain("no learner").contains("sla_breach_risk: only ").contains("decisions that used a learned value");
+        Proposal curve = draft(new ArtifactRef("parameter", "live:decision.calibration"), 0,
+            new PolicyChange.ParameterChange("live:decision.calibration", Map.of("enabled", false), Map.of("enabled", true)));
+        assertThat(String.valueOf(evaluations.evaluate(curve.proposalId(), "user:tester").evaluationReport().get("reason")))
+            .isEqualTo("confidence_calibrator learns decision.calibration, but no decision that reads it records outcomes, so served and static values cannot be compared");
+        Proposal unknown = draft(new ArtifactRef("parameter", "live:test.nobody_learns_this"), 0,
+            new PolicyChange.ParameterChange("live:test.nobody_learns_this", Map.of("enabled", false), Map.of("enabled", true)));
+        assertThat(String.valueOf(evaluations.evaluate(unknown.proposalId(), "user:tester").evaluationReport().get("reason"))).startsWith("no learner learns test.nobody_learns_this");
 
         Proposal weights = draft(new ArtifactRef("config", "sourcing.weights"), 0, new PolicyChange.WeightChange("sourcing.weights", "cost", 0.5, 0.4));
         assertThat(evaluations.evaluate(weights.proposalId(), "user:tester").evaluationReport().get("method")).isEqualTo("no_counterfactual");
+    }
+
+    /**
+     * FD-04 as the audit reproduced it: an abuse rule (RuleAdd on a fraud decision) must be tested on the decision's
+     * labelled fraud history, not only on episode reward. Only confirmed labels count, from one window for goods and frauds.
+     */
+    @Test
+    void anAbuseRuleIsEvaluatedOnLabelledFraudHistory() {
+        String tenant = "fd04-" + Ids.shortId().toLowerCase();
+        jdbc.sql("insert into tenant(tenant_id, name) values (:t, :t) on conflict do nothing").param("t", tenant).update();
+        ai.intentoms.platform.tenant.TenantContext.set(tenant);
+        try {
+            config.set(ai.intentoms.learning.learner.FraudLabels.WINDOW_KEY, 5);
+            String yaml = """
+                decision: address_risk
+                version: 1
+                owner: test
+                tier: T2
+                provider: heuristic
+                default: false
+                rules:
+                  - id: few_customers_at_address
+                    when: "input.payment.address_reuse_count < 3"
+                    then: false
+                    reason: few_customers_at_address
+                    priority: 50
+                state:
+                  include:
+                    - payment.address_reuse_count
+                    - order.total
+                questions:
+                  risky:
+                    type: noul
+                    statement: This order's address is being abused.
+                    criteria:
+                      "true": Many customers share the address
+                      "false": The address looks normal
+                bands:
+                  act: { confidence_gte: 0.9 }
+                  confirm: { confidence_gte: 0.5 }
+                  escalate: { otherwise: true }
+                """;
+            DecisionDefinition d = studio.createDraft("address_risk", yaml);
+            studio.publish("address_risk", d.version(), "live", true);
+            int v = d.version();
+            Instant settled = Instant.now().minus(java.time.Duration.ofDays(10));
+            for (int i = 0; i < 10; i++) labelled(v, 4, true, false, settled);   // a ring the current policy lets through
+            for (int i = 0; i < 25; i++) labelled(v, 1, false, false, settled);  // ordinary goods
+            for (int i = 0; i < 3; i++) labelled(v, 5, false, false, settled);   // goods the new rule would block
+            // Inside the chargeback window: confirmed frauds of any age must not join goods that are not settled yet.
+            for (int i = 0; i < 5; i++) labelled(v, 4, true, false, Instant.now().minus(java.time.Duration.ofDays(2)));
+            for (int i = 0; i < 5; i++) labelled(v, 1, false, true, Instant.now().minus(java.time.Duration.ofDays(2)));
+
+            Proposal p = draft(new ArtifactRef("decision", "address_risk"), v, new PolicyChange.RuleAdd("address_risk", "input.payment.address_reuse_count >= 3", "true", "address ring"));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> fraud = (Map<String, Object>) evaluations.evaluate(p.proposalId(), "user:tester").evaluationReport().get("fraudLabels");
+            assertThat(fraud).containsEntry("method", "fraud_label_replay").containsEntry("sufficient", true)
+                .containsEntry("labelled", 38).containsEntry("frauds", 10).containsEntry("goods", 28).containsEntry("verdict", "lower_cost");
+            @SuppressWarnings("unchecked") Map<String, Object> current = (Map<String, Object>) fraud.get("current");
+            @SuppressWarnings("unchecked") Map<String, Object> proposed = (Map<String, Object>) fraud.get("proposed");
+            assertThat(current).containsEntry("fraudCaught", 0).containsEntry("goodBlocked", 0).containsEntry("recall", 0.0).containsEntry("expectedCost", 1000.0);
+            assertThat(proposed).containsEntry("fraudCaught", 10).containsEntry("goodBlocked", 3).containsEntry("precision", 0.7692)
+                .containsEntry("recall", 1.0).containsEntry("falsePositiveRate", 0.1071).containsEntry("fraudLoss", 0.0).containsEntry("blockingCost", 75.0);
+            assertThat(fraud.get("expectedCostChange")).isEqualTo(-925.0);
+        } finally {
+            ai.intentoms.platform.tenant.TenantContext.set(TENANT);
+        }
+    }
+
+    private void labelled(int version, int addressReuse, boolean fraud, boolean provisional, Instant at) {
+        String id = Ids.prefixed("dr");
+        String subject = "ord_" + Ids.shortId();
+        Map<String, Object> input = Map.of("payment", Map.of("address_reuse_count", addressReuse), "order", Map.of("id", subject, "total", 100));
+        Map<String, Object> label = Map.of("confirmed", fraud, "kind", fraud ? "chargeback_fraud" : "delivered_no_chargeback", "provisional", provisional);
+        records.insert(new DecisionRecord(id, "address_risk", version, Mode.LIVE, "order", subject, subject, ai.intentoms.decision.model.Layer.L1_SYSTEM_ONE,
+            ai.intentoms.decision.model.Band.ACT, "act", false, Map.of(), 0.95, "heuristic", "test", "hash_" + id, Map.of(), input, List.of(), List.of(), 40, 0, 0, false,
+            null, "system:test", Map.of(), null, null, null, null, Map.of("fraud_outcome", label), at, Map.of(), List.of("true", "false"), "false", 1.0, version));
     }
 
     /** §7: a change that breaches a hard constraint is refused before evaluation, with the constraint named. */

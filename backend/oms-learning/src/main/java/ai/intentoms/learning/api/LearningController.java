@@ -179,14 +179,14 @@ public class LearningController {
 
     /**
      * GV-03 at three levels: one learner ({@code learnerKey}), every learner of this tenant ({@code learnerKey: "*"}),
-     * or every tenant ({@code scope: "global"}, platform administrators only). {@code enabled: false} switches off.
+     * or every tenant ({@code scope: "global"}, platform engineers only). {@code enabled: false} switches off.
      */
     @PostMapping("/kill-switch")
     @RequiresPermission(Permissions.LEARNING_ADMIN)
     public KillSwitchState killSwitch(@RequestBody KillSwitch body) {
         if (body == null) throw new ValidationException("body is required");
         if ("global".equalsIgnoreCase(body.scope())) {
-            if (!platformAdmin()) throw new ai.intentoms.platform.error.ForbiddenException("Only a platform administrator can switch learning off or on for every tenant");
+            if (!platformAdmin()) throw new ai.intentoms.platform.error.ForbiddenException("Only a platform engineer can switch learning off or on for every tenant; a tenant administrator can pause this tenant's learning instead");
             governance.setGlobalKillSwitch(!body.enabled(), actorRef());
         } else if (body.learnerKey() == null || body.learnerKey().isBlank() || "*".equals(body.learnerKey())) {
             governance.setTenantKillSwitch(!body.enabled(), actorRef());
@@ -197,9 +197,15 @@ public class LearningController {
         return killSwitchState();
     }
 
-    /** A platform administrator holds every permission ("*"), the same rule tenant creation uses. */
+    /** The role that may switch learning off or on for every tenant. */
+    public static final String PLATFORM_ROLE = "platform_engineer";
+
+    /**
+     * N3: a platform engineer is known by role, not by holding every permission: the built-in tenant {@code admin}
+     * role holds "*" too, and one tenant's administrator must not stop learning for all the others.
+     */
     private boolean platformAdmin() {
-        return authz.currentPrincipal().map(p -> p.permissions().contains("*")).orElse(false);
+        return authz.currentPrincipal().map(p -> p.roles() != null && p.roles().contains(PLATFORM_ROLE)).orElse(false);
     }
 
     @GetMapping("/live-parameters")

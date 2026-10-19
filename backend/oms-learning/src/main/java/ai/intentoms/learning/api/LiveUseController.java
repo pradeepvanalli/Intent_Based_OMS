@@ -2,6 +2,7 @@ package ai.intentoms.learning.api;
 
 import ai.intentoms.learning.governance.LearnerDescriptor;
 import ai.intentoms.learning.governance.LearnerRegistry;
+import ai.intentoms.learning.governance.LiveFamilies;
 import ai.intentoms.learning.governance.LiveParameterRepository;
 import ai.intentoms.learning.governance.ParameterResolver;
 import ai.intentoms.learning.model.ArtifactRef;
@@ -16,6 +17,7 @@ import ai.intentoms.platform.ids.Ids;
 import ai.intentoms.platform.security.AuthorizationService;
 import ai.intentoms.platform.security.Permissions;
 import ai.intentoms.platform.security.RequiresPermission;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -68,6 +70,14 @@ public class LiveUseController {
         if (r.min() != null && r.max() != null && r.min() > r.max()) throw new ValidationException("min must not exceed max");
         if (r.maxStep() != null && r.maxStep() <= 0) throw new ValidationException("maxStep must be positive");
         boolean enable = r.enabled() == null || r.enabled();
+        // B-1: the range must be in the family's own units and domain (warn-early is a 0-4 risk score, not a probability).
+        if (enable) {
+            List<String> problems = LiveFamilies.validate(r.family(), r.min(), r.max(), r.maxStep());
+            if (!problems.isEmpty()) {
+                throw new ValidationException("This range cannot be used for " + r.family() + ": " + String.join("; ", problems) + ".",
+                    Map.of("family", r.family(), "problems", problems, "domain", LiveFamilies.of(r.family()).map(LiveFamilies.Domain::view).orElse(Map.of())));
+            }
+        }
 
         Map<String, Object> from = new LinkedHashMap<>();
         live.find(r.family()).ifPresentOrElse(cur -> {
@@ -94,6 +104,11 @@ public class LiveUseController {
         proposals.insert(p);
         return proposals.get(p.proposalId());
     }
+
+    /** B-1: every learned family a live path reads, with its value domain (units, min, max, largest max step) and the decisions it affects. */
+    @GetMapping("/domains")
+    @RequiresPermission(Permissions.LEARNING_READ)
+    public List<Map<String, Object>> domains() { return LiveFamilies.all().stream().map(LiveFamilies.Domain::view).toList(); }
 
     /** Switches a family off at once; the proposal that switched it on is closed as rolled back (defect 27). */
     @PostMapping("/{family}/revoke")

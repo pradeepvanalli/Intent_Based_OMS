@@ -22,10 +22,11 @@ import java.util.Optional;
  * The Critic (SOO requirements doc §6.1): reviews a proposal's changeset against its evaluation report. Its
  * verdict is evidence attached to the proposal for a human reviewer — it never approves, rejects or blocks on its
  * own, regardless of how risky its own verdict reads. Without a model key (or over the monthly budget) the rule-based
- * {@link TemplateCritic} reviews instead; its review says so ({@code source: rules}).
+ * {@link TemplateCritic} reviews instead; its review says so ({@code source: rules}). XP-02: it runs automatically after
+ * every evaluation ({@code AutoCritic} through the {@code ProposalCritic} SPI), and on demand from {@code POST /llm/critic/{id}}.
  */
 @Service
-public class CriticService {
+public class CriticService implements ai.intentoms.learning.promotion.ProposalCritic {
     private static final Logger log = LoggerFactory.getLogger(CriticService.class);
     private static final String FEATURE = "learning_critic";
 
@@ -44,6 +45,7 @@ public class CriticService {
     }
 
     /** Reviews an EVALUATED proposal (the evaluator must have written an evaluation report first). */
+    @Override
     public Optional<Review> review(String proposalId) {
         Proposal p = proposals.find(proposalId).orElseThrow(() -> new ValidationException("Proposal " + proposalId + " not found"));
         if (p.evaluationReport() == null || p.evaluationReport().isEmpty()) { log.info("Critic skipped {}: no evaluation report yet", proposalId); return Optional.empty(); }
@@ -65,8 +67,8 @@ public class CriticService {
         try { out = llm.complete(FEATURE, prompt, payload, LearningSchemas.REVIEW); }
         catch (OmsException e) {
             audit.record("critic", FEATURE, "proposal", proposalId, LearningSchemas.REVIEW, "system-critic.md", prompt, "error", null);
-            log.warn("Critic call failed for proposal {}: {}", proposalId, e.getMessage());
-            return Optional.empty();
+            log.warn("Critic call failed for proposal {}, using the rule-based critic: {}", proposalId, e.getMessage());
+            return ruleReview(p);
         }
 
         List<String> risks = new ArrayList<>();

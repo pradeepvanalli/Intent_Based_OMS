@@ -46,7 +46,7 @@ public class ChangeCardService {
 
     public record ChangeCard(Proposal proposal, Hypothesis hypothesis, List<String> evidence, Map<String, Object> replay, Review criticReview,
                              List<CumulativeDiffService.KeyDiff> diff, CumulativeDiffService.CumulativeDiff cumulative, Actions actions,
-                             Map<String, Object> promotionNote) {}
+                             Map<String, Object> promotionNote, String governingLearner) {}
 
     public ChangeCard card(String proposalId, String viewer) {
         Proposal p = proposals.get(proposalId);
@@ -63,7 +63,8 @@ public class ChangeCardService {
         Actions actions = new Actions(base.canApprove(), base.canReject(), base.reason(), base.canEvaluate(), base.canPromote() && blocker == null,
             base.canRollback(), base.canExperiment(), concerns, blocker);
         return new ChangeCard(p, h, evidence, replay(p.evaluationReport()), p.criticReview(), CumulativeDiffService.diffOf(p),
-            diffs.forTarget(p.changeset().target().toString(), p), actions, proposals.promotionNote(p.proposalId()).orElse(null));
+            diffs.forTarget(p.changeset().target().toString(), p), actions, proposals.promotionNote(p.proposalId()).orElse(null),
+            promo == null ? null : promo.governingLearner(p));
     }
 
     /** The replay figures of the evaluation report, or {@code {"evaluated": false}} before EX-01 has run. */
@@ -72,8 +73,17 @@ public class ChangeCardService {
         if (report == null || report.isEmpty()) { m.put("evaluated", false); return m; }
         m.put("evaluated", true);
         for (String k : List.of("method", "liftEstimate", "confidenceInterval", "sampleSize", "episodes", "guardrails", "shadow", "canary", "estimator", "clipping",
-                "ips", "rewards", "reason", "next", "caveat"))
+                "ips", "rewards", "reason", "next", "caveat", "baselineReward", "proposedRewardEstimate", "fraudLabels"))
             if (report.containsKey(k)) m.put(k, report.get(k));
+        // E-2: the lift is a difference in mean reward on the 0-1 reward scale, not a percentage; say so on the card.
+        if (report.get("liftEstimate") instanceof Number) m.put("liftUnit", "reward");
+        List<String> concerns = new java.util.ArrayList<>();
+        String ips = ai.intentoms.learning.promotion.PromotionGuard.ipsWorse(report);
+        if (ips != null) concerns.add(ips);
+        if (report.get("fraudLabels") instanceof Map<?, ?> fl && "higher_cost".equals(fl.get("verdict"))) {
+            concerns.add("on labelled fraud history it raises the expected cost by " + fl.get("expectedCostChange"));
+        }
+        m.put("concerns", concerns);
         return m;
     }
 

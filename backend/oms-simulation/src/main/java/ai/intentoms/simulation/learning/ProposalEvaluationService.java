@@ -56,6 +56,7 @@ import java.util.function.Predicate;
  */
 @Service
 public class ProposalEvaluationService {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ProposalEvaluationService.class);
     private static final Duration LOOKBACK = Duration.ofDays(90);
     private static final int MAX_RECORDS = 5000;
     /** The arm of a decision that did not act (confirm or escalate to a person): its own arm, on both the logged and proposed side. */
@@ -70,6 +71,7 @@ public class ProposalEvaluationService {
     private final LearnerRegistry registry;
     private final LearningEvents events;
     private final ai.intentoms.learning.promotion.HardConstraints hardConstraints;
+    private final ai.intentoms.learning.promotion.ProposalOwnership ownership;
 
     @Value("${oms.learning.replay.max-resimulated:300}") private int maxResimulated;
     @Value("${oms.learning.replay.min-cohort:20}") private int minCohort;
@@ -84,6 +86,7 @@ public class ProposalEvaluationService {
                                      DecisionDefinitionParser parser, DecisionRuntime runtime, EpisodeRepository episodes, LearnerRegistry registry, LearningEvents events,
                                      ai.intentoms.learning.promotion.HardConstraints hardConstraints) {
         this.hardConstraints = hardConstraints;
+        this.ownership = new ai.intentoms.learning.promotion.ProposalOwnership(registry);
         this.proposals = proposals;
         this.decisionRecords = decisionRecords;
         this.definitions = definitions;
@@ -146,6 +149,9 @@ public class ProposalEvaluationService {
             r.put("simulation", "proposed act threshold applied to the logged confidence");
             r.put("decisionsChanged", flips);
             r.put("rewards", rewardMix(paired));
+            Double act = newAct;
+            addFraudLabels(r, decision, rec -> FraudLabelEvaluation.risky(rec.value())
+                && (rec.layer() == ai.intentoms.decision.model.Layer.L0_RULE || (act == null ? rec.band() == Band.ACT : rec.confidence() >= act)));
             return r;
         }
         DecisionDefinition base = definitions.find(decision, baseVersion).or(() -> definitions.byStatus(decision, "live").stream().findFirst())
@@ -170,8 +176,32 @@ public class ProposalEvaluationService {
         r.put("decisionsChanged", flips);
         r.put("baseVersion", base.version());
         r.put("rewards", rewardMix(replayed));
+        // FD-04: the labelled orders re-run through the candidate (up to the same cap; beyond it the logged answer stands).
+        int[] simulated = {0};
+        addFraudLabels(r, decision, rec -> {
+            if (simulated[0]++ >= maxResimulated) return FraudLabelEvaluation.loggedBlocks(rec);
+            DecisionResult sim = runtime.evaluate(candidate, rec.input(), new DecisionOptions(rec.subjectType(), rec.subjectId(),
+                rec.correlationId(), Mode.SIMULATION, base.version(), Actor.system("proposal-replay"), Map.of()));
+            return FraudLabelEvaluation.risky(sim.value()) && (sim.band() == Band.ACT || candidate.tier() == Tier.T0);
+        });
         return r;
     }
+
+    /** FD-04: a fraud decision's change is also scored on its labelled fraud history. */
+    private void addFraudLabels(Map<String, Object> report, String decision, Predicate<DecisionRecord> proposedBlocks) {
+        if (fraudLabels == null || !FraudLabelEvaluation.FRAUD_DECISIONS.contains(decision)) return;
+        try {
+            report.put("fraudLabels", fraudLabels.evaluate(decision, proposedBlocks));
+        } catch (RuntimeException e) {
+            log.warn("Labelled-history evaluation of {} failed: {}", decision, e.toString());
+            report.put("fraudLabels", Map.of("method", "fraud_label_replay", "sufficient", false, "reason", "could not be computed: " + e.getMessage()));
+        }
+    }
+
+    private FraudLabelEvaluation fraudLabels;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setFraudLabels(FraudLabelEvaluation fraudLabels) { this.fraudLabels = fraudLabels; }
 
     /** {@code mature} episodes have a final reward; {@code provisional} ones may still change as late outcomes land (OC-04). */
     record Paired(DecisionRecord record, LoggedRecord logged, boolean mature) {}
@@ -216,16 +246,31 @@ public class ProposalEvaluationService {
         }
         if ("parameter".equals(target.type()) && ref.startsWith("live:")) {
             String family = ref.substring("live:".length());
-            List<String> decisions = registry.descriptors().stream().filter(d -> d.liveParameters().contains(family)).flatMap(d -> d.outcomeDecisions().stream()).distinct().toList();
-            if (decisions.isEmpty()) return noCounterfactual(0, "no learner declares that it feeds " + family);
-            return cohorts(decisions.get(0), ProposalEvaluationService::servedLearnedValue, "decisions that used a learned value", "decisions on static values");
+            // N6: say what is actually missing: a learner, a decision to compare on, or rewarded decisions on each side.
+            List<String> feeders = registry.descriptors().stream().filter(d -> d.liveParameters().contains(family)).map(LearnerDescriptor::key).toList();
+            if (feeders.isEmpty()) return noCounterfactual(0, "no learner learns " + family + ", so there is no learned value to serve");
+            List<String> decisions = ownership.watchedDecisions(proposal);
+            if (decisions.isEmpty()) {
+                return noCounterfactual(0, String.join(", ", feeders) + " learns " + family + ", but no decision that reads it records outcomes, so served and static values cannot be compared");
+            }
+            int sample = 0;
+            List<String> missing = new ArrayList<>();
+            for (String decision : decisions) {
+                Map<String, Object> r = cohorts(decision, ProposalEvaluationService::servedLearnedValue, "decisions that used a learned value", "decisions on static values");
+                if (!"no_counterfactual".equals(r.get("method"))) return r;
+                sample += ((Number) r.get("sampleSize")).intValue();
+                missing.add(decision + ": " + r.get("reason"));
+            }
+            return noCounterfactual(sample, "not enough rewarded decisions on both learned and static values yet (" + String.join("; ", missing) + ")");
         }
         int sample = 0;
-        String learner = learnerKeyOf(proposal);
-        for (String decision : registry.descriptor(learner).map(LearnerDescriptor::outcomeDecisions).orElse(List.of())) {
+        List<String> decisions = ownership.watchedDecisions(proposal);
+        for (String decision : decisions) {
             sample += decisionRecords.recentLive(decision, latestVersion(decision), Instant.now().minus(LOOKBACK), MAX_RECORDS).size();
         }
-        return noCounterfactual(sample, target + " has only ever run at its current value, so logged decisions cannot show what the new value would do");
+        if (decisions.isEmpty()) return noCounterfactual(0, "no learner owns " + target + " and no decision is known to read it, so there is nothing to replay it on");
+        return noCounterfactual(sample, target + " has only ever run at its current value, so the " + sample + " logged " + String.join(", ", decisions)
+            + " decisions cannot show what the new value would do");
     }
 
     private Map<String, Object> cohorts(String decision, Predicate<DecisionRecord> treated, String treatedLabel, String controlLabel) {
@@ -271,11 +316,6 @@ public class ProposalEvaluationService {
 
     private int latestVersion(String decision) {
         return definitions.byStatus(decision, "live").stream().findFirst().map(r -> r.definition().version()).orElse(0);
-    }
-
-    private static String learnerKeyOf(Proposal p) {
-        String by = p.createdBy() == null ? "" : p.createdBy();
-        return by.startsWith("system:") ? by.substring("system:".length()) : by;
     }
 
     private static double var(List<Double> xs, double m) {

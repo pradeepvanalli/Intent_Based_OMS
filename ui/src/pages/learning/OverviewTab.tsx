@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { learningApi } from '../../api/learning';
-import type { Digest, LiftMetric, LiftReport } from '../../api/types';
+import type { Digest, GuardrailReport, GuardrailReportMetric, LiftMetric, LiftReport } from '../../api/types';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { StatTile } from '../../components/StatTile';
@@ -17,6 +17,7 @@ const COVERAGE_FLOOR = 0.8;
 /** "Is learning helping, what changed, what needs me": the three questions a first-time visitor has. */
 export function OverviewTab({ canAdmin, goTo }: { canAdmin: boolean; goTo: (tab: string) => void }) {
   const lift = useQuery({ queryKey: ['learning', 'lift'], queryFn: () => learningApi.lift(90), refetchInterval: REFRESH });
+  const guardrails = useQuery({ queryKey: ['learning', 'guardrails', 'report'], queryFn: () => learningApi.guardrailReport(4), refetchInterval: REFRESH });
   const learners = useQuery({ queryKey: ['learning', 'learners'], queryFn: learningApi.learners, refetchInterval: REFRESH });
   const coverage = useQuery({ queryKey: ['learning', 'coverage'], queryFn: learningApi.coverage, refetchInterval: REFRESH });
   const drafts = useQuery({ queryKey: ['learning', 'proposals', 'DRAFT'], queryFn: () => learningApi.proposals('DRAFT'), refetchInterval: REFRESH });
@@ -27,12 +28,21 @@ export function OverviewTab({ canAdmin, goTo }: { canAdmin: boolean; goTo: (tab:
   const experiments = useQuery({ queryKey: ['learning', 'experiments', 'all'], queryFn: () => learningApi.experiments(true), refetchInterval: REFRESH });
   const holdoutBy = experiments.data?.find((e) => e.experimentId === lift.data?.holdout?.experimentId)?.createdBy ?? null;
 
-  const reward = lift.data?.metrics.find((m) => m.metric === 'reward');
+  // §12 AC-2: the perfect-order rate is the headline once both sides have enough orders; the outcome score otherwise.
+  const perfect = lift.data?.headline;
+  const usePerfect = !!perfect && perfect.enoughData === true && perfect.lift != null;
+  const reward = usePerfect ? perfect : lift.data?.metrics.find((m) => m.metric === 'reward');
   const verdict = reward ? liftVerdict(reward) : null;
   const rel = reward ? relativeChange(reward.treatedMean, reward.holdoutMean) : null;
-  const helpingValue = verdict && reward?.lift != null && reward.significant
+  const helpingValue = usePerfect && perfect.lift != null && perfect.significant
+    ? `${perfect.lift >= 0 ? '+' : ''}${fmtNum(perfect.lift * 100, 1)} points`
+    : verdict && reward?.lift != null && reward.significant
     ? (rel !== null ? `${rel >= 0 ? '+' : ''}${fmtPct(rel, 1)}` : `${reward.lift >= 0 ? '+' : ''}${fmtNum(reward.lift, 3)}`)
     : (verdict?.text ?? (lift.data?.holdout ? 'Not enough data yet' : 'Not measured yet'));
+  const helpingHint = !lift.data ? undefined
+    : usePerfect && perfect.treatedMean !== undefined && perfect.holdoutMean !== undefined
+      ? `Perfect orders: ${fmtPct(perfect.treatedMean, 1)} with learning vs ${fmtPct(perfect.holdoutMean, 1)} in the holdout`
+    : reward?.lift != null && reward.significant ? `${verdict?.text}: outcome score vs the holdout` : lift.data.holdout ? 'Compared with the holdout group' : 'Start a holdout to measure it';
   const names = new Map((learners.data ?? []).map((l) => [l.learnerKey, l.displayName]));
   const toReview = (drafts.data?.length ?? 0) + (evaluated.data?.length ?? 0);
   const all = learners.data ?? [];
@@ -48,7 +58,7 @@ export function OverviewTab({ canAdmin, goTo }: { canAdmin: boolean; goTo: (tab:
         <StatTile label="Is learning helping?" loading={lift.isLoading}
           value={helpingValue}
           tone={verdict?.tone === 'ok' ? 'ok' : verdict?.tone === 'danger' ? 'danger' : undefined}
-          hint={!lift.data ? undefined : reward?.lift != null && reward.significant ? `${verdict?.text}: outcome score vs the holdout` : lift.data.holdout ? 'Compared with the holdout group' : 'Start a holdout to measure it'} />
+          hint={helpingHint} />
         <StatTile label="Changes waiting for you" value={toReview + (approved.data?.length ?? 0)} loading={drafts.isLoading || evaluated.isLoading || approved.isLoading}
           hint={drafts.data && evaluated.data && approved.data ? `${toReview} to review · ${approved.data.length} approved, not live` : undefined} onClick={() => goTo('changes')} tone={toReview > 0 ? 'ai' : undefined} />
         <StatTile label="Learners running" value={learners.data ? `${running} of ${all.length}` : '—'} loading={learners.isLoading}
@@ -84,6 +94,8 @@ export function OverviewTab({ canAdmin, goTo }: { canAdmin: boolean; goTo: (tab:
         </div>
       </div>
 
+      <GuardrailCard report={guardrails.data} isLoading={guardrails.isLoading} error={guardrails.error} retry={() => guardrails.refetch()} />
+
       <DigestCard digest={digest.data} missing={digest.error instanceof ApiError && digest.error.status === 404} isLoading={digest.isLoading} canAdmin={canAdmin} names={names} />
     </div>
   );
@@ -116,6 +128,7 @@ function LiftCard({ lift, isLoading, error, retry, canAdmin, holdoutBy }: { lift
       {lift?.holdout && (
         <>
           <p className="caption row gap2">{fmtPct(lift.holdout.trafficShare, 0)} of customers have been in the holdout since {fmtDate(lift.holdout.startAt)}.<DemoBadge by={holdoutBy} /></p>
+          {lift.headline && <PerfectOrderHeadline m={lift.headline} />}
           <div className="table-wrap">
             <table className="tbl dense" aria-label="Lift by measure">
               <thead><tr><th scope="col">Measure</th><th scope="col" className="num">With learning</th><th scope="col" className="num">Holdout</th><th scope="col">Result</th></tr></thead>
@@ -126,6 +139,68 @@ function LiftCard({ lift, isLoading, error, retry, canAdmin, holdoutBy }: { lift
             </table>
           </div>
         </>
+      )}
+    </Section>
+  );
+}
+
+/** §12 AC-2: the north-star measure, with learning versus the holdout and its 95% interval. */
+function PerfectOrderHeadline({ m }: { m: NonNullable<LiftReport['headline']> }) {
+  const v = liftVerdict(m);
+  const pts = (x?: number) => (x === undefined ? '—' : `${x >= 0 ? '+' : ''}${fmtNum(x * 100, 1)}`);
+  return (
+    <div className="finding" data-testid="perfect-order-headline">
+      <span className="row-between wrap gap2">
+        <span className="title row gap2">Perfect-order rate <InfoTip text={`The north-star measure: ${m.definition ?? 'share of orders with nothing going wrong'}.`} /></span>
+        <Badge tone={v.tone} title={m.reason ?? undefined}>{v.text}</Badge>
+      </span>
+      {m.treatedMean !== undefined && m.holdoutMean !== undefined ? (
+        <span className="small">
+          <strong className="num">{fmtPct(m.treatedMean, 1)}</strong> with learning vs <strong className="num">{fmtPct(m.holdoutMean, 1)}</strong> in the holdout
+          {m.lift != null && <> · {pts(m.lift)} points (95% interval {pts(m.ciLower)} to {pts(m.ciUpper)})</>}
+        </span>
+      ) : <span className="small muted">{m.reason ?? 'Not enough orders with a perfect-order outcome yet.'}</span>}
+      <Technical><span className="xs muted mono">perfect_order_rate · orders {m.nTreated} vs {m.nHoldout}</span></Technical>
+    </div>
+  );
+}
+
+const VERDICT_WORDS: Record<GuardrailReportMetric['verdict'], { text: string; tone: string }> = {
+  worse: { text: 'Worse', tone: 'danger' }, not_worse: { text: 'Not worse', tone: 'ok' }, insufficient: { text: 'Too little data', tone: 'neutral' },
+};
+
+function guardrailValue(m: GuardrailReportMetric, v?: number | null) {
+  if (v == null) return '—';
+  return m.metric === 'latency_p95_ms' ? `${fmtNum(v, 0)} ms` : fmtPct(v, 1);
+}
+
+/** §12 AC-3: no guardrail worse with learning than without it over the last weeks. */
+function GuardrailCard({ report, isLoading, error, retry }: { report?: GuardrailReport; isLoading: boolean; error: unknown; retry: () => void }) {
+  const overall = report ? VERDICT_WORDS[report.verdict] : null;
+  return (
+    <Section title={<span className="row gap2">Guardrails, last {report?.weeks ?? 4} weeks <InfoTip text="Each safety measure with learning compared with customers kept on the original behaviour (or, while that group is small, with the weeks before). Worse means clearly worse, not chance." /></span>}
+      actions={overall ? <Badge tone={overall.tone}>{report?.verdict === 'not_worse' ? 'Nothing worse' : overall.text}</Badge> : undefined}>
+      {isLoading && <Loading />}
+      {!!error && <ErrorState error={error} retry={retry} />}
+      {report && (
+        <div className="col gap2" data-testid="guardrail-report">
+          <p className="caption">{report.summary}. Compared with {report.comparison}.</p>
+          <div className="table-wrap">
+            <table className="tbl dense" aria-label="Guardrails with learning vs without">
+              <thead><tr><th scope="col">Guardrail</th><th scope="col" className="num">With learning</th><th scope="col" className="num">Compared with</th><th scope="col">Result</th></tr></thead>
+              <tbody>
+                {report.metrics.map((m) => (
+                  <tr key={m.metric}>
+                    <td>{m.label}<Technical><div className="xs muted mono">{m.metric} · n {m.nTreated} vs {m.nComparison}</div></Technical></td>
+                    <td className="num">{guardrailValue(m, m.treated)}</td>
+                    <td className="num">{guardrailValue(m, m.comparison)}</td>
+                    <td><Badge tone={VERDICT_WORDS[m.verdict].tone} title={m.reason ?? undefined}>{VERDICT_WORDS[m.verdict].text}</Badge></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
     </Section>
   );

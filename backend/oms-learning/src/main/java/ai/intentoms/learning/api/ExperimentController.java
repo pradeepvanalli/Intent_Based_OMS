@@ -25,6 +25,10 @@ public class ExperimentController {
     private final LiftService lift;
     private final ProposalRepository proposals;
     private final AuthorizationService authz;
+    private ai.intentoms.learning.experiment.GuardrailReportService guardrailReport;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setGuardrailReport(ai.intentoms.learning.experiment.GuardrailReportService guardrailReport) { this.guardrailReport = guardrailReport; }
 
     public ExperimentController(ExperimentManager experiments, LiftService lift, ProposalRepository proposals, AuthorizationService authz) {
         this.experiments = experiments;
@@ -88,6 +92,13 @@ public class ExperimentController {
     @RequiresPermission(Permissions.LEARNING_READ)
     public Map<String, Object> lift(@RequestParam(value = "days", defaultValue = "90") int days) {
         return lift.lift(days);
+    }
+
+    /** §12 AC-3: each guardrail with learning versus the holdout (or the weeks before) over the last {@code weeks}, with a verdict. */
+    @GetMapping("/guardrails/report")
+    @RequiresPermission(Permissions.LEARNING_READ)
+    public Map<String, Object> guardrailReport(@RequestParam(value = "weeks", defaultValue = "4") int weeks) {
+        return guardrailReport.report(weeks);
     }
 
     private String actorRef() { return authz.requirePrincipal().actorRef(); }

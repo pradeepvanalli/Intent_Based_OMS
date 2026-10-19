@@ -34,6 +34,7 @@ class LiveUseFlowIntegrationTest extends PostgresTestBase {
     @Autowired PromotionService promotion;
     @Autowired ParameterResolver resolver;
     @Autowired LearningController learning;
+    @Autowired ai.intentoms.learning.governance.LearnerRegistry registry;
 
     private void as(String user) {
         SecurityContextHolder.getContext().setAuthentication(new PrincipalAuthentication(new Principal(Principal.Type.USER, user, TENANT, Set.of("strategy_lead"), Set.of("*"), 3)));
@@ -76,12 +77,71 @@ class LiveUseFlowIntegrationTest extends PostgresTestBase {
         assertThat(closed.status()).isEqualTo(ProposalStatus.ROLLED_BACK);
         assertThat(closed.rolledBackReason()).contains("switched off by user:bob");
         assertThatThrownBy(() -> promotion.rollback(p.proposalId(), Actor.parse("user:bob"), null)).isInstanceOf(ConflictException.class);
-        // Defect 26: the same change cannot come straight back, although its "from" now records the revoked row's range.
+        // N4: a person's safety switch-off is no evidence against the change. The learner that would draft the same change
+        // again still waits out the cooldown (defect 26), but a person may propose it again at once.
+        var learnerRedraft = new ai.intentoms.learning.model.Proposal(ai.intentoms.platform.ids.Ids.prefixed("prop"), p.changeset(), null, p.tier(), ProposalStatus.DRAFT,
+            null, null, "system:node_reliability", java.time.Instant.now(), java.time.Instant.now(), null, null, null, null, null, null, null, null);
+        assertThatThrownBy(() -> proposals.insert(learnerRedraft))
+            .isInstanceOf(OmsException.class).satisfies(e -> assertThat(((OmsException) e).code()).isEqualTo("proposal_cooling_down"));
         as("alice");
+        var again = liveUse.propose(new LiveUseController.LiveUseRequest(family, "node_reliability", 0.0, 0.5, 0.1, true, null));
+        assertThat(again.status()).isEqualTo(ProposalStatus.DRAFT);
+
+        // A rollback for cause (here a person rolling the promoted change back) still holds everyone off for the cooldown.
+        proposals.markEvaluated(again.proposalId(), java.util.Map.of("method", "no_counterfactual", "sampleSize", 0), java.time.Instant.now());
+        proposals.approve(again.proposalId(), "user:bob", java.time.Instant.now());
+        promotion.promote(again.proposalId(), Actor.parse("user:bob"), "pilot on one region agreed with operations");
+        promotion.rollback(again.proposalId(), Actor.parse("user:bob"), "rejected orders went up in the pilot region");
         assertThatThrownBy(() -> liveUse.propose(new LiveUseController.LiveUseRequest(family, "node_reliability", 0.0, 0.5, 0.1, true, null)))
             .isInstanceOf(OmsException.class).satisfies(e -> assertThat(((OmsException) e).code()).isEqualTo("proposal_cooling_down"));
         // A different range is a different change.
         assertThat(liveUse.propose(new LiveUseController.LiveUseRequest(family, "node_reliability", 0.0, 0.4, 0.1, true, null)).status()).isEqualTo(ProposalStatus.DRAFT);
+    }
+
+    /**
+     * B-1 as the audit reproduced it: warn-early is a 0-4 SLA breach risk score, and a range read as a probability
+     * (0.3-0.9) served every "unlikely to breach" order a delay e-mail while reporting the value as plainly LEARNED.
+     */
+    @Test
+    void liveRangesMustFitTheFamilyDomainAndClampsAreReported() {
+        String family = ai.intentoms.learning.learner.WarnEarlyThresholdLearner.PARAMETER;
+        as("alice");
+        assertThatThrownBy(() -> liveUse.propose(new LiveUseController.LiveUseRequest(family, "warn_early", 0.0, 10.0, 1.0, true, null)))
+            .isInstanceOf(ValidationException.class)
+            .hasMessage("This range cannot be used for monitoring.warn_early_threshold: max 10 is outside the values monitoring.warn_early_threshold can take: "
+                + "SLA breach risk score (0 none, 4 certain), from 0 to 4.");
+        assertThatThrownBy(() -> liveUse.propose(new LiveUseController.LiveUseRequest(family, "warn_early", 1.0, 3.0, 3.0, true, null)))
+            .isInstanceOf(ValidationException.class).hasMessageContaining("max step 3 is too large for monitoring.warn_early_threshold: one promotion may move it at most 2");
+        assertThatThrownBy(() -> liveUse.propose(new LiveUseController.LiveUseRequest("sourcing.policy_bandit", "sourcing_policy_bandit", 0.0, 1.0, null, true, null)))
+            .isInstanceOf(ValidationException.class).hasMessageContaining("is an on/off switch").hasMessageContaining("leave min, max and max step empty");
+        assertThat(liveUse.propose(new LiveUseController.LiveUseRequest(family, "warn_early", 1.5, 3.5, 0.5, true, null)).status()).isEqualTo(ProposalStatus.DRAFT);
+        assertThat(liveUse.domains()).anySatisfy(d -> assertThat(d).containsEntry("family", family).containsEntry("min", 0.0).containsEntry("max", 4.0)
+            .containsEntry("maxStepLimit", 2.0).containsEntry("affectedDecisions", java.util.List.of("sla_breach_risk")));
+
+        // A range that was promoted anyway (the seeded 0.3-0.9) still bounds the value, but the clamp is reported.
+        try {
+            resolver.promote(family, "warn_early", 0.3, 0.9, null, null, "test-setup");
+            ParameterResolver.Resolution r = resolver.explain(family, 2.0, 2.0);
+            assertThat(r.value()).isEqualTo(0.9);
+            assertThat(r.clamped()).isTrue();
+            assertThat(r.reason()).isEqualTo("learned 2 is above the promoted maximum; clamped to 0.9");
+            assertThat(r.describe()).containsEntry("clamped", true).containsEntry("learned", 2.0);
+            assertThat(resolver.explain(family, 2.0, 0.5).clamped()).isFalse();
+            // A learned number outside the family's domain is never served.
+            ParameterResolver.Resolution wrongUnits = resolver.explain(family, 2.0, 7.0);
+            assertThat(wrongUnits.source()).isEqualTo("STATIC");
+            assertThat(wrongUnits.value()).isEqualTo(2.0);
+            assertThat(wrongUnits.reason()).startsWith("learned value 7 is outside the values monitoring.warn_early_threshold can take");
+        } finally {
+            resolver.revoke(family, "test-cleanup");
+        }
+    }
+
+    /** B-1: every family a registered learner feeds declares its value domain in one place. */
+    @Test
+    void everyFedFamilyDeclaresItsDomain() {
+        assertThat(registry.descriptors().stream().flatMap(d -> d.liveParameters().stream()).distinct().toList())
+            .isNotEmpty().allSatisfy(f -> assertThat(ai.intentoms.learning.governance.LiveFamilies.of(f)).as(f).isPresent());
     }
 
     @Test

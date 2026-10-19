@@ -137,6 +137,33 @@ class ExplainabilityIntegrationTest extends PostgresTestBase {
         assertThat(registry.find("oms.learning.learner.update_lag_seconds").tag("learner", "node_reliability").gauges()).isNotEmpty();
     }
 
+    /** E-3: author, template and seed drafts count for the learner that owns their target, not for nobody. */
+    @Test
+    void yieldCountsDraftsByOthersForTheOwningLearner() {
+        long before = api.metrics().stream().filter(x -> x.learnerKey().equals("band_threshold")).findFirst().orElseThrow().proposalsDraftedByOthers();
+        proposals.insert(LearningFixtures.threshold("e3_" + Ids.shortId(), 0.8, 0.82, "system:template-author", null));
+        proposals.insert(LearningFixtures.threshold("e3_" + Ids.shortId(), 0.8, 0.82, "user:alice", null));
+        proposals.insert(LearningFixtures.threshold("e3_" + Ids.shortId(), 0.8, 0.82, "system:demo-seed.band_threshold", null));
+        LearnerMetricsService.LearnerMetrics m = api.metrics().stream().filter(x -> x.learnerKey().equals("band_threshold")).findFirst().orElseThrow();
+        assertThat(m.proposalsDrafted()).isGreaterThanOrEqualTo(3);
+        assertThat(m.proposalsDraftedByOthers()).isEqualTo(before + 2); // the seed drafted as band_threshold itself
+    }
+
+    /** E-2: the card states the lift is in reward (not a percentage) and surfaces a significantly negative IPS estimate. */
+    @Test
+    void theCardSurfacesASignificantlyNegativeIpsEstimate() {
+        Proposal p = LearningFixtures.threshold("e2_" + Ids.shortId(), 0.8, 0.82, "system:band_threshold", null);
+        proposals.insert(p);
+        proposals.markEvaluated(p.proposalId(), Map.of("method", "ips_doubly_robust", "liftEstimate", 0.162, "confidenceInterval", Map.of("lower", 0.02, "upper", 0.3),
+            "baselineReward", 0.41, "proposedRewardEstimate", 0.572,
+            "ips", Map.of("liftEstimate", -0.12, "confidenceInterval", Map.of("lower", -0.2, "upper", -0.04))), Instant.now());
+        ChangeCardService.ChangeCard card = api.card(p.proposalId());
+        assertThat(card.replay()).containsEntry("liftUnit", "reward").containsEntry("liftEstimate", 0.162).containsEntry("baselineReward", 0.41);
+        assertThat((List<String>) card.replay().get("concerns")).singleElement().asString()
+            .isEqualTo("the plain IPS estimate says it makes outcomes worse (reward -0.120, 95% interval -0.200 to -0.040)");
+        assertThat(card.governingLearner()).isEqualTo("band_threshold");
+    }
+
     @Test
     void retentionRemovesOnlyWhatIsOlderThanTheWindowAndDryRunRemovesNothing() {
         String decision = "ret_" + Ids.shortId();

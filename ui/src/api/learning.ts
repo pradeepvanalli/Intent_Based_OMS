@@ -2,14 +2,14 @@
 import { api } from './client';
 import type {
   AutonomyLevel, BudgetUpdate, ChangeCard, Digest, Experiment, ExperimentDetail, ExperimentMode, GoldenCandidate, Hypothesis, KillSwitchState, LearnedFact,
-  LearnerMetrics, LearnerView, LiftReport, LiveParameter, LiveUseRequest, ObjectiveProfile, ObjectiveWeights, ParityReport, Proposal,
+  GuardrailReport, LearnerMetrics, LearnerView, LiftReport, LiveFamilyDomain, LiveParameter, LiveUseRequest, ObjectiveProfile, ObjectiveWeights, ParityReport, Proposal,
   RetentionResult, Review, SubjectType, CumulativeDiff,
 } from './types';
 
 const enc = encodeURIComponent;
 const L = '/api/v1/learning';
 
-export type LearningJob = 'reward-maturity' | 'coverage' | 'auto-promote' | 'guardrails';
+export type LearningJob = 'reward-maturity' | 'coverage' | 'auto-promote' | 'guardrails' | 'reward-baseline';
 
 export const learningApi = {
   /* ---- learners and governance (GV-01..03) ---- */
@@ -21,7 +21,7 @@ export const learningApi = {
   /** Pause (enabled=false) or resume all learning for this tenant. */
   setAllLearning: (enabled: boolean) => api.post<KillSwitchState>(`${L}/kill-switch`, { learnerKey: '*', enabled }),
   killSwitch: () => api.get<KillSwitchState>(`${L}/kill-switch`, { silent: true }),
-  /** Stop (enabled=false) or restart learning for every tenant; platform administrators only. */
+  /** Stop (enabled=false) or restart learning for every tenant; platform engineers only (the platform_engineer role). */
   setGlobalLearning: (enabled: boolean) => api.post<KillSwitchState>(`${L}/kill-switch`, { scope: 'global', enabled }),
   /** GV-02: how far one promotion may move a number and how often one target may be promoted per week. */
   setBudget: (learnerKey: string, body: BudgetUpdate) => api.put<LearnerView>(`${L}/learners/${enc(learnerKey)}/budget`, body),
@@ -33,7 +33,10 @@ export const learningApi = {
 
   /* ---- live use of learned values (EX-07) ---- */
   liveParameters: () => api.get<LiveParameter[]>(`${L}/live-parameters`, { silent: true }),
+  /** B-1: a range outside the family's domain is refused (422) with a plain message. */
   proposeLiveUse: (req: LiveUseRequest) => api.post<Proposal>(`${L}/live-parameters/proposals`, req),
+  /** B-1: every learned family's value domain (units, min, max, largest step) and the decisions it affects. */
+  liveDomains: () => api.get<LiveFamilyDomain[]>(`${L}/live-parameters/domains`, { silent: true }),
   revokeLiveUse: (family: string) => api.post<{ family: string; revoked: boolean }>(`${L}/live-parameters/${enc(family)}/revoke`),
 
   facts: (subjectType: SubjectType, subjectId: string) => api.get<LearnedFact[]>(`${L}/facts`, { query: { subjectType, subjectId }, silent: true }),
@@ -73,6 +76,8 @@ export const learningApi = {
   stopExperiment: (id: string) => api.post<void>(`${L}/experiments/${enc(id)}/stop`, { status: 'STOPPED' }),
   ensureHoldout: (share = 0.05) => api.post<Experiment>(`${L}/experiments/holdout`, undefined, { query: { share } }),
   lift: (days = 90) => api.get<LiftReport>(`${L}/lift`, { query: { days }, silent: true }),
+  /** §12 AC-3: each guardrail with learning versus the holdout (or the weeks before) over the last weeks. */
+  guardrailReport: (weeks = 4) => api.get<GuardrailReport>(`${L}/guardrails/report`, { query: { weeks }, silent: true }),
 
   /* ---- explainability, fairness, digests, retention (XP-04, GV-07, NF-10) ---- */
   fairness: (decision: string) => api.get<ParityReport>(`${L}/fairness/${enc(decision)}`, { silent: true }),

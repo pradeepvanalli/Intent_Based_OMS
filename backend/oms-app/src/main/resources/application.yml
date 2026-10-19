@@ -63,7 +63,7 @@ oms:
     # AES-256 master key wrapping per-tenant PII tokenisation keys (tenant_key.key_material). Warned when empty, required in prod.
     master-key: ${OMS_MASTER_KEY:}
     # Dev-only bootstrap users (id:password:tenant:role|role). Must be empty in prod; set OMS_DEV_USERS= to disable.
-    dev-users: ${OMS_DEV_USERS:admin:admin:demo:admin,ops:ops:demo:ops_analyst,cs:cs:demo:cs_rep,risk:risk:demo:risk_analyst,finance:finance:demo:finance_controller,strategy:strategy:demo:strategy_lead}
+    dev-users: ${OMS_DEV_USERS:admin:admin:demo:admin,ops:ops:demo:ops_analyst,cs:cs:demo:cs_rep,risk:risk:demo:risk_analyst,finance:finance:demo:finance_controller,strategy:strategy:demo:strategy_lead,platform:platform:demo:platform_engineer}
     cors:
       allowed-origins: ${OMS_CORS_ALLOWED_ORIGINS:*}   # explicit origins required in prod
     # Optional OIDC/SSO resource-server mode (NFR-07); enabled when an issuer or JWKS URI is set. See HARDENING.md.

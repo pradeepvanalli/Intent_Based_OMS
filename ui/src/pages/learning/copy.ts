@@ -1,6 +1,6 @@
 /* Plain-language wording for the self-optimizing layer, shared by every learning screen and the Why drawer. */
 import type { AutonomyLevel, ExperimentMode, LiftMetric, PolicyChange, Proposal, ProposalStatus, RiskTier } from '../../api/types';
-import { fmtPct, humanize } from '../../lib/format';
+import { humanize } from '../../lib/format';
 
 export const AUTONOMY_LEVELS: AutonomyLevel[] = ['L0_OBSERVE', 'L1_RECOMMEND', 'L2_ACT_WITH_APPROVAL', 'L3_AUTONOMOUS'];
 export const AUTONOMY: Record<AutonomyLevel, { label: string; short: string; explain: string }> = {
@@ -57,7 +57,7 @@ export const EVENT_DRIVEN = new Set(['node_reliability', 'lane_transit', 'invent
 
 const METRIC: Record<string, string> = {
   reward: 'Overall outcome score', fill: 'Units shipped', otd: 'On-time delivery', cost: 'Cost to serve', split: 'Split shipments',
-  fraud: 'Fraud loss', cx: 'Customer contacts', inv: 'Aged stock sold',
+  fraud: 'Fraud loss', cx: 'Customer contacts', inv: 'Aged stock sold', perfect: 'Perfect orders', perfect_order_rate: 'Perfect-order rate',
 };
 export const metricName = (m: string): string => METRIC[m] ?? humanize(m);
 
@@ -218,10 +218,13 @@ export const POSTAL_REASON_CODES: { code: string; label: string }[] = [
   { code: 'natural_disaster', label: 'Natural disaster or emergency' },
 ];
 
+/** E-2: a lift is a difference in mean reward on the 0-1 scale, shown as a signed number, never as a percentage. */
+export const rewardDelta = (lift: number): string => `${lift >= 0 ? '+' : '−'}${Math.abs(lift).toFixed(3)}`;
+
 /** Replay result as one short phrase. */
 export function replayPhrase(lift: number | null | undefined, ci: { lower: number; upper: number } | null | undefined): { text: string; tone: string } {
   if (lift === null || lift === undefined) return { text: 'No replay estimate', tone: 'neutral' };
-  if (ci && ci.lower > 0) return { text: `Looks better: ${lift >= 0 ? '+' : ''}${fmtPct(lift, 1)}`, tone: 'ok' };
-  if (ci && ci.upper < 0) return { text: `Looks worse: ${fmtPct(lift, 1)}`, tone: 'danger' };
+  if (ci && ci.lower > 0) return { text: `Looks better: ${rewardDelta(lift)} reward`, tone: 'ok' };
+  if (ci && ci.upper < 0) return { text: `Looks worse: ${rewardDelta(lift)} reward`, tone: 'danger' };
   return { text: 'No clear difference', tone: 'neutral' };
 }
