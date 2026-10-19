@@ -96,7 +96,7 @@ class ReadOnlySourcingIntegrationTest extends OrchestrationTestBase {
      * earns the shipment and delivery; the original order-level choice, whose node refused, does not get the credit.
      */
     @Test
-    void theReSourcingEpisodeEarnsTheReplacementsOutcomesAndTheFailedChoiceDoesNot() {
+    void theReSourcingEpisodeEarnsTheReplacementsOutcomesAndTheFailedChoiceIsScoredOnItsRefusal() {
         Order o = sourcedOrder();
         Episode original = orderEpisode(o);
         FulfilmentGroup rejected = o.fulfilmentGroups().get(0);
@@ -119,7 +119,13 @@ class ReadOnlySourcingIntegrationTest extends OrchestrationTestBase {
 
         Episode resourcing = episodes.forOrder(o.id()).stream().filter(e -> DECISION.equals(e.decisionName()) && rejected.id().equals(e.fulfillmentGroupId())).findFirst().orElseThrow();
         assertThat(outcomeTypes(resourcing)).as("outcomes of the re-sourcing episode").contains("FulfillmentOutcome", "DeliveryOutcome");
-        assertThat(outcomeTypes(orderEpisode(o))).as("outcomes of the original, failed choice " + original.episodeId())
-            .doesNotContain("FulfillmentOutcome", "DeliveryOutcome");
+        // The original choice gets none of the replacement's shipments or deliveries; its one outcome is its node's refusal.
+        assertThat(outcomeTypes(orderEpisode(o))).as("outcomes of the original, failed choice " + original.episodeId()).containsExactly("FulfillmentOutcome");
+        assertThat(outcomes.forEpisode(orderEpisode(o).episodeId())).singleElement().satisfies(r -> assertThat(r.payload())
+            .isInstanceOfSatisfying(ai.intentoms.learning.model.OutcomeData.FulfillmentOutcome.class, f -> {
+                assertThat(f.storeRejected()).isTrue();
+                assertThat(f.unitsShipped()).isZero();
+                assertThat(f.fulfilmentGroupId()).isEqualTo(rejected.id());
+            }));
     }
 }

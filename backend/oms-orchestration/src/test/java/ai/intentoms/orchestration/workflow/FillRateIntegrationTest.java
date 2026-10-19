@@ -29,6 +29,7 @@ class FillRateIntegrationTest extends OrchestrationTestBase {
     private static final String TYPE = StandardShipOrderWorkflow.TYPE;
     @Autowired InventoryService inventory;
     @Autowired EpisodeRepository episodes;
+    @Autowired ai.intentoms.learning.store.OutcomeRepository outcomes;
     @Autowired RewardMaturityService rewards;
 
     private List<Map<String, Object>> events(String orderId, String type) {
@@ -98,6 +99,14 @@ class FillRateIntegrationTest extends OrchestrationTestBase {
         assertThat(ep.rewardComponents().get("fill")).as("everything shipped from the second sourcing").isZero();
         assertThat(ep.rewardComponents().get("fill_all_attempts")).as("every attempt, unweighted").isCloseTo(1.0, within(1e-9));
         Episode original = episodes.forOrder(o.id()).stream().filter(e -> "sourcing_node_score".equals(e.decisionName()) && e.fulfillmentGroupId() == null).findFirst().orElseThrow();
-        assertThat(episodes.find(original.episodeId()).orElseThrow().reward()).as("the failed first choice earns no shipment credit").isNull();
+        // The failed first choice is scored on what it failed to ship: its node refused, nothing shipped from its plan.
+        Episode failed = episodes.find(original.episodeId()).orElseThrow();
+        assertThat(failed.reward()).as("the refused choice is scored, not dropped").isNotNull();
+        assertThat(failed.rewardComponents().get("fill")).as("nothing shipped from the refused plan").isZero();
+        assertThat(outcomes.forEpisode(original.episodeId())).singleElement().satisfies(r -> assertThat(r.payload())
+            .isInstanceOfSatisfying(ai.intentoms.learning.model.OutcomeData.FulfillmentOutcome.class, f -> assertThat(f.storeRejected()).isTrue()));
+        // Other decisions' order-level episodes do not receive the refusal (their units are the order's, counted once).
+        episodes.forOrder(o.id()).stream().filter(e -> !"sourcing_node_score".equals(e.decisionName())).forEach(e -> assertThat(outcomes.forEpisode(e.episodeId()))
+            .noneSatisfy(r -> assertThat(r.payload()).isInstanceOfSatisfying(ai.intentoms.learning.model.OutcomeData.FulfillmentOutcome.class, f -> assertThat(f.storeRejected() && f.unitsShipped() == 0).isTrue())));
     }
 }

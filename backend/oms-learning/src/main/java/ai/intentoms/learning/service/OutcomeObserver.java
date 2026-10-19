@@ -71,8 +71,13 @@ public class OutcomeObserver implements EventSubscriber {
             episodes.forSubject(e.aggregateType(), e.aggregateId()).forEach(ep -> targets.put(ep.episodeId(), ep));
         // OC-02 (A-N1): a group's outcome belongs to the decision point that planned the group (GroupLineage).
         Map<String, Object> p = e.payload() == null ? Map.of() : e.payload();
-        Map<String, Boolean> planned = lineage.owners(orderId, p.getOrDefault("fulfilmentGroupId", p.get("fulfillmentGroupId")), targets.values());
+        // A refused group (order.resourced) is routed by that group, and only to the decision point that planned it: other
+        // decisions' order-level episodes keep their own view of the order's units.
+        boolean refusal = CoreOutcomeMapper.isRefusal(data);
+        Object group = refusal ? ((OutcomeData.FulfillmentOutcome) data).fulfilmentGroupId() : p.getOrDefault("fulfilmentGroupId", p.get("fulfillmentGroupId"));
+        Map<String, Boolean> planned = lineage.owners(orderId, group, targets.values());
         for (Episode ep : targets.values()) {
+            if (refusal && !Boolean.TRUE.equals(planned.get(ep.episodeId()))) continue;
             if (ep.status() == EpisodeStatus.MATURE || !planned.getOrDefault(ep.episodeId(), concerns(e, ep))) continue;
             if (data instanceof OutcomeData.ReturnOutcome r && r.rmaId() != null && mergeIntoReturn(ep, r)) continue;
             if (outcomes.insert(OutcomeRecord.of(Ids.prefixed("out"), ep.episodeId(), data, e.occurredAt(), e.id(), Instant.now()))) episodes.outcomeChanged(ep.episodeId());

@@ -20,7 +20,8 @@ public class CoreOutcomeMapper implements OutcomeMapper {
     @Override
     public List<String> eventTypes() {
         return List.of("order.delivered", "event.delivered", "order.carrier_exception", "order.shipped", "event.shipped",
-            "return.refunded", "return.dispositioned", "refund.issued", "oms.returns.refunded", "oms.returns.disposition", "cs.wismo");
+            "return.refunded", "return.dispositioned", "refund.issued", "oms.returns.refunded", "oms.returns.disposition", "cs.wismo",
+            "order.resourced");
     }
 
     @Override
@@ -51,8 +52,23 @@ public class CoreOutcomeMapper implements OutcomeMapper {
                 p.get("rmaId") != null ? str(p.get("rmaId")) : "return".equals(e.aggregateType()) ? e.aggregateId() : null,
                 REFUND_EVENTS.contains(e.type()), str(p.get("condition")), returnedLines(p.get("returnLines")));
             case "cs.wismo" -> new OutcomeData.ContactOutcome(p.get("channel") == null ? "cs" : str(p.get("channel")), "wismo", false);
+            // OC-02: a node that refused its group is the outcome of the choice that planned the group: nothing shipped from
+            // it (first-attempt fill 0) and the store rejected. A shortage at reservation is not a refusal (nodeRejected
+            // false), and the replacement's own shipments score the re-sourcing decision.
+            case "order.resourced" -> refusal(p);
             default -> null;
         };
+    }
+
+    static OutcomeData.FulfillmentOutcome refusal(Map<String, Object> p) {
+        if (!bool(p.get("nodeRejected"), true) || !(p.get("rejectedGroupIds") instanceof List<?> groups) || groups.isEmpty()) return null;
+        int units = Math.max(1, num(p.get("rejectedUnits")).intValue());
+        return new OutcomeData.FulfillmentOutcome(1, false, strings(p.get("rejectedNodes")), true, units, 0, 0.0, 0.0, String.valueOf(groups.get(0)), null, 0, true);
+    }
+
+    /** A refused group's outcome ({@link #refusal}): it belongs only to the decision point that planned the group. */
+    static boolean isRefusal(OutcomeData data) {
+        return data instanceof OutcomeData.FulfillmentOutcome f && f.storeRejected() && f.unitsShipped() == 0 && f.shipmentId() == null && f.fulfilmentGroupId() != null;
     }
 
     private static final java.util.Set<String> REFUND_EVENTS = java.util.Set.of("return.refunded", "refund.issued", "oms.returns.refunded");

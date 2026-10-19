@@ -238,6 +238,9 @@ public class DefaultSourcingService implements SourcingService {
             payload.put("rejectedNodes", List.copyOf(rejectedNodes));
             payload.put("nodeRejected", refused);
             payload.put("rejectedGroupIds", List.copyOf(rejectedIds));
+            // OC-02: the units the refused groups held, so the choice that planned them is scored on what it failed to ship.
+            payload.put("rejectedUnits", order.fulfilmentGroups().stream().filter(g -> rejectedIds.contains(g.id()))
+                .flatMap(g -> g.allocations().stream()).mapToInt(FulfilmentGroup.Allocation::qty).sum());
             payload.put("penaltyDelta", delta);
             payload.put("penaltyByNode", deltas);
             payload.put("status", result.status().name());
