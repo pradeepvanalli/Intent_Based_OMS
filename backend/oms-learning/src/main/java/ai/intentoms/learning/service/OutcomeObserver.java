@@ -69,7 +69,7 @@ public class OutcomeObserver implements EventSubscriber {
         for (Episode ep : targets.values()) {
             if (ep.status() == EpisodeStatus.MATURE || !concerns(e, ep)) continue;
             if (data instanceof OutcomeData.ReturnOutcome r && r.rmaId() != null && mergeIntoReturn(ep, r)) continue;
-            outcomes.insert(OutcomeRecord.of(Ids.prefixed("out"), ep.episodeId(), data, e.occurredAt(), e.id(), Instant.now()));
+            if (outcomes.insert(OutcomeRecord.of(Ids.prefixed("out"), ep.episodeId(), data, e.occurredAt(), e.id(), Instant.now()))) episodes.outcomeChanged(ep.episodeId());
         }
     }
 
@@ -82,7 +82,10 @@ public class OutcomeObserver implements EventSubscriber {
         for (OutcomeRecord existing : outcomes.forEpisode(ep.episodeId())) {
             if (existing.payload() instanceof OutcomeData.ReturnOutcome prior && r.rmaId().equals(prior.rmaId())) {
                 OutcomeData.ReturnOutcome merged = prior.merge(r);
-                if (!merged.equals(prior)) outcomes.updatePayload(existing.outcomeId(), merged);
+                if (!merged.equals(prior)) {
+                    outcomes.updatePayload(existing.outcomeId(), merged);
+                    episodes.outcomeChanged(ep.episodeId());
+                }
                 return true;
             }
         }

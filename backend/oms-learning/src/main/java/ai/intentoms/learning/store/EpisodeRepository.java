@@ -95,6 +95,7 @@ public class EpisodeRepository {
             select %s from episode e
             where e.tenant_id = :t and e.status in ('OPEN','PROVISIONAL')
               and (e.created_at < :mature
+                   or e.outcome_version > e.reward_outcome_version
                    or exists (select 1 from outcome o where o.tenant_id = e.tenant_id and o.episode_id = e.episode_id
                               and (e.reward_computed_at is null or o.created_at > e.reward_computed_at)))
             order by e.created_at limit :lim
@@ -120,10 +121,31 @@ public class EpisodeRepository {
 
     @Transactional
     public void updateStatusAndReward(String episodeId, EpisodeStatus status, Double reward, Map<String, Double> components, Instant maturedAt) {
-        int n = jdbc.sql("update episode set status = :s, reward = :r, reward_components = :c, matured_at = :m, reward_computed_at = now() where tenant_id = :t and episode_id = :id")
+        updateStatusAndReward(episodeId, status, reward, components, maturedAt, null);
+    }
+
+    /** As above, recording the outcome version the reward was computed from (read before the outcomes). */
+    @Transactional
+    public void updateStatusAndReward(String episodeId, EpisodeStatus status, Double reward, Map<String, Double> components, Instant maturedAt, Long outcomeVersion) {
+        int n = jdbc.sql("""
+            update episode set status = :s, reward = :r, reward_components = :c, matured_at = :m, reward_computed_at = now(),
+                   reward_outcome_version = coalesce(:v, reward_outcome_version) where tenant_id = :t and episode_id = :id
+            """)
             .param("s", status.name()).param("r", reward).param("c", Jsonb.of(components == null ? Map.of() : components))
-            .param("m", maturedAt == null ? null : Timestamp.from(maturedAt)).param("t", TenantContext.require()).param("id", episodeId).update();
+            .param("m", maturedAt == null ? null : Timestamp.from(maturedAt)).param("v", outcomeVersion).param("t", TenantContext.require()).param("id", episodeId).update();
         if (n == 0) throw new NotFoundException("Episode " + episodeId + " not found");
+    }
+
+    /** An outcome of the episode was written (inserted or merged): its reward is due again, whenever that write commits. */
+    public void outcomeChanged(String episodeId) {
+        jdbc.sql("update episode set outcome_version = outcome_version + 1 where tenant_id = :t and episode_id = :id")
+            .param("t", TenantContext.require()).param("id", episodeId).update();
+    }
+
+    /** The episode's outcome version as committed now; read before the outcomes a reward is computed from. */
+    public long outcomeVersion(String episodeId) {
+        return jdbc.sql("select outcome_version from episode where tenant_id = :t and episode_id = :id")
+            .param("t", TenantContext.require()).param("id", episodeId).query(Long.class).optional().orElse(0L);
     }
 
     private Optional<Episode> one(String sql, Map<String, Object> params) { return many(sql, params).stream().findFirst(); }
