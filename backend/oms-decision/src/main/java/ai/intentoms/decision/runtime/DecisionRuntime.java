@@ -329,7 +329,7 @@ public class DecisionRuntime implements DecisionService {
         ProviderResponse ask(Object askState, Map<String, QuestionDef> questions) {
             List<String> chain = new ArrayList<>();
             if (opts.mode() == Mode.LIVE || opts.mode() == Mode.SHADOW) {
-                safely(() -> hooks().preferredProvider(def.name(), def.version()), Optional.<String>empty()).ifPresent(pref -> {
+                safely(() -> hooks().preferredProvider(def.name(), def.version(), routingKey(opts)), Optional.<String>empty()).ifPresent(pref -> {
                     chain.add(pref);
                     details.put("providerRouted", pref);
                 });
@@ -551,7 +551,7 @@ public class DecisionRuntime implements DecisionService {
         ev.confidence = main.confidence();
         if (ev.opts.mode() == Mode.LIVE || ev.opts.mode() == Mode.SHADOW) {
             double raw = ev.confidence;
-            DecisionLearningHooks.Calibrated cal = safely(() -> hooks().calibrate(def.name(), def.version(), raw), new DecisionLearningHooks.Calibrated(raw, null));
+            DecisionLearningHooks.Calibrated cal = safely(() -> hooks().calibrate(def.name(), def.version(), raw, routingKey(ev.opts)), new DecisionLearningHooks.Calibrated(raw, null));
             if (cal.source() != null && cal.confidence() != raw) {
                 ev.confidence = Math.max(0.0, Math.min(1.0, cal.confidence()));
                 ev.details.put("rawConfidence", raw);

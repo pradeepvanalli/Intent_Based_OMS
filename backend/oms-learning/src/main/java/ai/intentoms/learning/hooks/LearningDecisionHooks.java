@@ -67,6 +67,18 @@ public class LearningDecisionHooks implements DecisionLearningHooks {
         return new Calibrated(rawConfidence, null);
     }
 
+    /** EX-04: calibration is a learned value, so a holdout customer's decision keeps its raw confidence. */
+    @Override
+    public Calibrated calibrate(String decision, int version, double rawConfidence, String routingKey) {
+        return ai.intentoms.learning.governance.LearningSubject.with(routingKey, () -> calibrate(decision, version, rawConfidence));
+    }
+
+    /** EX-04: a promoted provider route is a promoted change, so a holdout customer stays on the configured provider. */
+    @Override
+    public Optional<String> preferredProvider(String decision, int version, String routingKey) {
+        return ai.intentoms.learning.governance.LearningSubject.with(routingKey, () -> preferredProvider(decision, version));
+    }
+
     @Override
     public Optional<String> preferredProvider(String decision, int version) {
         if (!governance.learningOn()) return Optional.empty();

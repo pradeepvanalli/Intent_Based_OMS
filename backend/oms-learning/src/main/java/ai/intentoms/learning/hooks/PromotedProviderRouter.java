@@ -20,10 +20,12 @@ public class PromotedProviderRouter implements ProviderRouter {
 
     private final TenantConfigStore config;
     private final LearnerGovernance governance;
+    private final ai.intentoms.learning.governance.ParameterResolver parameters;
 
-    public PromotedProviderRouter(TenantConfigStore config, LearnerGovernance governance) {
+    public PromotedProviderRouter(TenantConfigStore config, LearnerGovernance governance, ai.intentoms.learning.governance.ParameterResolver parameters) {
         this.config = config;
         this.governance = governance;
+        this.parameters = parameters;
     }
 
     @Override
@@ -31,6 +33,8 @@ public class PromotedProviderRouter implements ProviderRouter {
         String routed = config.getString(KEY_PREFIX + decision, null);
         if (routed == null || routed.isBlank()) return Optional.empty();
         if (!governance.gate(ProviderRoutingLearner.KEY).mayFeedLive()) return Optional.empty();
+        // EX-04: a holdout customer stays on the decision's configured provider.
+        if (parameters.inHoldout(ai.intentoms.learning.governance.LearningSubject.current().orElse(null))) return Optional.empty();
         return Optional.of(routed);
     }
 }

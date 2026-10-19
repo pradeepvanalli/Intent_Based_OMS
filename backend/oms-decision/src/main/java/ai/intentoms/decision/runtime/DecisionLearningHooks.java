@@ -25,8 +25,14 @@ public interface DecisionLearningHooks {
     /** DF-02: the calibrated confidence for a raw L1 confidence, or the raw value when no live calibration applies. */
     default Calibrated calibrate(String decision, int version, double rawConfidence) { return new Calibrated(rawConfidence, null); }
 
+    /** As {@link #calibrate(String, int, double)}, for the subject named by {@code routingKey} (EX-04 holdout). */
+    default Calibrated calibrate(String decision, int version, double rawConfidence, String routingKey) { return calibrate(decision, version, rawConfidence); }
+
     /** DF-05: a provider to try first for this decision, when a promoted routing change says so. */
     default Optional<String> preferredProvider(String decision, int version) { return Optional.empty(); }
+
+    /** As {@link #preferredProvider(String, int)}, for the subject named by {@code routingKey} (EX-04 holdout). */
+    default Optional<String> preferredProvider(String decision, int version, String routingKey) { return preferredProvider(decision, version); }
 
     /**
      * EX-03 / EX-04: which version a subject sees while an experiment runs: a sticky canary slice gets the candidate,

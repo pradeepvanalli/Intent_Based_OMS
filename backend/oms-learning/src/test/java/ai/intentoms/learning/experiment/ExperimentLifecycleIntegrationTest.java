@@ -304,4 +304,31 @@ class ExperimentLifecycleIntegrationTest extends DecisionFabricTestBase {
         }
         throw new AssertionError("shadow records did not appear");
     }
+
+    /** EX-04: calibration and a promoted provider route are learned changes, so a holdout customer gets neither. */
+    @Test
+    void holdoutCustomersKeepRawConfidenceAndTheConfiguredProvider() {
+        String name = installProbe("f4_calib_holdout");
+        Instant now = Instant.now();
+        facts.insert(new LearnedFact(Ids.prefixed("fact"), SubjectType.DECISION, name, FactKey.CALIBRATION_CURVE,
+            new TypedValue.ListValue(List.of("0.00-0.50:+0.000", "0.50-0.70:+0.300", "0.70-1.00:+0.000")), 1.0, 40, "confidence_calibrator", 1, now, null, now));
+        factCache.invalidateAll();
+        Experiment holdout = experiments.ensureHoldout(0.2, TESTER);
+        parameters.promote(CurveConfidenceCalibration.FAMILY, "confidence_calibrator", 0.0, 1.0, null, null, TESTER);
+        try {
+            String held = null, treated = null;
+            for (int i = 0; i < 1000 && (held == null || treated == null); i++) {
+                String ref = "cust-calib-" + i;
+                if (parameters.inHoldout("customer:" + ref)) { if (held == null) held = ref; } else if (treated == null) treated = ref;
+            }
+            assertThat(held).isNotNull();
+            DecisionResult heldResult = decideLive(name, "ord_h" + Ids.shortId(), 100, held);
+            assertThat(heldResult.details()).as("holdout customer keeps raw confidence").doesNotContainKey("calibration");
+            DecisionResult treatedResult = decideLive(name, "ord_t" + Ids.shortId(), 100, treated);
+            assertThat(treatedResult.details()).as("treated customer is calibrated").containsKey("calibration");
+        } finally {
+            parameters.revoke(CurveConfidenceCalibration.FAMILY, TESTER);
+            experiments.stop(holdout.experimentId(), ExperimentStatus.STOPPED, Map.of(), Actor.parse(TESTER));
+        }
+    }
 }
