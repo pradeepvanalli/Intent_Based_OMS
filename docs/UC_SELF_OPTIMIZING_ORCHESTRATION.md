@@ -85,12 +85,14 @@ functional requirements done and runtime bugs in what existed. The work since th
 rest. The status of every requirement ID, with the code that implements it and the test or live check that proves
 it, is in **`docs/SOO_TRACEABILITY.md`**; that file, not this section, is the source of truth.
 
+The latest independent audit (commit `fea4c21`, 19 October 2026; the auditor ran the service on a fresh database and drove about 290 live orders through it) found 60 of the 63 functional requirements done, 2 partial (DF-02 calibration from live resolutions, EX-01 off-policy correction) and 1 that cannot be judged without weeks of real deliveries (CX-01's 3-point calibration target); every §7 reward term and hard constraint, every REST endpoint and MCP tool done; 9 of 10 non-functional requirements (NF-07 partial: a third party's name typed into a note is not redacted); 4 of 6 release criteria met, the other 2 needing pilot traffic. Its 14 remaining defects (none high) are listed in the traceability file.
+
 In short, live in the running app:
 
 * **Outcome loop.** One episode per decision point, typed outcomes from real ledger events (deliveries, shipments,
   refunds, returns, chargebacks via the Stripe webhook, customer contacts, stranded stock), rewards for all seven
   terms with per-term maturity, and coverage monitoring that pauses only the learners whose data went quiet.
-* **Fast loop.** 26 learners across fulfilment and promise, fraud, inventory, customers and decision quality, every
+* **Fast loop.** 27 learners across fulfilment and promise, fraud, inventory, customers and decision quality, every
   one governed (on/off, pause, autonomy) and listed in the Learning console in plain words.
 * **Live use under control.** A learned value reaches a live decision only after a promoted change that bounds it
   (range, max step) and only while its learner is on; switching it off takes effect at once.

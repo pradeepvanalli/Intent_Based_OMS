@@ -361,10 +361,12 @@ proposal reads, a task queue flooded by duplicate escalations). That has since b
 requirements built; the per-requirement status, code and tests are in `docs/SOO_TRACEABILITY.md`, and the mechanism
 in `docs/UC_SELF_OPTIMIZING_ORCHESTRATION.md`.
 
+The latest independent audit (commit `fea4c21`, 19 October 2026; the auditor ran the service on a fresh database and drove about 290 live orders through it) found 60 of the 63 functional requirements done, 2 partial (DF-02 calibration from live resolutions, EX-01 off-policy correction) and 1 that cannot be judged without weeks of real deliveries (CX-01's 3-point calibration target); every §7 reward term and hard constraint, every REST endpoint and MCP tool done; 9 of 10 non-functional requirements (NF-07 partial: a third party's name typed into a note is not redacted); 4 of 6 release criteria met, the other 2 needing pilot traffic. Its 14 remaining defects (none high) are listed in the traceability file.
+
 - **Outcome loop**: propensity logging on every decision (the arms a decision could have chosen and the probability
   of the one applied), one episode per decision point, typed outcomes from real ledger events including chargebacks,
   customer contacts and stranded stock, seven-term rewards with per-term maturity, and coverage monitoring.
-- **26 governed learners**: node reliability, lane transit and calibration, a contextual sourcing bandit, backlog
+- **27 governed learners**: node reliability, lane transit and calibration, a contextual sourcing bandit, backlog
   breach curves, sourcing weights, promise buffers, early delay warnings and appeasement levels; fraud thresholds,
   abuse rings, drift and agent reputation; stock age, safety stock, reservation TTL, transfers, supplier reliability
   and backorders; customer preferences and segments; band thresholds, calibration, golden-set growth,

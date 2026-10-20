@@ -7,7 +7,8 @@ All notable changes to Intent OMS are documented here. The format follows
 - **Self-Optimizing Order Orchestration — fixes and completion work.** The first SOO entry below overstated what was built:
   a strict audit found 6 of 63 functional requirements done, runtime bugs that broke the learning screens, and a
   task queue that filled with duplicate escalations. This pass fixes those and builds the rest; the status of every
-  requirement, with code and tests, is in `docs/SOO_TRACEABILITY.md`.
+  requirement, with code and tests, is in `docs/SOO_TRACEABILITY.md`. An independent audit of commit `fea4c21`
+  (19 October 2026) found 60 of 63 functional requirements done, 2 partial and 1 needing real traffic to judge.
   - Fixed: proposals were stored without their change type and could not be read; a scheduled scorer re-decided every
     open order every minute, opening a new episode and a new escalation task each time (one demo order collected
     hundreds of tasks); outcomes attached to only one episode per order; newer episodes never got rewards; the MCP
