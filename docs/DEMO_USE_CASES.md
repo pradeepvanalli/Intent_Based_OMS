@@ -213,6 +213,9 @@ Full walkthrough, guardrails and sample run: `docs/UC_AGENTIC_CONTROL_TOWER.md`.
 
 ## Running the demo
 
+Presenting to business stakeholders rather than driving the scripts yourself? Use
+`docs/BUSINESS_DEMO_SCRIPT.md` instead — a click-by-click, no-terminal run-of-show for the browser UI.
+
 ```bash
 make run                                  # service on :8080 with the seeded demo tenant
 scripts/usecases/run-all.sh               # UC1–UC8, ~12 minutes (UC6 needs an LLM key); BASE=http://host:port to target another app
