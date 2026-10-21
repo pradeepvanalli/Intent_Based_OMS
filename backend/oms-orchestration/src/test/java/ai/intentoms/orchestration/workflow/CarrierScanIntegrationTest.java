@@ -105,6 +105,34 @@ class CarrierScanIntegrationTest extends OrchestrationTestBase {
         assertThat(RewardCalculator.components(recorded).get("otd")).isZero();
     }
 
+    /**
+     * A4-4: a damaged (but not lost) exception is damaged, full stop — but on-time is unknown until the delivery
+     * scan actually arrives, or the promise date has already passed. A fresh order's promise date is still ahead, so
+     * the exception must not score a late delivery before any scan.
+     */
+    @Test
+    void aDamagedExceptionIsNotScoredAsLateBeforeAnyDeliveryScan() {
+        Order o = shippedOrder("SCAN-A4-4", "T-A4-4");
+        driveToStep(TYPE, o.id(), WorkflowStatus.WAITING_SIGNAL, "await_delivery");
+
+        inbound.carrier(Map.of("eventId", "exc-A4-4", "type", "exception", "orderId", o.id(), "tracking", "T-A4-4", "condition", "damaged"));
+        drive(TYPE, o.id(), w -> WorkflowStatus.WAITING_SIGNAL.equals(w.status()) && !events(o.id(), "order.carrier_exception").isEmpty());
+        assertThat(events(o.id(), "order.carrier_exception")).singleElement().satisfies(e -> assertThat(e).containsEntry("damaged", true).containsEntry("lost", false));
+        drainOutbox();
+
+        Episode sourcing = episodes.forOrder(o.id()).stream().filter(e -> "sourcing_node_score".equals(e.decisionName())).findFirst().orElseThrow();
+        List<OutcomeRecord> recorded = outcomes.forEpisode(sourcing.episodeId());
+        assertThat(recorded).extracting(OutcomeRecord::payload).filteredOn(OutcomeData.DeliveryOutcome.class::isInstance).singleElement()
+            .satisfies(d -> {
+                OutcomeData.DeliveryOutcome damaged = (OutcomeData.DeliveryOutcome) d;
+                assertThat(damaged).extracting(OutcomeData.DeliveryOutcome::onTime, OutcomeData.DeliveryOutcome::lost, OutcomeData.DeliveryOutcome::damaged)
+                    .as("damaged is damaged; on-time is not false before any delivery scan or promise breach")
+                    .containsExactly(true, false, true);
+            });
+        assertThat(RewardCalculator.scoredTerms(recorded)).contains("otd");
+        assertThat(RewardCalculator.components(recorded).get("otd")).as("not scored as a late delivery before any scan").isNotZero();
+    }
+
     @Test
     void aDelayExceptionIsNotAnOutcome() {
         Order o = shippedOrder("SCAN-A6-DELAY", "T-A6-D");

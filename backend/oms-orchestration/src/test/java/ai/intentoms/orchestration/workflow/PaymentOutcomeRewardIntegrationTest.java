@@ -10,6 +10,7 @@ import ai.intentoms.learning.store.EpisodeRepository;
 import ai.intentoms.orchestration.OrchestrationTestBase;
 import ai.intentoms.order.capture.CaptureRequest;
 import ai.intentoms.order.model.Order;
+import ai.intentoms.platform.json.Json;
 import ai.intentoms.statemachine.HoldService;
 import ai.intentoms.workflow.model.WorkflowStatus;
 import org.junit.jupiter.api.Test;
@@ -26,7 +27,7 @@ import static org.assertj.core.api.Assertions.within;
  * <ul>
  *   <li>audit A-N2: a chargeback the merchant won blames nobody (OC-05), and its loss is cancelled;</li>
  *   <li>a refused cash-on-delivery parcel comes back, so its fraud loss is the return-to-origin cost (the outbound
- *       fulfilment cost again), not the order's whole value.</li>
+ *       fulfilment cost again), not the order's whole value, unless the carrier reports its own figure (A4-3).</li>
  * </ul>
  */
 class PaymentOutcomeRewardIntegrationTest extends OrchestrationTestBase {
@@ -36,6 +37,11 @@ class PaymentOutcomeRewardIntegrationTest extends OrchestrationTestBase {
     @Autowired ChargebackService chargebacks;
     @Autowired PaymentRepository payments;
     @Autowired HoldService holds;
+
+    private List<Map<String, Object>> events(String orderId, String type) {
+        return jdbc.sql("select payload::text as p from event where tenant_id = :t and aggregate_id = :o and type = :ty order by position").param("t", tenant).param("o", orderId).param("ty", type)
+            .query((rs, i) -> Json.readMap(rs.getString("p"))).list();
+    }
 
     private Episode orderEpisode(Order o) {
         drainOutbox();
@@ -90,5 +96,37 @@ class PaymentOutcomeRewardIntegrationTest extends OrchestrationTestBase {
         double fraud = c.getOrDefault("fraud_raw", c.get("fraud"));
         assertThat(fraud).as("the return leg costs what the outbound leg did, not the order's value").isCloseTo(cost, within(1e-6)).isLessThan(1.0);
         assertThat(c).as("the customer turned the parcel away").containsEntry("attr.customer", 1.0).containsEntry("perfect", 0.0);
+    }
+
+    /**
+     * A4-3: when the carrier's {@code returned_to_sender} scan reports its own return-to-origin cost
+     * ({@code rtoCost} / {@code returnCost}), the outcome and the reward use that figure instead of always falling
+     * back to the outbound fulfilment cost (the webhook previously accepted no such field at all, so this branch
+     * was dead code on every real return).
+     */
+    @Test
+    void aCarrierReportedReturnCostReplacesTheOutboundFallback() {
+        CaptureRequest req = new CaptureRequest("web", "PAYOUT-COD-RTO", "standard_ship", "cust-payout-cod-rto", customer("cust-payout-cod-rto"),
+            List.of(line("1", "HOOD-GRY-M", 2, "68.00"), line("2", "SNK-RUN-10", 1, "145.00")),
+            List.of(new CaptureRequest.AddressInput("ship_to", "Sam Okafor", "12 Harbour Rd", null, "Chicago", "IL", "60607", "US", null, "residential")),
+            List.of(), List.of(new CaptureRequest.TenderInput("cod", "cod_cash", Money.usd("320.00"), Map.of())), List.of(), List.of(), "ground", null, "USD", Map.of(), null);
+        Order o = capture(req);
+        driveToStep(TYPE, o.id(), WorkflowStatus.WAITING_SIGNAL, "release");
+        holds.active("order", o.id()).forEach(h -> holds.release(h.id(), "customer confirmed by phone", SYSTEM));
+        driveToStep(TYPE, o.id(), WorkflowStatus.WAITING_SIGNAL, "await_fulfilment");
+        inbound.wms(nodeOf(o), wmsEvent("ship-PAYOUT-COD-RTO", "shipped", o.id(), Map.of("carrier", "UPS", "tracking", "T-PAYOUT-COD-RTO")));
+        driveToStep(TYPE, o.id(), WorkflowStatus.WAITING_SIGNAL, "await_delivery");
+        inbound.carrier(Map.of("eventId", "rts-PAYOUT-COD-RTO", "type", "returned_to_sender", "orderId", o.id(), "tracking", "T-PAYOUT-COD-RTO", "rtoCost", 22.5));
+        drive(TYPE, o.id(), w -> jdbc.sql("select count(*) from event where tenant_id = :t and aggregate_id = :o and type = 'order.returned_to_sender'")
+            .param("t", tenant).param("o", o.id()).query(Long.class).single() > 0);
+
+        assertThat(events(o.id(), "order.returned_to_sender")).singleElement().satisfies(e -> assertThat(((Number) e.get("returnCost")).doubleValue()).isEqualTo(22.5));
+
+        double orderValue = orders.get(o.id()).totals().grandTotal().amount().doubleValue();
+        Episode refused = orderEpisode(o);
+        Map<String, Double> c = refused.rewardComponents();
+        double cost = c.getOrDefault("cost_raw", c.get("cost"));
+        double fraud = c.getOrDefault("fraud_raw", c.get("fraud"));
+        assertThat(fraud).as("the carrier's own return-to-origin cost, not the outbound leg").isCloseTo(22.5 / orderValue, within(1e-6)).isNotCloseTo(cost, within(1e-6));
     }
 }

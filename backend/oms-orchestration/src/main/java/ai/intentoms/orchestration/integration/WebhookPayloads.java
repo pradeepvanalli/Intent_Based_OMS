@@ -51,10 +51,13 @@ public final class WebhookPayloads {
 
     /** Normalised carrier event. */
     /** A carrier scan. {@code damaged}/{@code lost} come from the body ({@code damaged: true}, or {@code condition:
-     * "damaged"|"lost"}) and travel with the signal so the delivery outcome keeps them. */
-    public record CarrierEvent(String eventId, String type, String orderId, String tracking, String rmaId, String shipmentId, boolean damaged, boolean lost) {
+     * "damaged"|"lost"}) and travel with the signal so the delivery outcome keeps them. {@code returnCost} (A4-3) is
+     * the carrier's own figure for returning a refused or undeliverable parcel to origin ({@code rtoCost} or
+     * {@code returnCost} on a {@code returned_to_sender} scan), carried through to the outcome so the reward uses it
+     * instead of always falling back to the outbound fulfilment cost. */
+    public record CarrierEvent(String eventId, String type, String orderId, String tracking, String rmaId, String shipmentId, boolean damaged, boolean lost, Double returnCost) {
         public CarrierEvent(String eventId, String type, String orderId, String tracking, String rmaId, String shipmentId) {
-            this(eventId, type, orderId, tracking, rmaId, shipmentId, false, false);
+            this(eventId, type, orderId, tracking, rmaId, shipmentId, false, false, null);
         }
 
         public String signal() { return CARRIER_SIGNALS.get(type); }
@@ -72,6 +75,7 @@ public final class WebhookPayloads {
             if (shipments != null && !shipments.isEmpty()) p.put("shipments", shipments);
             if (damaged) p.put("damaged", true);
             if (lost) p.put("lost", true);
+            if (returnCost != null) p.put("returnCost", returnCost);
             return p;
         }
     }
@@ -98,7 +102,9 @@ public final class WebhookPayloads {
         String condition = str(body.get("condition"));
         boolean damaged = Boolean.TRUE.equals(body.get("damaged")) || "damaged".equalsIgnoreCase(condition);
         boolean lost = Boolean.TRUE.equals(body.get("lost")) || "lost".equalsIgnoreCase(condition);
-        return new CarrierEvent(eventId(body, "carrier"), type, orderId, tracking, rmaId, str(body.get("shipmentId")), damaged, lost);
+        // A4-3: the carrier's own return-to-origin cost for a refused/undeliverable parcel, when it reports one.
+        Double returnCost = num(body.get("returnCost") != null ? body.get("returnCost") : body.get("rtoCost"));
+        return new CarrierEvent(eventId(body, "carrier"), type, orderId, tracking, rmaId, str(body.get("shipmentId")), damaged, lost, returnCost);
     }
 
     /** Inventory feed: {@code {eventId?, source?, asOf?, positions:[{sku, qty, nodeId?, supplyType?, demandType?, confidence?, asOf?}]}} or a bare list. */
@@ -151,6 +157,7 @@ public final class WebhookPayloads {
     }
 
     private static String str(Object o) { return o == null ? null : String.valueOf(o); }
+    private static Double num(Object o) { return o instanceof Number n ? n.doubleValue() : null; }
 
     private static Set<String> union(Set<String> a, Set<String> b) { Set<String> s = new java.util.TreeSet<>(a); s.addAll(b); return s; }
 }

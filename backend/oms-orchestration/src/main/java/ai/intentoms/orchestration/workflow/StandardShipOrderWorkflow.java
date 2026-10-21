@@ -535,6 +535,16 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         if (payload.get("tracking") != null) m.put("tracking", String.valueOf(payload.get("tracking")));
         m.put("lost", Boolean.TRUE.equals(payload.get("lost")));
         m.put("damaged", Boolean.TRUE.equals(payload.get("damaged")));
+        // A4-4: a damaged (not lost) exception is not yet known to be late — only the touched groups' own promise
+        // dates already having passed makes it definitely late before any delivery scan; otherwise on-time is
+        // unresolved until the scan (CoreOutcomeMapper keeps it unresolved as "not yet late" rather than guessing).
+        java.time.LocalDate today = java.time.LocalDate.now(java.time.ZoneOffset.UTC);
+        boolean promiseBreached = order.fulfilmentGroups().stream().filter(g -> groups.contains(g.id()))
+            .anyMatch(g -> g.promiseDate() != null && today.isAfter(g.promiseDate()));
+        m.put("onTime", !promiseBreached);
+        // A4-3: the carrier's own return-to-origin cost, when a returned_to_sender scan reported one; the reward
+        // uses it instead of always falling back to the outbound fulfilment cost.
+        if (payload.get("returnCost") instanceof Number n) m.put("returnCost", n.doubleValue());
         return m;
     }
 

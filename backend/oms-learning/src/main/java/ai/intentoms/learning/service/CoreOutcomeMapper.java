@@ -33,8 +33,11 @@ public class CoreOutcomeMapper implements OutcomeMapper {
                 p.get("allDelivered") instanceof Boolean all ? all : null, stringsOrNull(p.get("lineIds")), stringsOrNull(p.get("shipments")));
             // A parcel the carrier reports lost or damaged is that parcel's delivery outcome: a lost one never gets a
             // delivery scan (audit A6). Any other exception (a delay) is not an outcome; the delivery scan will be.
+            // A4-4: lost is definitively not on time; damaged alone is not — on-time stays unresolved (true) unless
+            // the producer (StandardShipOrderWorkflow.carrierFacts) says the touched groups' promise date has
+            // already passed, so a damaged-but-not-yet-late parcel is not scored as late before any delivery scan.
             case "order.carrier_exception" -> bool(p.get("lost"), false) || bool(p.get("damaged"), false)
-                ? new OutcomeData.DeliveryOutcome(false, 0, bool(p.get("damaged"), false), bool(p.get("lost"), false), false,
+                ? new OutcomeData.DeliveryOutcome(!bool(p.get("lost"), false) && bool(p.get("onTime"), true), 0, bool(p.get("damaged"), false), bool(p.get("lost"), false), false,
                     stringsOrNull(p.get("lineIds")), stringsOrNull(p.get("shipments"))) : null;
             case "order.shipped", "event.shipped" -> new OutcomeData.FulfillmentOutcome(
                 Math.max(1, num(p.get("packageCount")).intValue()), bool(p.get("splitAvoided"), false), strings(p.get("nodeIds")),
