@@ -13,7 +13,13 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
-/** Persistence for {@code outcome} (OC-03). Append-only: an episode can have several outcomes over time. */
+/**
+ * Persistence for {@code outcome} (OC-03). Insert-only for distinct events: an episode accumulates several outcome
+ * rows over time, one per (episode, source event) pair ({@link #insert}'s conflict target). The one exception is
+ * {@link #updatePayload}, used only to fold a return's disposition and refund events into a single row per RMA
+ * ({@code OutcomeObserver.mergeIntoReturn}) rather than letting them count as two outcomes of the same loss — unlike
+ * {@code decision_record} there is no DB trigger blocking that update, so this comment is the contract (D5-4).
+ */
 @Repository
 public class OutcomeRepository {
     private final JdbcClient jdbc;
