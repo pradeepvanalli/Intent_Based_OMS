@@ -54,21 +54,34 @@ public class CoreOutcomeMapper implements OutcomeMapper {
             case "cs.wismo" -> new OutcomeData.ContactOutcome(p.get("channel") == null ? "cs" : str(p.get("channel")), "wismo", false);
             // OC-02: a node that refused its group is the outcome of the choice that planned the group: nothing shipped from
             // it (first-attempt fill 0) and the store rejected. A shortage at reservation is not a refusal (nodeRejected
-            // false), and the replacement's own shipments score the re-sourcing decision.
+            // false): the replacement's own shipments score the re-sourcing decision, but the abandoned choice still needs
+            // a definite, non-blaming end of its own (A4-2) rather than staying open forever with no outcome at all.
             case "order.resourced" -> refusal(p);
             default -> null;
         };
     }
 
+    /**
+     * A4-2: every rejected group gives the decision point that planned it a definite outcome, so the episode is never
+     * left open with no outcome at all (it would otherwise mature with a null reward and count as uncovered, OC-07).
+     * A genuine refusal ({@code nodeRejected true}) keeps blaming the node (fill 0, {@code storeRejected true}, the
+     * units it failed to ship). A reservation-race shortage ({@code nodeRejected false}) is nobody's refusal: the
+     * outcome is neutral — {@code storeRejected false} (A4-1 carries no node blame) and no units counted against fill
+     * (the choice never got the chance to ship anything; the replacement's own outcomes score the re-sourcing decision).
+     */
     static OutcomeData.FulfillmentOutcome refusal(Map<String, Object> p) {
-        if (!bool(p.get("nodeRejected"), true) || !(p.get("rejectedGroupIds") instanceof List<?> groups) || groups.isEmpty()) return null;
-        int units = Math.max(1, num(p.get("rejectedUnits")).intValue());
-        return new OutcomeData.FulfillmentOutcome(1, false, strings(p.get("rejectedNodes")), true, units, 0, 0.0, 0.0, String.valueOf(groups.get(0)), null, 0, true);
+        if (!(p.get("rejectedGroupIds") instanceof List<?> groups) || groups.isEmpty()) return null;
+        boolean nodeRejected = bool(p.get("nodeRejected"), true);
+        int units = nodeRejected ? Math.max(1, num(p.get("rejectedUnits")).intValue()) : 0;
+        return new OutcomeData.FulfillmentOutcome(1, false, strings(p.get("rejectedNodes")), nodeRejected, units, 0, 0.0, 0.0, String.valueOf(groups.get(0)), null, 0, true);
     }
 
-    /** A refused group's outcome ({@link #refusal}): it belongs only to the decision point that planned the group. */
+    /**
+     * The terminal outcome of a rejected group ({@link #refusal}, A4-1 / A4-2): it belongs only to the decision point
+     * that planned the group, whether the group was refused or just abandoned after a shortage.
+     */
     static boolean isRefusal(OutcomeData data) {
-        return data instanceof OutcomeData.FulfillmentOutcome f && f.storeRejected() && f.unitsShipped() == 0 && f.shipmentId() == null && f.fulfilmentGroupId() != null;
+        return data instanceof OutcomeData.FulfillmentOutcome f && f.unitsShipped() == 0 && f.shipmentId() == null && f.fulfilmentGroupId() != null;
     }
 
     private static final java.util.Set<String> REFUND_EVENTS = java.util.Set.of("return.refunded", "refund.issued", "oms.returns.refunded");
