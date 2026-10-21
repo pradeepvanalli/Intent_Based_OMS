@@ -56,6 +56,19 @@ public class ExplorationFloor {
         catch (RuntimeException e) { return 0; }
     }
 
+    /**
+     * The lowest true propensity this decision's exploration floor can log for the given number of arms: the share
+     * spread uniformly over the other arms ({@code share / (arms - 1)}), or 1.0 when the decision cannot explore (not
+     * governed, no share configured, or fewer than two arms to explore into). D4-1/EX-01: off-policy evaluation uses
+     * this (capped at its own default) as its propensity-clip floor, so a decision's own explored records are never
+     * clipped away by a floor tighter than what the governed share actually draws.
+     */
+    public double minPropensity(String decision, Tier tier, int arms) {
+        double share = share(decision, tier);
+        if (share <= 0 || arms <= 1) return 1.0;
+        return share / (arms - 1);
+    }
+
     public Optional<DecisionLearningHooks.Exploration> explore(String decision, Tier tier, List<String> arms, String chosen, String routingKey) {
         double share = share(decision, tier);
         if (share <= 0 || chosen == null || arms == null) return Optional.empty();

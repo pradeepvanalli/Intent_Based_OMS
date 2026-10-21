@@ -57,6 +57,18 @@ public final class OffPolicyEvaluator {
 
     /** Overload taking the proposed-arm function directly, for tests that don't need a real PolicyChangeset. */
     public static Result evaluate(List<LoggedRecord> records, Function<LoggedRecord, String> proposedArmOf) {
+        return evaluate(records, proposedArmOf, PROPENSITY_FLOOR);
+    }
+
+    /**
+     * As {@link #evaluate(List, Function)}, with an explicit propensity-clip floor (D4-1/EX-01). The default floor
+     * exists so one near-zero-propensity record can't dominate the estimate, but a decision under the governed
+     * exploration floor can legitimately log a true propensity below it (an 8-arm decision exploring at a 10% share
+     * logs 0.1/7 ≈ 0.014 for its explored arm); clipping that up to the default floor would truncate the floor's own
+     * propensities and bias the correction by construction. Callers pass the lower of the default and that decision's
+     * own floor; everything else about the estimator is unchanged.
+     */
+    public static Result evaluate(List<LoggedRecord> records, Function<LoggedRecord, String> proposedArmOf, double propensityFloor) {
         int n = records.size();
         if (n == 0) return new Result("ips_doubly_robust", 0, 0, 0, 0, 0, 0, 0);
 
@@ -70,8 +82,8 @@ public final class OffPolicyEvaluator {
             LoggedRecord r = records.get(i);
             String proposed = proposedArmOf.apply(r);
             double propensity = r.propensity();
-            boolean wasClipped = propensity < PROPENSITY_FLOOR;
-            if (wasClipped) { propensity = PROPENSITY_FLOOR; clipped++; }
+            boolean wasClipped = propensity < propensityFloor;
+            if (wasClipped) { propensity = propensityFloor; clipped++; }
 
             double proposedBaseline = proposed == null ? 0.0 : armMeanReward.getOrDefault(proposed, baselineReward);
             double loggedBaseline = armMeanReward.getOrDefault(r.chosenArm(), baselineReward);
