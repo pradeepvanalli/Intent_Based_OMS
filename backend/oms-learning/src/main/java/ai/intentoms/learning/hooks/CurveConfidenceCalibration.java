@@ -20,6 +20,13 @@ import java.util.Optional;
  * entry per confidence bin), so "90% sure" means right about 90% of the time. Applies only while the
  * {@code decision.calibration} family is promoted for live use and the calibrator is on and above L0; the runtime records
  * the raw confidence and this source on the decision. Bands are then applied to the calibrated value.
+ *
+ * <p>DF-02 live source: while the family is live, every decision gets a calibration source on its record, not only
+ * the ones a learned bin happens to cover. A deterministic provider's confidence can sit outside every learned bin
+ * (no curve yet, or an edge value like the heuristic provider's fixed 0.0/0.55 before that bin reaches its minimum
+ * sample count); rather than looking as if calibration were never consulted, such a record declines explicitly
+ * ({@code source: "outside_curve"}, with the reason) so a reader can tell "consulted, no correction applied" from
+ * "never asked".
  */
 @Component
 public class CurveConfidenceCalibration implements ConfidenceCalibration {
@@ -36,24 +43,34 @@ public class CurveConfidenceCalibration implements ConfidenceCalibration {
 
     @Override
     public Optional<DecisionLearningHooks.Calibrated> calibrate(String decision, int version, double rawConfidence) {
+        if (!resolver.isLive(FAMILY)) return Optional.empty();
         Optional<LearnedFact> curve = facts.active(SubjectType.DECISION, decision, FactKey.CALIBRATION_CURVE);
-        if (curve.isEmpty() || !(curve.get().value() instanceof TypedValue.ListValue lv) || !resolver.isLive(FAMILY)) return Optional.empty();
-        for (String bin : lv.values()) {
-            Bin b = Bin.parse(bin);
-            if (b == null || rawConfidence < b.lower() || rawConfidence > b.upper()) continue;
-            // Safety net for curves written before the per-bin minimum existed: never move confidence by more than this.
-            double correction = Math.max(-MAX_CORRECTION, Math.min(MAX_CORRECTION, b.correction()));
-            double calibrated = Math.max(0.0, Math.min(1.0, rawConfidence + correction));
-            Map<String, Object> source = new LinkedHashMap<>();
-            source.put("family", FAMILY);
-            source.put("factVersion", curve.get().version());
-            source.put("bin", bin);
-            source.put("correction", correction);
-            source.put("learner", curve.get().learner());
-            source.put("decisionVersion", version);
-            return Optional.of(new DecisionLearningHooks.Calibrated(calibrated, source));
+        if (curve.isPresent() && curve.get().value() instanceof TypedValue.ListValue lv) {
+            for (String bin : lv.values()) {
+                Bin b = Bin.parse(bin);
+                if (b == null || rawConfidence < b.lower() || rawConfidence > b.upper()) continue;
+                // Safety net for curves written before the per-bin minimum existed: never move confidence by more than this.
+                double correction = Math.max(-MAX_CORRECTION, Math.min(MAX_CORRECTION, b.correction()));
+                double calibrated = Math.max(0.0, Math.min(1.0, rawConfidence + correction));
+                Map<String, Object> source = new LinkedHashMap<>();
+                source.put("family", FAMILY);
+                source.put("source", "curve");
+                source.put("factVersion", curve.get().version());
+                source.put("bin", bin);
+                source.put("correction", correction);
+                source.put("learner", curve.get().learner());
+                source.put("decisionVersion", version);
+                return Optional.of(new DecisionLearningHooks.Calibrated(calibrated, source));
+            }
         }
-        return Optional.empty();
+        Map<String, Object> declined = new LinkedHashMap<>();
+        declined.put("family", FAMILY);
+        declined.put("source", "outside_curve");
+        declined.put("decisionVersion", version);
+        declined.put("reason", curve.isEmpty() || !(curve.get().value() instanceof TypedValue.ListValue)
+            ? "no calibration curve learned yet for this decision"
+            : "raw confidence " + rawConfidence + " is outside every learned bin");
+        return Optional.of(new DecisionLearningHooks.Calibrated(rawConfidence, declined));
     }
 
     record Bin(double lower, double upper, double correction) {
