@@ -116,7 +116,8 @@ public class ProviderRoutingLearner implements GovernedLearner {
         Map<String, Double> spendPerCall = costPerCallByProvider(spend.byDecision(from, to), name);
         List<DecisionRecord> answered = decisionRecords.recentLive(name, def.version(), since, 20_000).stream()
             .filter(r -> r.provider() != null && r.layer() != ai.intentoms.decision.model.Layer.L0_RULE && r.layer() != ai.intentoms.decision.model.Layer.DEFAULT).toList();
-        List<DecisionRecord> labelled = decisionRecords.labelledBetween(name, def.version(), since, Instant.now()).stream()
+        // C4-N1: a labelled record counts even if its definition version was later promoted or rolled back.
+        List<DecisionRecord> labelled = decisionRecords.labelledSince(name, since, Instant.now()).stream()
             .filter(r -> r.labels() != null && r.labels().containsKey(HUMAN_RESOLUTION_LABEL))
             .filter(ai.intentoms.learning.model.HumanResolution::hasValue).toList();
         List<ProviderStats> stats = stats(answered, labelled, spendPerCall);
