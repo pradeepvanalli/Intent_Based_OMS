@@ -147,6 +147,32 @@ class ProposalEvaluationPropensityFloorIntegrationTest extends PostgresTestBase 
     }
 
     @Test
+    void aResimulationEvaluationsLoggedPropensitiesMinIsTheExploredArmsNotTheDefaultClip() {
+        // D5-7: the same T0/8-arm-equivalent exploring decision as the threshold test above, but the candidate is a
+        // rule change (not a threshold change), which takes the resimulation path (ProposalEvaluationService's
+        // evaluateDecision, non-threshold branch) rather than the threshold-only path.
+        String name = install("floor_resim_t0", "T0");
+        config.set(ExplorationFloor.KEY_PREFIX + name, 0.5); // capped at 10% by the floor itself
+        List<DecisionRecord> logged = new ArrayList<>();
+        for (int i = 0; i < 300; i++) logged.add(decide(name, i));
+        for (DecisionRecord r : logged) reward(r, 0.5);
+
+        // A rule that never fires: the classification is unchanged (flips == 0), so this isolates the propensity
+        // floor from any confound of the candidate actually changing outcomes.
+        Proposal p = draft(new ArtifactRef("decision", name), 1, PolicyChangeset.RiskTier.T0,
+            new PolicyChange.RuleAdd(name, "exception.code == 'never_matches_anything'", "unclear", "test rule, never fires"));
+        Map<String, Object> report = evaluations.evaluate(p.proposalId(), "user:tester").evaluationReport();
+
+        assertThat(report.get("method")).isEqualTo("resimulation+ips_doubly_robust");
+        @SuppressWarnings("unchecked") Map<String, Object> lp = (Map<String, Object>) report.get("loggedPropensities");
+        double expectedFloor = 0.10 / 3; // this decision's own floor: 10% share over 3 other arms
+        assertThat(((Number) lp.get("min")).doubleValue()).as("the explored arm's true propensity, not clipped up to the default 0.05")
+            .isCloseTo(expectedFloor, within(5e-5));
+        assertThat(((Number) lp.get("clippedAt")).doubleValue()).as("the clip actually used matches this decision's own floor, not the hardcoded 0.05")
+            .isCloseTo(expectedFloor, within(5e-5));
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void aT1DecisionsThresholdEvaluationNamesTheTierRuleInsteadOfLookingLikeAGap() {
         String name = install("floor_t1", "T1");

@@ -188,13 +188,19 @@ public class ProposalEvaluationService {
             if (!arm.equals(p.logged().chosenArm())) flips++;
         }
         List<LoggedRecord> logged = replayed.stream().map(Paired::logged).toList();
-        Map<String, Object> r = new LinkedHashMap<>(OffPolicyEvaluator.evaluate(logged, proposedArm::get).asMap());
+        // D5-7/EX-01: the resimulation path replays the same logged records as the threshold-only path above, so it
+        // must use the same per-decision dynamic propensity-clip floor, not the global default — an actively-exploring
+        // T0 decision's true (lower) propensity must not be clipped away just because the candidate is a rule/weight/
+        // provider change rather than a threshold change.
+        double floor = propensityFloor(decision, candidate.tier(), replayed);
+        Map<String, Object> r = new LinkedHashMap<>(OffPolicyEvaluator.evaluate(logged, proposedArm::get, floor).asMap());
         r.put("method", "resimulation+ips_doubly_robust");
         r.put("simulation", "logged inputs re-run through the candidate definition in simulation mode");
         r.put("replayed", replayed.size());
         r.put("decisionsChanged", flips);
         r.put("baseVersion", base.version());
         r.put("rewards", rewardMix(replayed));
+        r.put("loggedPropensities", propensityMixWithTierNote(logged, floor, decision, candidate.tier()));
         // FD-04 / C-N1: like with like. Each labelled order is re-run through the candidate and through the base it was
         // drafted against, with the same provider; only where the change itself turns the outcome does the proposed
         // policy differ from what was logged. Comparing the logged answer with today's provider re-simulating the
