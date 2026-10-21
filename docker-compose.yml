@@ -23,7 +23,7 @@ services:
   oms:
     build:
       context: .
-      dockerfile: backend/oms-app/Dockerfile
+      dockerfile: Dockerfile
     depends_on:
       postgres: { condition: service_healthy }
     environment:

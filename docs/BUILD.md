@@ -7,10 +7,10 @@ Three build paths: inside Docker (nothing to install), locally with the JDK, or 
 ```bash
 scripts/try.sh                                   # docker compose up -d --build + health wait + logins (make try)
 docker compose build oms                         # just the image; same Dockerfile the release workflow uses
-docker build -f backend/oms-app/Dockerfile -t intent-oms:dev .   # from the repository root (context = repo)
+docker build -t intent-oms:dev .                 # from the repository root (./Dockerfile, context = repo)
 ```
 
-`backend/oms-app/Dockerfile` is multi-stage: `node:22-alpine` runs `npm ci && npm run build` for `ui/`, the dist is
+`Dockerfile` (at the repository root) is multi-stage: `node:22-alpine` runs `npm ci && npm run build` for `ui/`, the dist is
 copied into `backend/oms-app/src/main/resources/static/`, `maven:3.9-eclipse-temurin-21` runs `mvn -DskipTests
 package`, and the jar plus `config/` land on `eclipse-temurin:21-jre-alpine` as the non-root `oms` user. BuildKit cache
 mounts keep `~/.npm` and `~/.m2` between builds; `.dockerignore` excludes `target/`, `node_modules/`, `.env` and docs,

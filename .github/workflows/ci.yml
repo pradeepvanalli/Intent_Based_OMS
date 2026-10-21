@@ -115,7 +115,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: docker/build-push-action@v7
-        with: { context: ., file: backend/oms-app/Dockerfile, push: false, load: true, tags: "intent-oms:${{ github.sha }}" }
+        with: { context: ., file: Dockerfile, push: false, load: true, tags: "intent-oms:${{ github.sha }}" }
       - name: Trivy image scan (SARIF)
         uses: aquasecurity/trivy-action@v0.36.0
         with:

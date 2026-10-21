@@ -13,7 +13,7 @@ refuses to start with insecure settings (section 11). The engineering notes behi
 ## 1. Docker Compose
 
 `docker-compose.yml` defines `postgres` (5440 → 5432, tuned for 300 connections, logical WAL), `redis` and `oms`
-(built from `backend/oms-app/Dockerfile`, UI included).
+(built from `Dockerfile` at the repository root, UI included).
 
 ```bash
 scripts/try.sh                  # = the three lines below plus health wait, login table and browser (Windows: scripts/try.ps1)
@@ -25,7 +25,7 @@ docker compose logs -f oms
 The compose file passes `OMS_DB_*`, `OMS_JWT_SECRET`, the AI keys (`OPENROUTER_API_KEY`, `TYPESAFE_API_KEY`,
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`), `OMS_REDIS_URL`, `OMS_DEMO_SEED=true` and
 `OMS_DEMO_TENANTS=demo,retail,electronics,apparel`; the `oms` container runs read-only with a tmpfs `/tmp`. The image
-build needs no local toolchain: `backend/oms-app/Dockerfile` builds the UI in a Node 22 stage and the backend in a
+build needs no local toolchain: `Dockerfile` (at the repository root) builds the UI in a Node 22 stage and the backend in a
 Maven/Temurin 21 stage (BuildKit cache mounts for `~/.npm` and `~/.m2`), then copies the jar and `config/` onto a
 non-root `eclipse-temurin:21-jre-alpine` runtime. `.dockerignore` keeps `target/`, `node_modules/`, `.env` and the
 docs out of the context.
@@ -302,7 +302,7 @@ Not enforced by code:
 `.github/workflows/release.yml` runs on a `v*` tag (or by hand with a version input):
 
 1. UI lint, tests and build (Node 22); backend `mvn -Psbom verify` (Temurin 21, tests against PostgreSQL 16).
-2. Multi-arch image (`linux/amd64`, `linux/arm64`) with `docker/build-push-action` from `backend/oms-app/Dockerfile`,
+2. Multi-arch image (`linux/amd64`, `linux/arm64`) with `docker/build-push-action` from `Dockerfile` at the repository root,
    pushed to `ghcr.io/<owner>/<repo>` as `:<version>`, `:<major>.<minor>` and `:latest` (tags only), labelled with
    OCI metadata, with BuildKit provenance and SBOM attestations, a GitHub build-provenance attestation and a keyless
    cosign signature (best effort; the job continues if Sigstore is unavailable). Verify with

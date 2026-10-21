@@ -8,7 +8,7 @@ services:
     image: ${OMS_IMAGE:-ghcr.io/pradeepvanalli/intent_based_oms:latest}
     build:
       context: .
-      dockerfile: backend/oms-app/Dockerfile
+      dockerfile: Dockerfile
     environment:
       SPRING_PROFILES_ACTIVE: prod
       OMS_DB_URL: ${OMS_DB_URL:?set OMS_DB_URL (jdbc:postgresql://host:5432/oms)}

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # Intent OMS image: React UI + Spring Boot backend in one jar, on a non-root JRE 21 runtime.
-# Build from the REPOSITORY ROOT (the compose files and the release workflow do this):
-#   docker build -f backend/oms-app/Dockerfile -t intent-oms .
+# At the repository root, so `docker build .` (or `make try` / `scripts/try.sh`) just works with no -f flag:
+#   docker build -t intent-oms .
 # No Java or Node is needed on the host: the UI is built in a Node stage, the backend in a Maven stage. BuildKit cache
 # mounts keep npm and Maven downloads between builds, so a rebuild after a code change takes a fraction of the first.
 

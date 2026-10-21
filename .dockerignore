@@ -1,4 +1,4 @@
-# Keep the Docker build context small and reproducible: the image build (backend/oms-app/Dockerfile) needs only
+# Keep the Docker build context small and reproducible: the image build (./Dockerfile, at the repository root) needs only
 # ui/ (sources + lockfile), backend/ (sources + poms) and config/. Everything below is either generated locally,
 # secret, or irrelevant to the image.
 .git
