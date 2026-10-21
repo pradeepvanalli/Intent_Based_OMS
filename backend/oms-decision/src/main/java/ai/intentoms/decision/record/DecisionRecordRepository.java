@@ -91,6 +91,18 @@ public class DecisionRecordRepository {
             .param("t", TenantContext.require()).param("d", decision).param("v", version).param("f", Timestamp.from(from)).param("to", Timestamp.from(to)).query(MAPPER).list();
     }
 
+    /**
+     * As {@link #labelledBetween(String, int, Instant, Instant)}, across every version live in the window rather than
+     * one (C4-N1): a person's resolution or escalation outcome is evidence about the situation the model faced, not
+     * about which decision definition version happened to be live when it was recorded, so a promotion or rollback of
+     * the decision must not make it disappear from a learner that reads labels. Each returned record carries its own
+     * {@code version}.
+     */
+    public List<DecisionRecord> labelledSince(String decision, Instant from, Instant to) {
+        return jdbc.sql("select " + COLS + " from decision_record where tenant_id = :t and decision = :d and mode = 'LIVE' and labels <> '{}'::jsonb and created_at >= :f and created_at < :to order by created_at")
+            .param("t", TenantContext.require()).param("d", decision).param("f", Timestamp.from(from)).param("to", Timestamp.from(to)).query(MAPPER).list();
+    }
+
     public Map<String, Integer> bandMixBetween(String decision, int version, Instant from, Instant to) {
         var rows = jdbc.sql("select band, count(*) as n from decision_record where tenant_id = :t and decision = :d and version = :v and mode = 'LIVE' and created_at >= :f and created_at < :to group by band")
             .param("t", TenantContext.require()).param("d", decision).param("v", version).param("f", Timestamp.from(from)).param("to", Timestamp.from(to)).query().listOfRows();

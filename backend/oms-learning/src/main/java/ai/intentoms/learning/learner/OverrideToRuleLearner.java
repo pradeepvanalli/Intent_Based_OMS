@@ -87,7 +87,8 @@ public class OverrideToRuleLearner implements GovernedLearner {
             var live = definitions.byStatus(name, "live");
             if (live.isEmpty()) continue;
             DecisionDefinition def = live.get(0).definition();
-            List<DecisionRecord> resolved = decisionRecords.labelledBetween(name, def.version(), since, Instant.now()).stream()
+            // C4-N1: a labelled record counts even if its definition version was later promoted or rolled back.
+            List<DecisionRecord> resolved = decisionRecords.labelledSince(name, since, Instant.now()).stream()
                 .filter(r -> r.labels() != null && r.labels().containsKey(HUMAN_RESOLUTION_LABEL) && action(r) != null)
                 .toList();
             for (List<DecisionRecord> group : generalisedGroups(resolved, def.stateInclude())) {

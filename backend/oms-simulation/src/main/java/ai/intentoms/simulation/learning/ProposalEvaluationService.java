@@ -159,11 +159,15 @@ public class ProposalEvaluationService {
                 proposedArm.put(p.logged(), arm);
                 if (!arm.equals(p.logged().chosenArm())) flips++;
             }
-            Map<String, Object> r = new LinkedHashMap<>(OffPolicyEvaluator.evaluate(paired.stream().map(Paired::logged).toList(), proposedArm::get).asMap());
+            List<LoggedRecord> loggedForThreshold = paired.stream().map(Paired::logged).toList();
+            // D4-1/EX-01: this decision's own exploration floor may log a true propensity below the default clip
+            // (an explored arm among many), so the clip used here is never tighter than that floor actually draws.
+            double floor = propensityFloor(decision, baseDef == null ? null : baseDef.tier(), paired);
+            Map<String, Object> r = new LinkedHashMap<>(OffPolicyEvaluator.evaluate(loggedForThreshold, proposedArm::get, floor).asMap());
             r.put("simulation", "proposed act threshold applied to the logged confidence");
             r.put("decisionsChanged", flips);
             r.put("rewards", rewardMix(paired));
-            r.put("loggedPropensities", propensityMix(paired.stream().map(Paired::logged).toList()));
+            r.put("loggedPropensities", propensityMixWithTierNote(loggedForThreshold, floor, decision, baseDef == null ? null : baseDef.tier()));
             Double act = newAct;
             addFraudLabels(r, decision, rec -> FraudLabelEvaluation.risky(rec.value())
                 && (rec.layer() == ai.intentoms.decision.model.Layer.L0_RULE || (act == null ? rec.band() == Band.ACT : rec.confidence() >= act)));
@@ -236,6 +240,11 @@ public class ProposalEvaluationService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setFraudLabels(FraudLabelEvaluation fraudLabels) { this.fraudLabels = fraudLabels; }
 
+    private ai.intentoms.learning.hooks.ExplorationFloor explorationFloor;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setExplorationFloor(ai.intentoms.learning.hooks.ExplorationFloor explorationFloor) { this.explorationFloor = explorationFloor; }
+
     /**
      * The model's own answer on a logged record: what it applied, unless the applied arm was explored or a handed-off
      * default ({@code details.modelAnswer}), or a T0 decision fell back to its escape value below the act threshold (the
@@ -253,12 +262,47 @@ public class ProposalEvaluationService {
 
     /** How many of the logged choices carry a real (below 1) propensity, and the smallest one: IPS only corrects with those. */
     static Map<String, Object> propensityMix(List<LoggedRecord> logged) {
+        return propensityMix(logged, OffPolicyEvaluator.PROPENSITY_FLOOR);
+    }
+
+    /** As {@link #propensityMix(List)}, naming the actual clip used (D4-1/EX-01: a decision's own exploration floor
+     * can lower it below the default). */
+    static Map<String, Object> propensityMix(List<LoggedRecord> logged, double clippedAt) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("records", logged.size());
         m.put("belowOne", logged.stream().filter(l -> l.propensity() < 1.0 - 1e-9).count());
         m.put("min", round(logged.stream().mapToDouble(LoggedRecord::propensity).min().orElse(1.0)));
-        m.put("clippedAt", OffPolicyEvaluator.PROPENSITY_FLOOR);
+        m.put("clippedAt", clippedAt);
         return m;
+    }
+
+    /**
+     * {@link #propensityMix(List, double)} plus, for a decision that cannot explore at all, a {@code note} naming why
+     * every logged propensity is 1.0 (EX-01 note): T1/T2+ decisions never explore (§7 hard constraints forbid
+     * exploring money, fraud, mandate and customer-affecting decisions, and a T1+ change needs approval before it can
+     * go live) — this is deliberate, not a gap, so an auditor reading the report does not mistake it for one.
+     */
+    static Map<String, Object> propensityMixWithTierNote(List<LoggedRecord> logged, double clippedAt, String decision, Tier tier) {
+        Map<String, Object> m = propensityMix(logged, clippedAt);
+        if (tier != null && !ai.intentoms.learning.hooks.ExplorationFloor.allowed(decision, tier)) {
+            m.put("note", tier == Tier.T0
+                ? "every record logs propensity 1.0 by design: this decision is excluded from exploration (§7 hard constraints forbid exploring money, fraud, mandate and customer-affecting decisions)"
+                : "every record logs propensity 1.0 by design: " + tier + " decisions do not explore (§7 hard constraints; only T0 decisions that act on their own may, and a " + tier
+                    + "+ change needs approval before it can go live)");
+        }
+        return m;
+    }
+
+    /**
+     * D4-1/EX-01: the propensity-clip floor to use for this decision's logged records: the global default, or this
+     * decision's own exploration floor when it can legitimately log a true propensity below it, so an explored record
+     * is never clipped away by a floor tighter than the governed share actually draws (clip = min(default, share /
+     * (arms − 1))).
+     */
+    private double propensityFloor(String decision, Tier tier, List<Paired> paired) {
+        if (explorationFloor == null || tier == null) return OffPolicyEvaluator.PROPENSITY_FLOOR;
+        int arms = paired.stream().map(p -> p.record().arms()).filter(java.util.Objects::nonNull).mapToInt(List::size).max().orElse(0);
+        return Math.min(OffPolicyEvaluator.PROPENSITY_FLOOR, explorationFloor.minPropensity(decision, tier, arms));
     }
 
     // ------------------------------------------------------------------ the sourcing bandit's policy (EX-01 a)

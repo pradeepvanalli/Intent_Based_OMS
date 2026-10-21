@@ -184,7 +184,8 @@ public class RuleUtilizationLearner implements GovernedLearner {
                 }
             }
         }
-        for (DecisionRecord r : decisionRecords.labelledBetween(def.name(), def.version(), since, now)) {
+        // C4-N1: a resolution counts even if its definition version was later promoted or rolled back.
+        for (DecisionRecord r : decisionRecords.labelledSince(def.name(), since, now)) {
             if (out.containsKey(r.id())) continue;
             ai.intentoms.learning.model.HumanResolution.value(r).ifPresent(h -> out.put(r.id(), new Truth(r, null, h)));
         }

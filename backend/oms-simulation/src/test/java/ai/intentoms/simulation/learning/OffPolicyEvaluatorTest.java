@@ -64,6 +64,27 @@ class OffPolicyEvaluatorTest {
         assertThat(r.proposedRewardEstimate()).isLessThan(10.0); // sane, not blown up by the near-zero propensity
     }
 
+    /**
+     * D4-1/EX-01: a decision's own governed exploration floor can legitimately log a true propensity below the
+     * default 0.05 (an 8-arm decision exploring at a 10% share logs 0.1/7 ≈ 0.0143 for its explored arm). The default
+     * floor would clip that record away, truncating the floor's own propensities and biasing the correction; the
+     * explicit-floor overload lets a caller pass that decision's own (lower) floor instead.
+     */
+    @Test
+    void anExplicitLowerFloorIsNotClippedWhileTheDefaultWould() {
+        double explored = 0.1 / 7; // ExplorationFloor's share / (arms - 1) for an 8-arm T0 decision at a 10% share
+        List<LoggedRecord> records = List.of(
+            new LoggedRecord("system", explored, 0.9, "ACT", 1.0),
+            new LoggedRecord("carrier_delay", 0.9, 0.9, "ACT", 1.0),
+            new LoggedRecord("carrier_delay", 0.9, 0.9, "ACT", 1.0));
+
+        OffPolicyEvaluator.Result defaultFloor = OffPolicyEvaluator.evaluate(records, rec -> rec.chosenArm());
+        assertThat(defaultFloor.clippedRecords()).as("the default 0.05 floor clips the explored record").isEqualTo(1);
+
+        OffPolicyEvaluator.Result lowerFloor = OffPolicyEvaluator.evaluate(records, rec -> rec.chosenArm(), explored);
+        assertThat(lowerFloor.clippedRecords()).as("a floor at the explored propensity itself clips nothing").isZero();
+    }
+
     @Test
     void thresholdChangeSimulatorMovesARecordOutOfTheActBandWhenConfidenceFallsShortOfTheNewThreshold() {
         ai.intentoms.learning.model.PolicyChangeset cs = new ai.intentoms.learning.model.PolicyChangeset(

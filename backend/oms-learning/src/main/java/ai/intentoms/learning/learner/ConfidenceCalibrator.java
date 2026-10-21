@@ -94,7 +94,7 @@ public class ConfidenceCalibrator implements GovernedLearner {
         if (live.isEmpty()) return false;
         DecisionDefinition def = live.get(0).definition();
         List<EvaluationReport.CalibrationBin> golden = def.evaluation() == null ? List.of() : studio.evaluate(name, def.version()).bins();
-        List<EvaluationReport.CalibrationBin> bins = merge(golden, resolved(name, def.version()));
+        List<EvaluationReport.CalibrationBin> bins = merge(golden, resolved(name));
         int cases = bins.stream().mapToInt(EvaluationReport.CalibrationBin::count).sum();
         if (cases == 0) return false;
 
@@ -122,12 +122,14 @@ public class ConfidenceCalibrator implements GovernedLearner {
      * also {@code details.modelAnswer}) and its confidence ({@code details.rawConfidence} when a curve had moved it), and
      * those are exactly the observations calibration needs. That includes an escape answer ("unclear"): the golden-set
      * bins count it the same way (the person's answer says whether "unclear" was right). Anything a person did not
-     * resolve (an agent's or a job's completion, E3-N1) is left out.
+     * resolve (an agent's or a job's completion, E3-N1) is left out. C4-N1: read across every version that was live in
+     * the window, not only the one live now — a resolution is evidence about the situation, not about the decision
+     * definition version that happened to be live when it was recorded, so a promotion or rollback must not drop it.
      */
-    List<Calibration.Observation> resolved(String name, int version) {
+    List<Calibration.Observation> resolved(String name) {
         Instant now = Instant.now();
         List<Calibration.Observation> out = new ArrayList<>();
-        for (DecisionRecord r : decisionRecords.labelledBetween(name, version, now.minus(java.time.Duration.ofDays(windowDays)), now)) {
+        for (DecisionRecord r : decisionRecords.labelledSince(name, now.minus(java.time.Duration.ofDays(windowDays)), now)) {
             if (!modelAnswered(r)) continue;
             Optional<String> human = HumanResolution.value(r);
             Object model = modelAnswer(r);

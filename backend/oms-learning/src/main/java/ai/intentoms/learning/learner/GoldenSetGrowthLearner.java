@@ -98,7 +98,8 @@ public class GoldenSetGrowthLearner implements GovernedLearner {
             java.util.Set<String> existing = new java.util.HashSet<>();
             for (var c : golden.forSet(def.evaluation().goldenSet())) existing.add(SituationKey.key(c.input(), def.stateInclude()));
             revalidateOpen(name, def, existing);
-            List<DecisionRecord> labelled = decisionRecords.labelledBetween(name, def.version(), since, Instant.now()).stream()
+            // C4-N1: a labelled record counts even if its definition version was later promoted or rolled back.
+            List<DecisionRecord> labelled = decisionRecords.labelledSince(name, since, Instant.now()).stream()
                 .filter(r -> r.labels() != null && r.labels().containsKey(HUMAN_RESOLUTION_LABEL) && action(r) != null).toList();
             Map<String, List<DecisionRecord>> bySituation = labelled.stream().collect(Collectors.groupingBy(r -> SituationKey.key(r.input(), def.stateInclude())));
             for (var entry : bySituation.entrySet()) {
