@@ -275,9 +275,13 @@ public class ExperimentManager {
     }
 
     private void finish(Experiment e, ExperimentStatus status, Map<String, Object> result, Actor by, boolean reopenProposal) {
+        // D4-2: a canary's candidate version is retired on stop too, not only a shadow's — otherwise every canary
+        // start leaves a stray `draft` version behind. Before persisting, so the result says whether it happened.
+        if ((e.mode() == ExperimentMode.SHADOW || e.mode() == ExperimentMode.CANARY) && e.candidateVersion() != null) {
+            result.put("candidateVersionRetired", retireVersion(e.decisionName(), e.candidateVersion()));
+        }
         experiments.stop(e.experimentId(), status, result, Instant.now());
         router.invalidate();
-        if (e.mode() == ExperimentMode.SHADOW && e.candidateVersion() != null) retireVersion(e.decisionName(), e.candidateVersion());
         if (status == ExperimentStatus.COMPLETED && e.mode() == ExperimentMode.SHADOW) proposals.mergeReport(e.proposalId(), "shadow", result);
         if (e.mode() == ExperimentMode.CANARY) {
             if (status == ExperimentStatus.COMPLETED) proposals.mergeReport(e.proposalId(), "canary", result);
@@ -435,15 +439,20 @@ public class ExperimentManager {
         }
     }
 
-    private void retireVersion(String decisionName, int version) {
+    /** Retires the version if it is still a shadow or draft candidate (a canary's own candidate never leaves "draft"
+     * while it runs, D4-2); returns whether it actually did, so the caller's result can say so. */
+    private boolean retireVersion(String decisionName, int version) {
         try {
-            definitions.find(decisionName, version).ifPresent(row -> {
-                if ("shadow".equals(row.definition().status()) || "draft".equals(row.definition().status())) {
-                    definitions.setStatus(decisionName, version, "retired", null);
-                    definitionCache.invalidate(decisionName);
-                }
-            });
-        } catch (RuntimeException ex) { log.warn("Could not retire {} version {}: {}", decisionName, version, ex.toString()); }
+            return definitions.find(decisionName, version).map(row -> {
+                if (!"shadow".equals(row.definition().status()) && !"draft".equals(row.definition().status())) return false;
+                definitions.setStatus(decisionName, version, "retired", null);
+                definitionCache.invalidate(decisionName);
+                return true;
+            }).orElse(false);
+        } catch (RuntimeException ex) {
+            log.warn("Could not retire {} version {}: {}", decisionName, version, ex.toString());
+            return false;
+        }
     }
 
     private DecisionDefinition liveDefinition(String decisionName) {
