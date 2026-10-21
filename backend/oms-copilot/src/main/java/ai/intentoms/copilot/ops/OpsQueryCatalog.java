@@ -117,6 +117,17 @@ public class OpsQueryCatalog {
         add("learned_facts_by_key", "Active learned facts counted by subject type and fact key, with the latest update",
             "select f.subject_type, f.fact_key, count(*) as active_facts, max(f.created_at) as last_updated, round(avg(f.sample_size)::numeric, 1) as avg_sample_size from learned_fact f where f.tenant_id = :tenant and f.valid_to is null group by f.subject_type, f.fact_key order by active_facts desc",
             List.of(), List.of("learned fact", "facts", "learned", "posterior", "node reliability", "learned value"), "Which learned facts do we have?");
+        // D5-6/XP-06: shadow, canary and the persistent holdout, with target, status and duration. The cumulative lift
+        // itself (XP-01) is computed live by LiftService from episode/decision_record joins, never persisted to a
+        // table a SQL template could read directly (the HOLDOUT case of ExperimentManager.measure() literally defers
+        // to "GET /api/v1/learning/lift"); a completed canary/shadow's measured result (msprt verdict, agreement
+        // rate, ...) is the one piece of experiment measurement that is persisted (experiment.result), so it's
+        // surfaced here too, for whichever experiments have one.
+        add("learning_experiments", "Shadow, canary and holdout experiments with their target, traffic share, status and how long they have run; a completed one's measured result (e.g. a canary's sequential-test verdict)",
+            "select e.experiment_id, e.mode, e.target_ref, e.decision_name, e.traffic_share, e.status, e.start_at, e.end_at, round(extract(epoch from (coalesce(e.end_at, now()) - e.start_at))/3600, 1) as duration_hours, e.result::text as result from experiment e where e.tenant_id = :tenant and e.start_at >= now() - make_interval(hours => :hours){filters} order by e.start_at desc limit :limit",
+            List.of(new Param("hours", ParamType.HOURS, false, null, "Look-back window in hours on when the experiment started (default 720)"), limit),
+            List.of("lift", "lift vs holdout", "lift versus holdout", "holdout", "experiment", "experiments", "canary", "shadow run", "running experiments", "vs holdout"),
+            "What is the lift versus holdout? / Which experiments are running?");
     }
 
     private void add(String name, String description, String sql, List<Param> params, List<String> keywords, String example) {

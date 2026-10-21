@@ -60,10 +60,17 @@ public class McpToolExecutor implements ToolDispatcher {
 
     @Override
     public List<Map<String, Object>> tools(ToolContext ctx) {
+        return allowedTools(ctx).stream().map(McpTool::descriptor).toList();
+    }
+
+    /** The tools this caller may actually see: filtered by the agent's own {@code allowedActions} (when it is an
+     * agent) and by the principal's own permissions. Shared by {@link #tools(ToolContext)} ({@code tools/list}) and
+     * the unknown-tool error below (D5-6/MCP-3 (a)) so neither leaks a name the caller cannot invoke. */
+    private List<McpTool> allowedTools(ToolContext ctx) {
         return tools.values().stream()
             .filter(t -> ctx.agent().map(a -> a.limits().allows(t.name())).orElse(true))
             .filter(t -> ctx.principal().has(ToolPermissions.permissionFor(t.name())))
-            .map(McpTool::descriptor).toList();
+            .toList();
     }
 
     @Override
@@ -71,7 +78,12 @@ public class McpToolExecutor implements ToolDispatcher {
         String name = toolName == null ? "" : toolName.trim().toLowerCase(Locale.ROOT);
         Map<String, Object> args = rawArgs == null ? Map.of() : rawArgs;
         McpTool tool = tools.get(name);
-        if (tool == null) throw new JsonRpc.RpcException(JsonRpc.INVALID_PARAMS, "Unknown tool: " + toolName, Map.of("tools", List.copyOf(tools.keySet())));
+        if (tool == null) {
+            // MCP-3 (a): name only the tools this caller is actually allowed to see, not the whole registry —
+            // tools/list (tools(ToolContext)) already filters this way; an unknown-tool error must not leak more.
+            List<String> visible = allowedTools(ctx).stream().map(McpTool::name).toList();
+            throw new JsonRpc.RpcException(JsonRpc.INVALID_PARAMS, "Unknown tool: " + toolName, Map.of("tools", visible));
+        }
         long start = System.nanoTime();
         String orderId = null;
         try {

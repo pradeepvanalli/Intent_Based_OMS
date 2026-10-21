@@ -13,7 +13,7 @@ import { useQueryState } from '../../lib/hooks';
 import { toast } from '../../lib/toast';
 import { ChangeDrawer } from './ChangeDrawer';
 import { DemoBadge, InfoTip, Technical } from './Bits';
-import { STATUS_TONE, STATUS_WORDS, TIER_WORDS, authorName, familyName, proposalTitle, replayPhrase } from './copy';
+import { STATUS_TONE, STATUS_WORDS, TIER_WORDS, VERDICT, authorName, familyName, proposalTitle, replayPhrase } from './copy';
 import { rangeProblems } from './liveDomains';
 
 const REFRESH = 30000;
@@ -60,9 +60,13 @@ export function ChangesTab({ canAdmin, learners }: { canAdmin: boolean; learners
   );
 }
 
-function ChangeRow({ p, names, onOpen }: { p: Proposal; names: Map<string, string>; onOpen: () => void }) {
+export function ChangeRow({ p, names, onOpen }: { p: Proposal; names: Map<string, string>; onOpen: () => void }) {
   const r = p.evaluationReport;
   const replay = r ? replayPhrase(r.liftEstimate, r.confidenceInterval) : { text: 'Not tested yet', tone: 'neutral' };
+  // D5-5: the automatic critic's second opinion is otherwise only visible in the drawer; flag a RISKY or
+  // NEEDS_CHANGES verdict here too, reusing the drawer's own badge/tone convention (VERDICT, from ./copy).
+  const verdict = p.criticReview?.verdict;
+  const flagged = verdict === 'RISKY' || verdict === 'NEEDS_CHANGES';
   return (
     <button type="button" className="change-row" onClick={onOpen} data-testid={`change-${p.proposalId}`}>
       <div className="col gap1" style={{ minWidth: 0 }}>
@@ -75,7 +79,15 @@ function ChangeRow({ p, names, onOpen }: { p: Proposal; names: Map<string, strin
       </div>
       <div className="side">
         <Badge tone={STATUS_TONE[p.status]}>{STATUS_WORDS[p.status]}</Badge>
-        <span className="row gap2"><Badge tone={p.tier} title={`Risk tier ${p.tier}`}>{TIER_WORDS[p.tier]}<Technical> · {p.tier}</Technical></Badge><Badge tone={replay.tone}>{replay.text}</Badge></span>
+        <span className="row gap2">
+          <Badge tone={p.tier} title={`Risk tier ${p.tier}`}>{TIER_WORDS[p.tier]}<Technical> · {p.tier}</Technical></Badge>
+          <Badge tone={replay.tone}>{replay.text}</Badge>
+          {flagged && (
+            <Badge tone={VERDICT[verdict!]?.tone ?? 'danger'} title="The automatic critic's second opinion" data-testid="critic-flag">
+              {VERDICT[verdict!]?.label ?? verdict}
+            </Badge>
+          )}
+        </span>
       </div>
     </button>
   );

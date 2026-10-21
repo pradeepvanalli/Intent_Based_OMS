@@ -127,7 +127,8 @@ class NoLlmLearningDegradationIntegrationTest extends NoLlmTestBase {
 
     @Test
     void learningQueryTemplatesRunAgainstTheSchema() {
-        for (String name : List.of("learning_proposals_by_status", "learning_recent_promotions", "learner_status", "episode_outcome_coverage", "learned_facts_by_key")) {
+        for (String name : List.of("learning_proposals_by_status", "learning_recent_promotions", "learner_status", "episode_outcome_coverage", "learned_facts_by_key",
+            "learning_experiments")) {
             BoundQuery q = catalog.bind(name, Map.of());
             var spec = jdbc.sql(q.sql());
             for (var e : q.parameters().entrySet()) spec = spec.param(e.getKey(), e.getValue());
@@ -138,5 +139,8 @@ class NoLlmLearningDegradationIntegrationTest extends NoLlmTestBase {
         // The two example questions the keyword fallback used to misroute (to orders_by_status and decision_band_mix).
         assertThat(catalog.match("What did learning promote this month?").template().name()).isEqualTo("learning_recent_promotions");
         assertThat(catalog.match("What is the outcome coverage per decision?").template().name()).isEqualTo("episode_outcome_coverage");
+        // D5-6/XP-06: these two used to fall through to orders_by_status (no template mentioned lift, holdout or experiment).
+        assertThat(catalog.match("What is the lift versus holdout?").template().name()).isEqualTo("learning_experiments");
+        assertThat(catalog.match("Which experiments are running?").template().name()).isEqualTo("learning_experiments");
     }
 }

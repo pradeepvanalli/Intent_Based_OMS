@@ -45,7 +45,10 @@ public class LearningStatusTool implements McpTool {
             .map(s -> Map.of("key", s.learnerKey(), "reason", s.paused() ? s.pausedReason() : "switched off")).toList());
         out.put("proposalsInDraft", proposals.countByStatus("DRAFT"));
         out.put("proposalsAwaitingApproval", proposals.countByStatus("EVALUATED"));
+        // D5-6: both lists below are capped at 10 with no pagination; name the true total alongside the sample so a
+        // caller doesn't read a silently-truncated list as the whole picture (this instance already has 13 PROMOTED).
         out.put("proposalsPromotedRecently", proposals.byStatus("PROMOTED", 10).stream().map(Proposal::proposalId).toList());
+        out.put("proposalsPromotedTotal", proposals.countByStatus("PROMOTED"));
         out.put("recentRollbacks", proposals.byStatus("ROLLED_BACK", 10).stream().map(p -> {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("proposalId", p.proposalId());
@@ -54,6 +57,7 @@ public class LearningStatusTool implements McpTool {
             m.put("at", p.rolledBackAt() == null ? null : p.rolledBackAt().toString());
             return m;
         }).toList());
+        out.put("rollbacksTotal", proposals.countByStatus("ROLLED_BACK"));
         return out;
     }
 

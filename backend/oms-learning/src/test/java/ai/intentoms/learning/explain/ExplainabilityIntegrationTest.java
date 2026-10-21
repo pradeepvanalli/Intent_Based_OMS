@@ -1,10 +1,20 @@
 package ai.intentoms.learning.explain;
 
+import ai.intentoms.decision.model.Answer;
+import ai.intentoms.decision.model.Band;
+import ai.intentoms.decision.model.DecisionRecord;
+import ai.intentoms.decision.model.Layer;
+import ai.intentoms.decision.model.Mode;
+import ai.intentoms.decision.record.DecisionRecordRepository;
 import ai.intentoms.learning.LearningFixtures;
 import ai.intentoms.learning.api.ExplainabilityController;
+import ai.intentoms.learning.experiment.ExperimentManager;
+import ai.intentoms.learning.experiment.LiftService;
 import ai.intentoms.learning.model.Direction;
 import ai.intentoms.learning.model.Episode;
 import ai.intentoms.learning.model.EpisodeStatus;
+import ai.intentoms.learning.model.Experiment;
+import ai.intentoms.learning.model.ExperimentStatus;
 import ai.intentoms.learning.model.FactKey;
 import ai.intentoms.learning.model.Hypothesis;
 import ai.intentoms.learning.model.LearnedFact;
@@ -19,6 +29,7 @@ import ai.intentoms.learning.store.LearnedFactRepository;
 import ai.intentoms.learning.store.OutcomeRepository;
 import ai.intentoms.learning.store.ProposalRepository;
 import ai.intentoms.platform.ids.Ids;
+import ai.intentoms.platform.ledger.Actor;
 import ai.intentoms.testing.PostgresTestBase;
 import ai.intentoms.testing.TestApplication;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -50,6 +61,9 @@ class ExplainabilityIntegrationTest extends PostgresTestBase {
     @Autowired LearnerMetricsService learnerMetrics;
     @Autowired LearningRetentionService retention;
     @Autowired MeterRegistry registry;
+    @Autowired DecisionRecordRepository records;
+    @Autowired ExperimentManager experiments;
+    @Autowired LiftService lift;
 
     private Proposal promoted(String decision, double from, double to, String approvedBy, Instant at) {
         Proposal p = LearningFixtures.threshold(decision, from, to, "system:band_threshold", null);
@@ -115,6 +129,61 @@ class ExplainabilityIntegrationTest extends PostgresTestBase {
         assertThat(WeeklyLearningDigestService.render(d.summary())).contains("What changed").contains("What is pending");
         assertThat(jdbc.sql("select count(*) from event where tenant_id = :t and type = 'learning.digest_published' and aggregate_id = :id")
             .param("t", TENANT).param("id", d.digestId()).query(Long.class).single()).isEqualTo(1);
+    }
+
+    /** XP-04: LiftService.lift() computes a rich perfect-order headline (the §12 AC-2 north-star figure), but
+     * {@code WeeklyLearningDigestService.liftSummary()}'s copy loop used to whitelist only per-metric reward-term
+     * fields and never read {@code report.get("headline")}, so it was silently dropped before reaching the digest. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void weeklyDigestLiftSummaryIncludesTheHeadlineLiftServiceComputes() {
+        String decision = "digest_headline_" + Ids.shortId();
+        Experiment holdout = experiments.ensureHoldout(0.3, "user:tester");
+        try {
+            Instant now = Instant.now();
+            for (int i = 0; i < 3; i++) {
+                DecisionRecord held = digestRecord(decision, now, Map.of("experiment", Map.of("experimentId", holdout.experimentId(), "arm", "holdout")));
+                rewardDigestEpisode(held, 0.5, Map.of("perfect", 0.0, "perfect_lines", 0.0, "lines", 1.0));
+                DecisionRecord treated = digestRecord(decision, now, null);
+                rewardDigestEpisode(treated, 0.9, Map.of("perfect", 1.0, "perfect_lines", 1.0, "lines", 1.0));
+            }
+
+            WeeklyLearningDigestService.Digest d = digests.publish(7, "user:tester");
+            Map<String, Object> impact = (Map<String, Object>) d.summary().get("impact");
+            Map<String, Object> liftVsHoldout = (Map<String, Object>) impact.get("liftVsHoldout");
+            assertThat(liftVsHoldout).as("a holdout is running, so the lift section must now be present").isNotNull();
+            Map<String, Object> headline = (Map<String, Object>) liftVsHoldout.get("headline");
+            assertThat(headline).as("the digest's north-star figure, not silently dropped").isNotNull();
+            assertThat(headline.get("label")).isEqualTo("Perfect-order rate");
+            assertThat(((Number) headline.get("nTreated")).intValue()).isGreaterThanOrEqualTo(3);
+            assertThat(((Number) headline.get("nHoldout")).intValue()).isGreaterThanOrEqualTo(3);
+
+            // Matches what /learning/lift itself reports for the same decisions (the live check's "before/after").
+            Map<String, Object> direct = (Map<String, Object>) ((Map<String, Object>) lift.lift(90)).get("headline");
+            assertThat(headline.get("label")).isEqualTo(direct.get("label"));
+            assertThat(headline.get("nTreated")).isEqualTo(direct.get("nTreated"));
+            assertThat(headline.get("nHoldout")).isEqualTo(direct.get("nHoldout"));
+            assertThat(headline.get("lift")).isEqualTo(direct.get("lift"));
+        } finally {
+            experiments.stop(holdout.experimentId(), ExperimentStatus.STOPPED, Map.of(), Actor.parse("user:tester"));
+        }
+    }
+
+    private DecisionRecord digestRecord(String decision, Instant createdAt, Map<String, Object> details) {
+        String id = Ids.prefixed("dr");
+        String subject = "ord_" + Ids.shortId();
+        DecisionRecord r = new DecisionRecord(id, decision, 1, Mode.LIVE, "order", subject, subject, Layer.L1_SYSTEM_ONE, Band.ACT, "act", "approve",
+            Map.<String, Answer>of(), 0.9, "heuristic", "test", "hash_" + id, Map.of(), Map.of("order", Map.of("id", subject, "channel", "web", "value", 100)),
+            List.of(), List.of(), 30L, 0, 0, false, null, "system:test", details == null ? Map.of() : details, null, null, null, null, Map.of(), createdAt,
+            Map.of(), List.of("approve", "review", "unclear"), "approve", 1.0, 1);
+        records.insert(r);
+        return r;
+    }
+
+    private void rewardDigestEpisode(DecisionRecord r, double reward, Map<String, Double> components) {
+        Episode e = Episode.open(Ids.prefixed("epi"), r.id(), r.decision(), r.subjectId(), null, null, r.version(), r.subjectType(), r.subjectId(), r.createdAt());
+        episodes.upsertDecisionPoint(e);
+        episodes.updateStatusAndReward(e.episodeId(), EpisodeStatus.PROVISIONAL, reward, components, null);
     }
 
     @Test
