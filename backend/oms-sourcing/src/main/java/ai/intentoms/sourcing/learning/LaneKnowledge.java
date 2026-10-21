@@ -124,12 +124,17 @@ public class LaneKnowledge {
         }
     }
 
-    /** The carrier a service ships with from this node: tenant map {@code sourcing.service_carriers} first, then what shipments show. */
+    /**
+     * The carrier a service ships with from this node: the tenant's quoted map {@code sourcing.service_carriers}
+     * first, else the one carrier its shipments have exclusively used so far (B4-4: never a majority vote across
+     * several carriers — a node that genuinely ships a service with more than one carrier has no single carrier to
+     * promise or calibrate against, so this abstains rather than flipping with whichever recently shipped more).
+     */
     public String carrierFor(String service, String nodeId) {
         try {
             Object mapped = config.getMap("sourcing.service_carriers").get(service);
             if (mapped != null) return String.valueOf(mapped);
-            return carriers.get(TenantContext.require() + "|" + service + "|" + nodeId, k -> assignments.usualCarrier(service, nodeId)).orElse(null);
+            return carriers.get(TenantContext.require() + "|" + service + "|" + nodeId, k -> assignments.solelyUsedCarrier(service, nodeId)).orElse(null);
         } catch (RuntimeException e) {
             return null;
         }

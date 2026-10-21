@@ -109,7 +109,11 @@ public class DefaultPromiseService implements PromiseService {
             if (l2hit.isPresent()) { cache.put(key, l2hit.get()); return done(l2hit.get().asCached(elapsed(start)), "l2"); }
         }
         Promise computed = compute(request);
-        if (!SimulationContext.active()) { cache.put(key, computed); l2.put(key, computed, ttl); }
+        // B4-3: an explored buffer is this one caller's draw; caching it would replay the same "explored" promise
+        // (and its buffer) to every other shopper who shares the cache key within the TTL, inflating the realised
+        // exploration share above the configured one. Never cache an explored promise, so the next request draws
+        // its own.
+        if (!SimulationContext.active() && !computed.bufferExplored()) { cache.put(key, computed); l2.put(key, computed, ttl); }
         return done(computed.withLatency(elapsed(start)), "miss");
     }
 

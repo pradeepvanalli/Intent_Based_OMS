@@ -215,6 +215,39 @@ class FulfilmentLiveQualityIntegrationTest extends SourcingTestBase {
         assertThat(carrier).as("carrier known within 15 s of the first shipment").isEqualTo("UPS");
     }
 
+    private void shipVia(String node, String carrier) {
+        String order = "ord-" + Ids.shortId();
+        assignments.record(order, node, new ai.intentoms.learning.learner.NodeAssignmentRepository.Sourced("default", null, "100", "ground", "morning", null, 0.9, null, 0.9),
+            java.time.Instant.now());
+        assignments.recordShipped(order, node, carrier, java.time.Instant.now());
+    }
+
+    /**
+     * B4-4: a node that has shipped a service with more than one carrier has no single carrier to promise or
+     * calibrate against — serving the carrier with the most shipments so far would flip as volume accrues (a real
+     * node with steady UPS and USPS volume would see its served lane change back and forth). Only a node whose
+     * shipments have exclusively used one carrier serves that carrier.
+     */
+    @Test
+    void aNodeShippingWithSeveralCarriersServesNoCarrierNotAMajorityVote() {
+        String mixed = "N-" + Ids.shortId();
+        for (int i = 0; i < 15; i++) shipVia(mixed, "USPS");
+        for (int i = 0; i < 20; i++) shipVia(mixed, "UPS");
+        assertThat(assignments.usualCarrier("ground", mixed)).as("UPS became the majority by volume").contains("UPS");
+        assertThat(lanes.carrierFor("ground", mixed))
+            .as("but the node has shipped this service with more than one carrier, so no single carrier is served").isNull();
+
+        String single = "N-" + Ids.shortId();
+        for (int i = 0; i < 3; i++) shipVia(single, "UPS");
+        long deadline = System.currentTimeMillis() + 15_000;
+        String carrier = null;
+        while (carrier == null && System.currentTimeMillis() < deadline) {
+            carrier = lanes.carrierFor("ground", single);
+            if (carrier == null) sleep(250);
+        }
+        assertThat(carrier).as("a node that has shipped this service exclusively with one carrier still serves it").isEqualTo("UPS");
+    }
+
     /** CX-02: while the learned buffer is live, a small bounded share of promises try one day more or less, and say so. */
     @Test
     void promiseBufferExplorationIsSmallBoundedAndReported() {
@@ -234,6 +267,36 @@ class FulfilmentLiveQualityIntegrationTest extends SourcingTestBase {
             if (p.bufferExplored()) { explored++; assertThat(p.bufferDays()).isIn(1, 3); } else assertThat(p.bufferDays()).isEqualTo(2);
         }
         assertThat(explored).isBetween(10, 80);   // about 10% of 400
+    }
+
+    /**
+     * B4-3: the 30 s promise cache must never cache an explored buffer. Caching it would replay the same explored
+     * promise (and its buffer) to every other shopper who shares the cache key within the TTL, inflating the
+     * realised exploration share well above the configured setting (the audit measured 15% against a 5% setting).
+     */
+    @Test
+    void anExploredPromiseIsNeverCachedSoTheNextIdenticalRequestDrawsItsOwn() {
+        stock("TEE-BLK-M", "DC-NJ", 50);
+        facts.number(SubjectType.SEGMENT, ai.intentoms.learning.learner.PromiseBufferLearner.segment("web"), FactKey.PROMISE_BUFFER_DAYS, 2, 100,
+            ai.intentoms.learning.learner.PromiseBufferLearner.KEY, 0.5);
+        config.set(ai.intentoms.learning.learner.PromiseBufferLearner.EXPLORATION_KEY, 0.5);   // asks for 50%, gets the 10% cap
+        parameters.promote(ai.intentoms.learning.learner.PromiseBufferLearner.PARAMETER, ai.intentoms.learning.learner.PromiseBufferLearner.KEY, 0.0, 5.0, null, null, "test");
+        factCache.invalidateAll();
+        PromiseRequest req = new PromiseRequest(List.of(new PromiseRequest.PromiseLine("TEE-BLK-M", 1)), "10001", "NY", "web", "ground");
+
+        Promise explored = null;
+        for (int i = 0; i < 500 && explored == null; i++) {
+            promiseImpl.invalidateAll();
+            Promise p = promise.promise(req);
+            if (p.bufferExplored()) explored = p;
+        }
+        assertThat(explored).as("an explored draw within 500 tries at a 10% cap").isNotNull();
+        assertThat(explored.fromCache()).isFalse();
+
+        // Immediately repeat the identical request without invalidating the cache: an explored promise was never
+        // cached, so this is a fresh computation (its own draw), not a replay of the explored one just served.
+        Promise again = promise.promise(req);
+        assertThat(again.fromCache()).as("the explored promise must not have been cached").isFalse();
     }
 
     /** B-5: the buffer family promoted with nothing learned yet: the static buffer is served as is and never explored. */
