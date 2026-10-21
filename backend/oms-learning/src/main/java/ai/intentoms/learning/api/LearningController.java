@@ -80,9 +80,11 @@ public class LearningController {
     public record ObjectiveUpdate(ObjectiveWeights weights, Map<String, Object> constraints) {}
     /**
      * {@code learnerKey} empty or "*" means every learner for this tenant (GV-03 "pause all learning");
-     * {@code scope: "global"} means every tenant (platform administrators only).
+     * {@code scope: "global"} means every tenant (platform administrators only). {@code enabled} is boxed, not a
+     * primitive (E4-N1): a body that omits it, or misspells it (e.g. {@code "on": true}), must not silently
+     * deserialise as "switch off" — {@link #killSwitch} checks for a present value before acting on it.
      */
-    public record KillSwitch(String learnerKey, boolean enabled, String scope) {
+    public record KillSwitch(String learnerKey, Boolean enabled, String scope) {
         public KillSwitch(String learnerKey, boolean enabled) { this(learnerKey, enabled, null); }
     }
     /** {@code globalSource}: "property" (forced at startup), "runtime" (set through the API) or null when off. */
@@ -185,14 +187,18 @@ public class LearningController {
     @RequiresPermission(Permissions.LEARNING_ADMIN)
     public KillSwitchState killSwitch(@RequestBody KillSwitch body) {
         if (body == null) throw new ValidationException("body is required");
+        // E4-N1: a missing or misspelled `enabled` (e.g. "on": true) must not silently deserialise as "switch off",
+        // for every scope (learner, tenant or global) — boxed Boolean lets a present value be told from an absent one.
+        if (body.enabled() == null) throw new ValidationException("enabled is required (true or false)");
+        boolean enabled = body.enabled();
         if ("global".equalsIgnoreCase(body.scope())) {
             if (!platformAdmin()) throw new ai.intentoms.platform.error.ForbiddenException("Only a platform engineer can switch learning off or on for every tenant; a tenant administrator can pause this tenant's learning instead");
-            governance.setGlobalKillSwitch(!body.enabled(), actorRef());
+            governance.setGlobalKillSwitch(!enabled, actorRef());
         } else if (body.learnerKey() == null || body.learnerKey().isBlank() || "*".equals(body.learnerKey())) {
-            governance.setTenantKillSwitch(!body.enabled(), actorRef());
+            governance.setTenantKillSwitch(!enabled, actorRef());
         } else {
             descriptor(body.learnerKey());
-            governance.setEnabled(body.learnerKey(), body.enabled(), actorRef());
+            governance.setEnabled(body.learnerKey(), enabled, actorRef());
         }
         return killSwitchState();
     }
