@@ -74,8 +74,13 @@ public class OutcomeObserver implements EventSubscriber {
         // A refused group (order.resourced) is routed by that group, and only to the decision point that planned it: other
         // decisions' order-level episodes keep their own view of the order's units.
         boolean refusal = CoreOutcomeMapper.isRefusal(data);
-        Object group = refusal ? ((OutcomeData.FulfillmentOutcome) data).fulfilmentGroupId() : p.getOrDefault("fulfilmentGroupId", p.get("fulfillmentGroupId"));
-        Map<String, Boolean> planned = lineage.owners(orderId, group, targets.values());
+        // D5-1: a single order.resourced can reject several groups in one call (every active group, when ReshipAction
+        // re-sources with no target node); route to the union of every rejected group's planner, not just the first
+        // (CoreOutcomeMapper.refusal() keys the outcome itself to only one, for display, but the event still names
+        // every group it rejected).
+        Map<String, Boolean> planned = refusal
+            ? lineage.owners(orderId, rejectedGroupIds(p, (OutcomeData.FulfillmentOutcome) data), targets.values())
+            : lineage.owners(orderId, p.getOrDefault("fulfilmentGroupId", p.get("fulfillmentGroupId")), targets.values());
         for (Episode ep : targets.values()) {
             if (refusal && !Boolean.TRUE.equals(planned.get(ep.episodeId()))) continue;
             if (ep.status() == EpisodeStatus.MATURE || !planned.getOrDefault(ep.episodeId(), concerns(e, ep))) continue;
@@ -101,6 +106,11 @@ public class OutcomeObserver implements EventSubscriber {
             }
         }
         return false;
+    }
+
+    /** D5-1: every group the triggering event actually rejected, not just the one the outcome itself is keyed to. */
+    static List<?> rejectedGroupIds(Map<String, Object> p, OutcomeData.FulfillmentOutcome refusal) {
+        return p.get("rejectedGroupIds") instanceof List<?> l && !l.isEmpty() ? l : List.of(refusal.fulfilmentGroupId());
     }
 
     /**
