@@ -76,8 +76,15 @@ class SlaBreachSubscriberIntegrationTest extends MonitoringTestBase {
         assertThat(events("order", o.id(), "exception.decision_attached")).hasSize(1);
     }
 
+    /**
+     * B4-1: a {@code store_rejected} / {@code short_pick} line transition is handled end to end by the owning
+     * workflow that fires it (reservation release, re-source, node penalty, its own exception with the playbook
+     * suppressed) before this generic transition event is ever delivered. The subscriber must not independently
+     * reclassify it and raise a second exception, which used to run the taxonomy's default playbook against whatever
+     * node the order sits on by then (the replacement, not the one that rejected).
+     */
     @Test
-    void storeRejectTransitionRaisesAClassifiedException() {
+    void storeRejectTransitionAloneRaisesNoExceptionTheOwningWorkflowAlreadyHandledIt() {
         Order o = newOrder("web", "released", true);
         Map<String, Object> p = new LinkedHashMap<>();
         p.put("entityType", "order_line");
@@ -87,12 +94,7 @@ class SlaBreachSubscriberIntegrationTest extends MonitoringTestBase {
         p.put("qty", 2);
         p.put("trigger", "event.store_rejected");
         subscriber.on(new Event("evt_tr_" + o.id(), TENANT, "order", o.id(), 9, "order.transitioned", p, Actor.system("wms"), null, null, Map.of(), Instant.now()));
-        ExceptionRecord exc = exceptions.list(ExceptionQuery.forOrder(o.id())).items().get(0);
-        assertThat(exc.source()).isEqualTo("wms");
-        assertThat(exc.code()).isEqualTo("store_rejected");
-        assertThat(exc.type()).isIn("store_reject", "inventory_short");
-        assertThat(exc.lineId()).isEqualTo("L1");
-        assertThat(exc.classificationRecordId()).isNotNull();
+        assertThat(exceptions.list(ExceptionQuery.forOrder(o.id())).items()).isEmpty();
     }
 
     @Test

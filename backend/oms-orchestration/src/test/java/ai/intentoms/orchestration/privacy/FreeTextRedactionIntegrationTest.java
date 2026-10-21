@@ -90,6 +90,29 @@ class FreeTextRedactionIntegrationTest extends OrchestrationTestBase {
             .satisfies(r -> assertThat(String.valueOf(r.get("input"))).as("the note keeps what the customer wants").contains("Call [name] at [address], or leave it at [address]"));
     }
 
+    /**
+     * A3 residue: a third party the order's customer mentions in a note — a gift recipient, someone to call — is not
+     * the customer's or ship-to's own known name, so it used to reach the decision input verbatim (by design, the
+     * redactor would not guess at a name it was not told about). The cue heuristic now redacts it too, and still
+     * leaves a single-word place name after a pair-only cue (the ship-to city, "to Chicago") alone, same as before.
+     */
+    @Test
+    void anOrderNoteNamingAThirdPartyYieldsDecisionRecordsWithoutTheThirdPartysName() {
+        Order o = capture(webOrder("A3-THIRD", "tok_visa_ok", "Gift for Marisol Reyes, call Dan at the desk, ship to Chicago as usual"));
+        driveToStep(StandardShipOrderWorkflow.TYPE, o.id(), WorkflowStatus.WAITING_SIGNAL, "await_fulfilment");
+        drainOutbox();
+
+        List<Map<String, Object>> rows = decisionRows(o.id());
+        assertThat(rows).isNotEmpty().allSatisfy(r -> {
+            String all = (r.get("input") + " " + r.get("state") + " " + r.get("features")).toLowerCase(java.util.Locale.ROOT);
+            assertThat(all).as("decision %s", r.get("decision")).doesNotContain("marisol").doesNotContain("reyes").doesNotContain(" dan ");
+        });
+        assertThat(rows).filteredOn(r -> "fulfilment_intent".equals(r.get("decision"))).singleElement()
+            .satisfies(r -> assertThat(String.valueOf(r.get("input")))
+                .as("the third party's names are gone, the note's own meaning and the ship-to city survive")
+                .contains("Gift for [name], call [name] at the desk, ship to Chicago as usual"));
+    }
+
     @Test
     void aReturnReasonWithANameAndAStreetAddressYieldsDecisionRecordsWithNeither() {
         Order o = capture(webOrder("A3-RETNAME", "tok_visa_ok"));

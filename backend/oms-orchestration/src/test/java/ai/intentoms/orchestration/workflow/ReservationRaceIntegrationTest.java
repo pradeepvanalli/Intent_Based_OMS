@@ -2,6 +2,11 @@ package ai.intentoms.orchestration.workflow;
 
 import ai.intentoms.inventory.model.ReservationLine;
 import ai.intentoms.inventory.service.InventoryService;
+import ai.intentoms.learning.model.Episode;
+import ai.intentoms.learning.model.OutcomeData;
+import ai.intentoms.learning.service.RewardMaturityService;
+import ai.intentoms.learning.store.EpisodeRepository;
+import ai.intentoms.learning.store.OutcomeRepository;
 import ai.intentoms.orchestration.OrchestrationTestBase;
 import ai.intentoms.order.model.FulfilmentGroup;
 import ai.intentoms.order.model.Order;
@@ -28,8 +33,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ReservationRaceIntegrationTest extends OrchestrationTestBase {
     private static final String TYPE = StandardShipOrderWorkflow.TYPE;
     private static final String HOODIE = "HOOD-GRY-M";
+    private static final String SOURCING_DECISION = "sourcing_node_score";
     @Autowired StepRunner runner;
     @Autowired InventoryService inventory;
+    @Autowired EpisodeRepository episodes;
+    @Autowired OutcomeRepository outcomeRepo;
+    @Autowired RewardMaturityService rewards;
 
     private List<Map<String, Object>> events(String orderId, String type) {
         return jdbc.sql("select payload::text as p from event where tenant_id = :t and aggregate_id = :o and type = :ty order by position").param("t", tenant).param("o", orderId).param("ty", type)
@@ -110,6 +119,61 @@ class ReservationRaceIntegrationTest extends OrchestrationTestBase {
         // Nothing has shipped yet, so the only way a reject rate could have been published for the node is the race.
         assertThat(jdbc.sql("select count(*) from learned_fact where tenant_id = :t and subject_id like :n and fact_key = 'NODE_REJECT_RATE'")
             .param("t", tenant).param("n", node + "%").query(Long.class).single()).as("NODE_REJECT_RATE facts for " + node).isZero();
+    }
+
+    /**
+     * Audit A4-1 (OC-05): the losing group is marked {@code rejected} for a shortage, not a refusal
+     * ({@code nodeRejected: false}). That status alone must not make {@code order.shipped.storeRejected} true once the
+     * replacement ships and delivers cleanly — nothing went wrong, so no episode of the order should blame the node.
+     */
+    @Test
+    void aReservationRaceCarriesNoNodeBlameInAttributionOnceTheReplacementDeliversCleanly() {
+        Race race = race();
+        Order b = race.b();
+        assertThat(race.wb().currentStep()).as("re-sourced to a replacement node, not backordered").isEqualTo("await_fulfilment");
+        String replacementNode = nodeOf(b);
+        assertThat(replacementNode).isNotEqualTo(race.node());
+
+        inbound.wms(replacementNode, wmsEvent("ship-" + b.id(), "shipped", b.id(), Map.of("carrier", "UPS", "service", "ground", "tracking", "T-" + b.id())));
+        driveToStep(TYPE, b.id(), WorkflowStatus.WAITING_SIGNAL, "await_delivery");
+        inbound.carrier(Map.of("eventId", "del-" + b.id(), "type", "delivered", "orderId", b.id(), "tracking", "T-" + b.id()));
+        driveToTerminal(TYPE, b.id());
+        drainOutbox();
+        rewards.sweepOnce();
+
+        List<Episode> forB = episodes.forOrder(b.id());
+        assertThat(forB).isNotEmpty();
+        for (Episode ep : forB) {
+            Episode scored = episodes.find(ep.episodeId()).orElseThrow();
+            assertThat(scored.rewardComponents().keySet())
+                .as(ep.decisionName() + " episode " + ep.episodeId() + " carries no attribution — the replacement shipped and delivered cleanly")
+                .noneMatch(k -> k.startsWith("attr."));
+        }
+    }
+
+    /**
+     * Audit A4-2 (OC-02 / OC-07): after a shortage re-source the original choice's episode must not be left open
+     * forever with no outcome at all (it would mature with a null reward and count as uncovered). It gets a definite,
+     * non-blaming end of its own; the replacement's outcomes score the re-sourcing decision as before (A-N1).
+     */
+    @Test
+    void theOriginalChoicesEpisodeGetsADefiniteNonBlamingEndAfterAShortageReSource() {
+        Race race = race();
+        Order b = race.b();
+        assertThat(race.wb().currentStep()).as("re-sourced to a replacement node, not backordered").isEqualTo("await_fulfilment");
+        Episode original = episodes.forOrder(b.id()).stream()
+            .filter(e -> SOURCING_DECISION.equals(e.decisionName()) && e.fulfillmentGroupId() == null).findFirst().orElseThrow();
+
+        List<ai.intentoms.learning.model.OutcomeRecord> outs = outcomeRepo.forEpisode(original.episodeId());
+        assertThat(outs).as("the abandoned choice gets a definite outcome instead of staying open with none at all").isNotEmpty();
+        assertThat(outs).allSatisfy(r -> assertThat(r.payload()).isInstanceOfSatisfying(OutcomeData.FulfillmentOutcome.class,
+            f -> assertThat(f.storeRejected()).as("a shortage is nobody's refusal: no node blame").isFalse()));
+
+        drainOutbox();
+        rewards.sweepOnce();
+        Episode scored = episodes.find(original.episodeId()).orElseThrow();
+        assertThat(scored.status()).as("not left OPEN forever").isNotEqualTo(ai.intentoms.learning.model.EpisodeStatus.OPEN);
+        assertThat(scored.rewardComponents().keySet()).noneMatch(k -> k.startsWith("attr."));
     }
 
     private Race race() {

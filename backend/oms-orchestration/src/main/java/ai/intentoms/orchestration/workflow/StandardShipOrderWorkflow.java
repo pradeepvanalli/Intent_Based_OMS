@@ -156,7 +156,7 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         evt.put("lines", shippedByLine);
         evt.put("captured", capture.get("captured"));
         evt.put("allShipped", allShipped);
-        evt.putAll(outcomeFacts(fresh, group, nodeId, shipLines, shipment.id(), firstAttempt(fresh, group)));
+        evt.putAll(outcomeFacts(fresh, group, nodeId, shipLines, shipment.id(), firstAttempt(fresh, group), anyNodeRejected(fresh)));
         if (!groupsDone.isEmpty()) s.markGroups(order.id(), groupsDone, "shipped", null);
         s.appendOrderEvent(order.id(), "order.shipped", evt);
         notifier.notify(order.id(), "email", "shipped", "Your order has shipped", "Shipment " + shipment.tracking() + " (" + shipment.carrier() + ") with " + shipLines.size() + " line(s)",
@@ -177,12 +177,14 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
      * {@code fulfillmentCost} are its fulfilment group's planned units and cost and {@code orderValue} the order's total,
      * so a consumer counts them once per group / order however many parcels a group ships in, and counts parcels by
      * distinct {@code shipmentId}. {@code packageCount} is how many live packages the order's plan has (customer
-     * preference learning reads it as the split the customer saw); {@code storeRejected} says some node rejected part of
-     * the order before it shipped; {@code splitAvoided} is a multi-line order planned as one package. {@code orderUnits}
-     * is every unit ordered (the fill denominator, backordered and cancelled units included) and {@code firstAttempt}
-     * says the parcel's group is from the order's first plan.
+     * preference learning reads it as the split the customer saw); {@code storeRejected} says some node genuinely
+     * refused part of the order before it shipped (A4-1: a group can also land in {@code rejected} status purely from
+     * a reservation race losing the last units inside the OMS — {@code order.resourced.nodeRejected false} — which is
+     * nobody's refusal and must not blame a node); {@code splitAvoided} is a multi-line order planned as one package.
+     * {@code orderUnits} is every unit ordered (the fill denominator, backordered and cancelled units included) and
+     * {@code firstAttempt} says the parcel's group is from the order's first plan.
      */
-    static Map<String, Object> outcomeFacts(Order order, FulfilmentGroup group, String nodeId, List<ShipmentRecord.Line> shipLines, String shipmentId, boolean firstAttempt) {
+    static Map<String, Object> outcomeFacts(Order order, FulfilmentGroup group, String nodeId, List<ShipmentRecord.Line> shipLines, String shipmentId, boolean firstAttempt, boolean nodeRejected) {
         List<FulfilmentGroup> live = order.fulfilmentGroups().stream().filter(g -> !Set.of("rejected", "cancelled").contains(String.valueOf(g.status()).toLowerCase(java.util.Locale.ROOT))).toList();
         int plannedPackages = Math.max(1, live.size());
         int unitsShipped = shipLines.stream().mapToInt(ShipmentRecord.Line::qty).sum();
@@ -195,7 +197,7 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         m.put("nodeIds", nodeId == null ? List.of() : List.of(nodeId));
         m.put("packageCount", plannedPackages);
         m.put("splitAvoided", plannedPackages == 1 && order.lines().size() > 1);
-        m.put("storeRejected", order.fulfilmentGroups().stream().anyMatch(g -> "rejected".equalsIgnoreCase(g.status())));
+        m.put("storeRejected", nodeRejected);
         m.put("unitsOrdered", Math.max(unitsPlanned, unitsShipped));
         m.put("unitsShipped", unitsShipped);
         // §7 fill: every unit the customer ordered, backordered and cancelled ones included, and whether this parcel
@@ -218,6 +220,15 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         List<Map<String, Object>> sourced = s.orderEvents(order.id(), "order.sourced");
         if (sourced.isEmpty() || !(sourced.get(0).get("fulfilmentGroupIds") instanceof List<?> first) || first.isEmpty()) return true;
         return first.stream().map(String::valueOf).anyMatch(group.id()::equals);
+    }
+
+    /**
+     * A4-1: whether a node genuinely refused part of this order, from the re-sourcing decisions' own
+     * {@code order.resourced.nodeRejected} flag (FS-02/FS-06, {@code DefaultSourcingService.nodeRefused}) — not from a
+     * group's {@code rejected} status alone, which a reservation-race shortage also sets without any node refusing.
+     */
+    private boolean anyNodeRejected(Order order) {
+        return s.orderEvents(order.id(), "order.resourced").stream().anyMatch(e -> Boolean.TRUE.equals(e.get("nodeRejected")));
     }
 
     /** Every allocation of the group is covered by units in the group's own parcels. */
@@ -524,6 +535,16 @@ public class StandardShipOrderWorkflow extends AbstractOrderWorkflow {
         if (payload.get("tracking") != null) m.put("tracking", String.valueOf(payload.get("tracking")));
         m.put("lost", Boolean.TRUE.equals(payload.get("lost")));
         m.put("damaged", Boolean.TRUE.equals(payload.get("damaged")));
+        // A4-4: a damaged (not lost) exception is not yet known to be late — only the touched groups' own promise
+        // dates already having passed makes it definitely late before any delivery scan; otherwise on-time is
+        // unresolved until the scan (CoreOutcomeMapper keeps it unresolved as "not yet late" rather than guessing).
+        java.time.LocalDate today = java.time.LocalDate.now(java.time.ZoneOffset.UTC);
+        boolean promiseBreached = order.fulfilmentGroups().stream().filter(g -> groups.contains(g.id()))
+            .anyMatch(g -> g.promiseDate() != null && today.isAfter(g.promiseDate()));
+        m.put("onTime", !promiseBreached);
+        // A4-3: the carrier's own return-to-origin cost, when a returned_to_sender scan reported one; the reward
+        // uses it instead of always falling back to the outbound fulfilment cost.
+        if (payload.get("returnCost") instanceof Number n) m.put("returnCost", n.doubleValue());
         return m;
     }
 

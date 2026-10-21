@@ -27,7 +27,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 
 /**
  * Turns ledger facts into exceptions (FR-MON-03..05), delivered after commit by the outbox relay:
@@ -35,8 +34,13 @@ import java.util.Set;
  *   <li>{@code sla.breached} → exception {@code sla_breach} (details state, onBreach, ageSeconds); {@code onBreach: playbook.X}
  *       runs that playbook on the exception instead of the taxonomy default, {@code decision.X} runs the decision (e.g. {@code backorder_next_action}) and
  *       stores its record id (FR-SM-08, FR-MON-02).</li>
- *   <li>{@code order.transitioned} with trigger {@code event.store_rejected} / {@code event.short_pick} → classified exception
- *       (store_reject / inventory_short) (FR-SRC-07).</li>
+ *   <li>{@code order.transitioned} with trigger {@code event.store_rejected} / {@code event.short_pick}: nothing here — the
+ *       owning workflow ({@code StandardShipOrderWorkflow#reject}, {@code BopisOrderWorkflow#storeReject}) has already
+ *       released the reservation, re-sourced away from the rejecting node, penalised it and raised its own exception
+ *       (playbook suppressed) by the time this line transition's ledger event is delivered; raising a second,
+ *       independently-classified exception here would run the taxonomy's default {@code resource} playbook against
+ *       whatever node the order sits on *now* (the replacement), re-sourcing and penalising it as if it had refused
+ *       (B4-1 — one reject must mean one re-source, one penalty, against the node that actually rejected).</li>
  *   <li>{@code workflow.failed} → exception {@code system} (FR-WF-*).</li>
  *   <li>{@code decision.evaluated} escalated on T2/T3 → counted only; the escalation handler owns the human task.</li>
  * </ul>
@@ -47,7 +51,6 @@ public class MonitoringEventSubscriber implements EventSubscriber {
     public static final String TYPE_SLA_BREACH = "sla_breach";
     public static final String TYPE_SYSTEM = "system";
     private static final Logger log = LoggerFactory.getLogger(MonitoringEventSubscriber.class);
-    private static final Set<String> REJECT_TRIGGERS = Set.of("event.store_rejected", "event.short_pick");
     private static final Actor ACTOR = Actor.system("monitoring");
 
     private final ExceptionService exceptions;
@@ -176,22 +179,11 @@ public class MonitoringEventSubscriber implements EventSubscriber {
 
     void onTransitioned(Event e) {
         if (enteredBackorder(e)) decideBackorderedLine(e);
-        String trigger = str(e.payload().get("trigger"));
-        if (trigger == null || !REJECT_TRIGGERS.contains(trigger)) return;
-        String entityType = str(e.payload().get("entityType"));
-        String entityId = str(e.payload().get("entityId"));
-        String orderId = e.aggregateId();
-        String lineId = "order_line".equals(entityType) && entityId != null && entityId.indexOf(':') > 0 ? entityId.substring(entityId.indexOf(':') + 1) : null;
-        String code = trigger.substring("event.".length());
-        String message = "store_rejected".equals(code)
-            ? "Store rejected the release" + (lineId == null ? "" : " for line " + lineId) + " (" + e.payload().get("from") + " -> " + e.payload().get("to") + ")"
-            : "Short pick: inventory shortage" + (lineId == null ? "" : " on line " + lineId) + " (" + e.payload().get("from") + " -> " + e.payload().get("to") + ")";
-        Map<String, Object> details = new LinkedHashMap<>();
-        details.put("trigger", trigger);
-        details.put("from", e.payload().get("from"));
-        details.put("to", e.payload().get("to"));
-        if (e.payload().get("qty") != null) details.put("qty", e.payload().get("qty"));
-        exceptions.raise(new ExceptionRequest("wms", code, message, orderId, lineId, nodeOf(orderId, lineId), details), null, e.id());
+        // B4-1: event.store_rejected / event.short_pick line transitions are handled, end to end, by the owning
+        // workflow that fired them (reservation release, re-source, node penalty, its own exception with the playbook
+        // suppressed). Raising another exception from the generic transition here would reclassify the signal
+        // independently and run the taxonomy's default "resource" playbook against the order's current (by then,
+        // replacement) node, re-sourcing and penalising a node that never rejected anything.
     }
 
     void onWorkflowFailed(Event e) {

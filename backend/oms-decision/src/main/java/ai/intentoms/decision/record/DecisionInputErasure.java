@@ -100,6 +100,8 @@ public class DecisionInputErasure {
                 String key = String.valueOf(k);
                 if (PII_KEYS.contains(key.toLowerCase(java.util.Locale.ROOT).replace("_", "").replace("-", "")) && !(val instanceof Map) && !(val instanceof List)) {
                     out.put(key, val == null ? null : ERASED);
+                } else if ("customer".equalsIgnoreCase(key)) {
+                    out.put(key, scrubCustomerBlock(val, ref, pseudonym));
                 } else out.put(key, scrub(val, ref, pseudonym));
             });
             return out;
@@ -111,5 +113,23 @@ public class DecisionInputErasure {
         }
         if (v instanceof String s && s.equals(ref)) return pseudonym;
         return v;
+    }
+
+    /**
+     * C4-N2: a decision input's {@code customer} block can carry served learned fact values ({@code customer.facts},
+     * {@code CustomerFeatures.contribute}) — not raw PII, so the generic {@code PII_KEYS} scrub above leaves them in
+     * place. They are what learning knew about this customer and are dropped too, the same as {@code
+     * details.learnedFacts} ({@link #dropCustomerFacts}), so nothing served from a now-erased customer's preferences
+     * survives on the pseudonymised record.
+     */
+    @SuppressWarnings("unchecked")
+    static Object scrubCustomerBlock(Object v, String ref, String pseudonym) {
+        Object scrubbed = scrub(v, ref, pseudonym);
+        if (scrubbed instanceof Map<?, ?> m && m.get("facts") instanceof Map) {
+            Map<String, Object> out = new LinkedHashMap<>((Map<String, Object>) m);
+            out.put("facts", Map.of());
+            return out;
+        }
+        return scrubbed;
     }
 }

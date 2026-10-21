@@ -118,6 +118,20 @@ public class NodeAssignmentRepository {
     }
 
     /**
+     * B4-4: the carrier this node has <em>exclusively</em> shipped this service with so far, or empty when its
+     * shipments have used more than one carrier. A plan can only ever ship with one carrier; a node that genuinely
+     * uses several (the common case once it has enough volume) has no single carrier to promise or calibrate
+     * against, so this never resolves to a "most common" one voted from a mixed history (unlike {@link #usualCarrier}).
+     */
+    public Optional<String> solelyUsedCarrier(String shipMethod, String nodeId) {
+        return jdbc.sql("""
+            select carrier from node_assignment where tenant_id = :t and ship_method = :m and node_id = :n and carrier is not null
+            group by carrier
+            having count(*) = (select count(*) from node_assignment where tenant_id = :t and ship_method = :m and node_id = :n and carrier is not null)
+            """).param("t", TenantContext.require()).param("m", shipMethod).param("n", nodeId).query(String.class).optional();
+    }
+
+    /**
      * The assignments one {@code order.delivered} event speaks for. The workflow appends one event per fulfilment group
      * with that group's {@code nodeIds}, so only those nodes are credited; a partial scan ({@code groupDelivered=false})
      * credits nobody yet, the group is judged when its last parcel arrives. An older event that names no node speaks for

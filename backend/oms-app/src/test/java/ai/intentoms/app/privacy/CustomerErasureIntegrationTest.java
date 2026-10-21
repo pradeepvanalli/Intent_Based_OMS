@@ -139,6 +139,77 @@ class CustomerErasureIntegrationTest extends PostgresTestBase {
         assertThat(count("select count(*) from decision_record where tenant_id = :t and (details::text like '%' || :c || '%' or input::text like '%' || :c || '%')", ref)).isZero();
     }
 
+    /**
+     * C4-N2: {@code CustomerFeatures.contribute} copies served learned fact values onto the decision input as
+     * {@code customer.facts} (not raw PII, so the generic PII_KEYS scrub leaves them alone). After erasure those
+     * served values must not survive on the pseudonymised record, even though {@code details.learnedFacts} and the
+     * why view are already clean (C-N4).
+     */
+    @Test
+    void erasureClearsServedCustomerFactValuesFromTheDecisionInput() {
+        String ref = "cust-facts-" + Ids.shortId();
+        Map<String, Object> input = Map.of("order", Map.of("id", "ord_facts", "notes", List.of()),
+            "customer", Map.of("ref", ref, "tier", "gold", "facts", Map.of("speed_vs_cost", -0.2928, "pickup_preference", false), "history", Map.of()));
+        String recordId = Ids.id();
+        records.insert(new DecisionRecord(recordId, "fulfilment_intent", 1, Mode.LIVE, "order", "ord_facts", "ord_facts", Layer.L1_SYSTEM_ONE, Band.ACT, "act", "ship_complete",
+            Map.of(), 0.9, "heuristic", "h", Json.sha256(input), Map.of(), input, List.of(), List.of(), 1, 0, 0, false, null, "system:test", Map.of(),
+            null, null, null, null, Map.of(), Instant.now(), Map.of(), List.of("ship_complete"), "ship_complete", 1.0, 1));
+
+        actAs("admin", Set.of("*"));
+        privacy.erase(ref);
+
+        DecisionRecord rec = records.find(recordId).orElseThrow();
+        @SuppressWarnings("unchecked") Map<String, Object> customer = (Map<String, Object>) rec.input().get("customer");
+        assertThat(customer.get("ref")).as("the reference is pseudonymised").isNotEqualTo(ref);
+        assertThat(customer.get("facts")).as("served learned fact values about the erased customer do not survive").isEqualTo(Map.of());
+        assertThat(Json.write(rec.input())).doesNotContain("-0.2928").doesNotContain("pickup_preference\":false").doesNotContain(ref);
+    }
+
+    @Autowired ai.intentoms.platform.ledger.EventStore eventStore;
+
+    /**
+     * C4-N3: order-domain ledger events ({@code order.captured}, {@code cs.wismo}, ...) keep the raw
+     * {@code customerRef} after erasure, because {@code CryptoShredPropagation.scrubLearningEvents} rewrites only
+     * {@code aggregate_type = 'learning'} events. Platform migration V119 extends the scoped legal-erasure exception
+     * (V111) to the {@code order} aggregate too, so {@code scrubOrderDomainEvents} can pseudonymise it there as
+     * well — and nothing else: an unrelated update to the same event, or one outside an active erasure, is still
+     * refused as append-only.
+     */
+    @Test
+    void erasurePseudonymisesTheCustomersReferenceInOrderDomainLedgerEventsButRefusesAnUnrelatedUpdate() {
+        String ref = "cust-orderevt-" + Ids.shortId();
+        String orderId = "ord_orderevt_" + Ids.shortId();
+        ai.intentoms.platform.tenant.TenantContext.runAs(TENANT, () -> {
+            eventStore.append("order", orderId, new ai.intentoms.platform.ledger.NewEvent("order.captured",
+                Map.of("orderId", orderId, "customerRef", ref, "channel", "web"), ai.intentoms.platform.ledger.Actor.system("test")));
+            eventStore.append("order", orderId, new ai.intentoms.platform.ledger.NewEvent("cs.wismo",
+                Map.of("orderId", orderId, "customerRef", ref, "channel", "chat"), ai.intentoms.platform.ledger.Actor.user("cs")));
+        });
+        assertThat(count("select count(*) from event where tenant_id = :t and aggregate_type = 'order' and aggregate_id = '" + orderId + "' and payload::text like '%' || :c || '%'", ref))
+            .isEqualTo(2);
+
+        actAs("admin", Set.of("*"));
+        Map<String, Object> result = privacy.erase(ref);
+        String pseudonym = (String) result.get("pseudonym");
+
+        assertThat(count("select count(*) from event where tenant_id = :t and payload::text like '%' || :c || '%'", ref))
+            .as("no event, order-domain included, still names the erased customer's raw reference").isZero();
+        List<Map<String, Object>> rows = jdbc.sql("select type, payload::text as p from event where tenant_id = :t and aggregate_type = 'order' and aggregate_id = :o order by position")
+            .param("t", TENANT).param("o", orderId).query().listOfRows();
+        assertThat(rows).hasSize(2).allSatisfy(r -> assertThat(Json.readMap((String) r.get("p")))
+            .as(r.get("type") + " keeps its customerRef, pseudonymised").containsEntry("customerRef", pseudonym));
+
+        // The exception stays scoped to legal erasure: an unrelated update to the same order-domain event is refused.
+        String eventId = jdbc.sql("select event_id from event where tenant_id = :t and aggregate_type = 'order' and aggregate_id = :o limit 1")
+            .param("t", TENANT).param("o", orderId).query(String.class).single();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbc.sql("update event set payload = '{}'::jsonb where event_id = :e").param("e", eventId).update())
+            .as("no erasure in progress").hasMessageContaining("append-only");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbc.sql("""
+            with erasure as (select set_config('oms.legal_erasure', 'on', true) as on_)
+            update event set type = 'x' from erasure where event_id = :e and erasure.on_ = 'on'
+            """).param("e", eventId).update()).as("only the payload may change, even for an order-domain event").hasMessageContaining("append-only");
+    }
+
     @Autowired ai.intentoms.learning.event.LearningEvents learningEvents;
 
     @Test
