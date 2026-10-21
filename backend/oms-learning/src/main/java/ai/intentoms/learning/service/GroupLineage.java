@@ -48,8 +48,21 @@ public class GroupLineage {
      * group), and every other episode is absent (the usual group and line rules apply to it).
      */
     public Map<String, Boolean> owners(String orderId, Object groupId, Collection<Episode> episodes) {
-        if (groupId == null || orderId == null || episodes.isEmpty()) return Map.of();
-        Set<String> planners = plannedBy(orderId, String.valueOf(groupId));
+        return groupId == null ? Map.of() : owners(orderId, List.of(groupId), episodes);
+    }
+
+    /**
+     * D5-1 (OC-02/OC-07): a simultaneous multi-group reject ({@code order.resourced} with more than one id in
+     * {@code rejectedGroupIds} — reachable via {@code ReshipAction} re-sourcing every active group of an order at
+     * once) names several rejected groups in one outcome. Each may have been planned by a *different* decision (its
+     * own prior re-sourcing, each keyed to the group it replaced — see the class comment); the outcome belongs to
+     * every one of those decisions' episodes, not only the one that planned {@code groupIds.get(0)}, so a group that
+     * is not the first in the event's list still gets a definite, non-blaming end instead of staying OPEN forever.
+     */
+    public Map<String, Boolean> owners(String orderId, Collection<?> groupIds, Collection<Episode> episodes) {
+        if (groupIds == null || groupIds.isEmpty() || orderId == null || episodes.isEmpty()) return Map.of();
+        Set<String> planners = new LinkedHashSet<>();
+        for (Object g : groupIds) if (g != null) planners.addAll(plannedBy(orderId, String.valueOf(g)));
         if (planners.isEmpty()) return Map.of();
         Map<String, Boolean> out = new HashMap<>();
         Set<String> decisions = new HashSet<>();

@@ -71,6 +71,11 @@ public class CoreOutcomeMapper implements OutcomeMapper {
      * units it failed to ship). A reservation-race shortage ({@code nodeRejected false}) is nobody's refusal: the
      * outcome is neutral — {@code storeRejected false} (A4-1 carries no node blame) and no units counted against fill
      * (the choice never got the chance to ship anything; the replacement's own outcomes score the re-sourcing decision).
+     * D5-1: {@code rejectedGroupIds} can name more than one group (a simultaneous reject of every active group, e.g.
+     * {@code ReshipAction} re-sourcing with no target node). This one {@link OutcomeData.FulfillmentOutcome} is still
+     * keyed, for display, to only the first id — {@link OutcomeObserver#attach} is what actually routes it to every
+     * one of the rejected groups' planning episodes, reading the event's full {@code rejectedGroupIds} rather than
+     * this record's single {@code fulfilmentGroupId}, so a group that is not first still gets a definite end.
      */
     static OutcomeData.FulfillmentOutcome refusal(Map<String, Object> p) {
         if (!(p.get("rejectedGroupIds") instanceof List<?> groups) || groups.isEmpty()) return null;

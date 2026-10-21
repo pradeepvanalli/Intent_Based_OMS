@@ -135,6 +135,9 @@ class BackorderOutcomeLearningIntegrationTest extends MonitoringTestBase {
         assertThat(((Map<?, ?>) before.input().get("line")).containsKey("backorder_conversion_rate")).isFalse();
         @SuppressWarnings("unchecked") List<Map<String, Object>> consulted = (List<Map<String, Object>>) before.details().get("learnedFacts");
         assertThat(consulted).anySatisfy(u -> assertThat(u).containsEntry("subjectId", sku).containsEntry("source", "STATIC"));
+        // IU-06: nothing served (not promoted) -> the enumerated option order is simply BackorderFeatures.OPTIONS, untouched.
+        @SuppressWarnings("unchecked") List<String> beforeRank = (List<String>) ((Map<?, ?>) before.input().get("history")).get("option_rank");
+        assertThat(beforeRank).containsExactlyElementsOf(BackorderFeatures.OPTIONS);
 
         parameters.promote(BackorderFeatures.PARAMETER, BackorderOutcomeLearner.KEY, 0.0, 1.0, null, null, "user:tester");
         DecisionRecord after = breach(backorderedOrder());
@@ -142,6 +145,10 @@ class BackorderOutcomeLearningIntegrationTest extends MonitoringTestBase {
         Map<?, ?> kept = (Map<?, ?>) ((Map<?, ?>) after.input().get("history")).get("option_kept_rate");
         assertThat(((Number) kept.get("wait")).doubleValue()).isCloseTo(0.346, within(0.001));
         assertThat(((Number) kept.get("resource")).doubleValue()).isCloseTo(0.773, within(0.001));
+        // IU-06: "resource" clearly converts better than "wait" (0.773 vs 0.346) -> it now ranks first; the other,
+        // never-learned options keep OPTIONS' own relative order, after both ranked ones.
+        @SuppressWarnings("unchecked") List<String> afterRank = (List<String>) ((Map<?, ?>) after.input().get("history")).get("option_rank");
+        assertThat(afterRank).containsExactly("resource", "wait", "cancel_line", "offer_substitute", "substitute", "cancel", "split");
         // The provider sees them too: the state include carries both paths.
         assertThat(((Map<?, ?>) after.state().get("line")).containsKey("backorder_conversion_rate")).isTrue();
         assertThat(after.state()).containsKey("history");

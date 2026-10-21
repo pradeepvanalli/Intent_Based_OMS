@@ -274,10 +274,35 @@ public class LearningController {
         return type == SubjectType.CUSTOMER && customerSubjects != null ? customerSubjects.key(id) : id;
     }
 
+    /** R4: every real {@code proposal.status} value, for a case-insensitive check against the query param. */
+    private static final java.util.Set<String> VALID_PROPOSAL_STATUSES = java.util.Arrays.stream(ai.intentoms.learning.model.ProposalStatus.values())
+        .map(Enum::name).collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new));
+    private static final int MAX_PROPOSALS_PAGE = 500;
+
+    /**
+     * R4: {@code status} must be one of {@link ai.intentoms.learning.model.ProposalStatus}'s real values (case
+     * insensitive) — an unknown one is a 422 naming the valid set, not a silent {@code 200 []}. {@code offset}/
+     * {@code limit} page through a status with more rows than one page; the response reports the total matching
+     * rows for the status (not just this page) in {@code X-Total-Count}, and whether more rows follow this page in
+     * {@code X-Has-More}, so a caller can tell a short result from a truncated one without guessing from the body.
+     * The body stays a plain {@code Proposal[]} — unwrapped, as existing callers (the console, the e2e suite) expect.
+     */
     @GetMapping("/proposals")
     @RequiresPermission(Permissions.LEARNING_READ)
-    public List<Proposal> proposals(@RequestParam(value = "status", defaultValue = "DRAFT") String status) {
-        return proposals.byStatus(status, 100);
+    public org.springframework.http.ResponseEntity<List<Proposal>> proposals(@RequestParam(value = "status", defaultValue = "DRAFT") String status,
+                                                                              @RequestParam(value = "offset", defaultValue = "0") int offset,
+                                                                              @RequestParam(value = "limit", defaultValue = "100") int limit) {
+        String normalized = status == null ? "" : status.toUpperCase(java.util.Locale.ROOT);
+        if (!VALID_PROPOSAL_STATUSES.contains(normalized))
+            throw new ValidationException("Unknown proposal status '" + status + "'; valid values: " + String.join(", ", VALID_PROPOSAL_STATUSES));
+        int safeOffset = Math.max(0, offset);
+        int safeLimit = Math.max(1, Math.min(limit <= 0 ? 100 : limit, MAX_PROPOSALS_PAGE));
+        ai.intentoms.platform.jdbc.Page<Proposal> page = proposals.byStatus(normalized, safeOffset, safeLimit);
+        boolean hasMore = (long) safeOffset + page.items().size() < page.total();
+        return org.springframework.http.ResponseEntity.ok()
+            .header("X-Total-Count", String.valueOf(page.total()))
+            .header("X-Has-More", String.valueOf(hasMore))
+            .body(page.items());
     }
 
     @GetMapping("/proposals/{id}")

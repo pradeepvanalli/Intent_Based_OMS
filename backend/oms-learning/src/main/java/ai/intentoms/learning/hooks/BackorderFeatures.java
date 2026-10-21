@@ -21,6 +21,9 @@ import java.util.Optional;
  * (subject DECISION {@code backorder_next_action|<option>}), so waiting that usually ends in a cancellation shows up
  * against re-sourcing or a substitute. Both reach the decision only while {@code inventory.backorder_conversion} is
  * promoted for live use and its learner is above L0; every fact consulted is listed on the decision record.
+ * {@code history.option_rank} (IU-06) is {@link #OPTIONS} re-ranked by that same served rate, best-converting
+ * first — never adding or removing an option, just changing the order the decision's own enumerated options are
+ * recorded in, so "tune the options" is observable on the decision record and not only a number fed to the model.
  */
 @Component
 public class BackorderFeatures implements FeatureContributor {
@@ -49,13 +52,35 @@ public class BackorderFeatures implements FeatureContributor {
             Map<String, Object> line = (Map<String, Object>) l;
             serve(SubjectType.SKU, String.valueOf(line.get("sku")), factsUsed).ifPresent(v -> line.put("backorder_conversion_rate", v));
         }
-        Map<String, Object> byOption = new LinkedHashMap<>();
+        Map<String, Double> byOption = new LinkedHashMap<>();
         for (String option : OPTIONS) serve(SubjectType.DECISION, optionSubject(option), factsUsed).ifPresent(v -> byOption.put(option, v));
-        if (!byOption.isEmpty()) {
-            Map<String, Object> history = input.get("history") instanceof Map<?, ?> h ? (Map<String, Object>) h : new LinkedHashMap<>();
-            history.put("option_kept_rate", byOption);
-            input.put("history", history);
-        }
+        Map<String, Object> history = input.get("history") instanceof Map<?, ?> h ? (Map<String, Object>) h : new LinkedHashMap<>();
+        if (!byOption.isEmpty()) history.put("option_kept_rate", byOption);
+        // IU-06: "tune the options" means more than feeding a learned number into the input — this never changes
+        // which options are offered (never removes or adds one, strictly a re-rank), but the decision's own
+        // enumerated option order (persisted on the decision record, read by the "why" trace and the Changes UI)
+        // now reflects what customers actually choose, instead of OPTIONS' fixed Java declaration order that
+        // nothing downstream ever read. An untouched SKU (no learned rate for any option) gets that same static,
+        // declared order back unchanged.
+        history.put("option_rank", rankedOptions(byOption));
+        input.put("history", history);
+    }
+
+    /**
+     * {@link #OPTIONS}, re-ranked best-converting first by the rate actually served (never removed, never a new
+     * option invented). An option with no learned rate yet keeps its place relative to the other un-learned
+     * options, after every ranked one — so with nothing learned at all the order is simply {@link #OPTIONS} itself.
+     */
+    static List<String> rankedOptions(Map<String, Double> byOption) {
+        List<String> ranked = new java.util.ArrayList<>(OPTIONS);
+        ranked.sort((a, b) -> {
+            Double ra = byOption.get(a), rb = byOption.get(b);
+            if (ra == null && rb == null) return 0;         // both unlearned: stable sort keeps OPTIONS' order
+            if (ra == null) return 1;                        // unlearned sinks below any learned rate
+            if (rb == null) return -1;
+            return Double.compare(rb, ra);                   // higher conversion first
+        });
+        return ranked;
     }
 
     private Optional<Double> serve(SubjectType st, String subjectId, List<Map<String, Object>> used) {

@@ -16,6 +16,9 @@ import java.util.regex.Pattern;
  * {@code learnedContext} sentences naming which kind of learned knowledge shaped the decision. No state, no node or
  * candidate ids, no rates, scores, costs, margins, backlog, staffing, distances, providers, probabilities or learned
  * values ever leave in this view. {@code state} is always empty and kept only for response-shape compatibility.
+ * {@code decision} itself is gated the same way (D5-2): an internal one (a risk/fraud decision, matched by
+ * {@link #INTERNAL}) is reported as the generic {@code "internal_review"} rather than its real name, which would
+ * otherwise name the risk verdict (e.g. {@code payment_risk}) to the very caller this view is supposed to hide it from.
  */
 public record CustomerSafeTraceView(String recordId, String decision, int version, Object value, Band band, String action, Layer layer, boolean requiresHuman,
                                     List<String> reasonCodes, List<Question> questions, Map<String, Object> state, Instant createdAt,
@@ -72,7 +75,11 @@ public record CustomerSafeTraceView(String recordId, String decision, int versio
             if (REASON_WORDING.containsKey(code)) { codes.add(code); reasons.add(REASON_WORDING.get(code)); }
             else if (!internalDecision && !INTERNAL.matcher(code).find()) { codes.add(code); reasons.add(humanise(code) + "."); }
         }
-        return new CustomerSafeTraceView(t.recordId(), t.decision(), t.version(), value, t.band(), t.action(), t.layer(), t.requiresHuman(),
+        // D5-2 / XP-05: the decision's own name is withheld the same way value/questions/reasonCodes are — naming
+        // payment_risk, rto_risk, return_risk, address_risk or sla_breach_risk to a customer-safe caller would leak
+        // the risk verdict this view exists to hide, even though nothing else about it got through.
+        String decision = internalDecision ? "internal_review" : t.decision();
+        return new CustomerSafeTraceView(t.recordId(), decision, t.version(), value, t.band(), t.action(), t.layer(), t.requiresHuman(),
             codes, qs, Map.of(), t.createdAt(), learnedContext(t.learning()), summary(t.action(), t.requiresHuman()), reasons);
     }
 
