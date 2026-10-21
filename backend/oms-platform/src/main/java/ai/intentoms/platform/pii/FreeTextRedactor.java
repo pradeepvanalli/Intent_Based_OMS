@@ -3,7 +3,9 @@ package ai.intentoms.platform.pii;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -19,8 +21,15 @@ import java.util.regex.Pattern;
  * names, address lines, email, phone) are removed wherever they appear, by exact case-insensitive match on word
  * boundaries ({@value #NAME}, {@value #ADDRESS}, ...). A conservative street-address pattern also catches addresses
  * the caller does not know: a house number, one to three capitalised street words and a street suffix ("12 Elm
- * Street", "4418 Wren Hollow Rd", optionally with "Apt 4" / "Unit 9"). A name nobody told the redactor about is not
- * guessed at: free-text name detection would remove product and place words.
+ * Street", "4418 Wren Hollow Rd", optionally with "Apt 4" / "Unit 9").
+ *
+ * <p>A3 residue (audit 3/4): a name nobody told the redactor about — a gift recipient, a neighbour, anyone who is not
+ * the order's own customer or ship-to name — still used to reach the decision input verbatim, because free-text name
+ * detection would just as happily remove product and place words. Conservatively: a capitalised name pair right
+ * after a cue ("for", "to", "attn", "c/o", "contact", "name") and a single capitalised name right after "call" or
+ * "ask for" ({@value #NAME}), unless the word is on {@link KnownPii#allowlist()} (the caller's catalog words, node
+ * names and known place names) or is a day/month name. Anything else — a name with no cue, a cue with no capitalised
+ * word after it — is left alone, same as before.
  */
 public final class FreeTextRedactor {
     public static final String EMAIL = "[email]";
@@ -38,6 +47,21 @@ public final class FreeTextRedactor {
     /** A run of digits with the separators people put in phone and card numbers; classified by its digit count. */
     private static final Pattern NUMBER_RE = Pattern.compile("(?<![\\w@])\\+?\\(?\\d(?:[\\d\\s().-]*\\d)?(?![\\w@])");
     private static final Pattern ISO_DATE = Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
+
+    /**
+     * A3 residue: cue + one capitalised "word" (title case only — plain {@code [A-Z][a-z]+}, so an all-caps carrier
+     * like UPS/USPS/DHL or a mixed-case one like FedEx never matches) up to three words long. Which cues accept a
+     * single word ({@code call}, {@code ask for}) vs. require a pair (everything else) is decided after matching, in
+     * {@link #redactThirdPartyNameCues}, since Java regex cannot vary a quantifier by which alternative matched.
+     */
+    private static final Pattern NAME_CUE_RE = Pattern.compile(
+        "(?i)\\b(for|to|attn|c/o|call|ask\\s+for|contact|name)\\b:?\\s+"
+        + "((?-i:[A-Z][a-z]+\\b(?:['-][A-Z][a-z]+\\b)?)(?:\\s+(?-i:[A-Z][a-z]+\\b(?:['-][A-Z][a-z]+\\b)?)){0,2})");
+    private static final Set<String> SINGLE_WORD_CUES = Set.of("call", "ask for");
+    /** Capitalised words that are never a name regardless of the cue (a day or month reads fine after "call"). */
+    private static final Set<String> NEVER_A_NAME = Set.of(
+        "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+        "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december");
 
     private FreeTextRedactor() {}
 
@@ -59,6 +83,7 @@ public final class FreeTextRedactor {
             values.sort((a, b) -> Integer.compare(b[0].length(), a[0].length()));
             for (String[] v : values) out = exact(v[0]).matcher(out).replaceAll(Matcher.quoteReplacement(v[1]));
         }
+        out = redactThirdPartyNameCues(out, known == null ? List.of() : known.allowlist());
         out = STREET_RE.matcher(out).replaceAll(Matcher.quoteReplacement(ADDRESS));
         out = EMAIL_RE.matcher(out).replaceAll(Matcher.quoteReplacement(EMAIL));
         Matcher m = NUMBER_RE.matcher(out);
@@ -69,6 +94,39 @@ public final class FreeTextRedactor {
         }
         m.appendTail(sb);
         return sb.toString();
+    }
+
+    /**
+     * A3 residue: {@value #NAME} for a capitalised name right after a cue — a pair for most cues, a single word
+     * allowed only for "call" / "ask for" ({@link #SINGLE_WORD_CUES}) — unless the candidate is on the allowlist or
+     * is a day/month name, in which case the text is left exactly as it was.
+     */
+    private static String redactThirdPartyNameCues(String text, List<String> allowlist) {
+        Matcher m = NAME_CUE_RE.matcher(text);
+        if (!m.find()) return text;
+        StringBuilder sb = new StringBuilder(text.length());
+        int last = 0;
+        do {
+            String cue = m.group(1).toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
+            String candidate = m.group(2);
+            String[] words = candidate.split("\\s+");
+            boolean pairRequired = !SINGLE_WORD_CUES.contains(cue);
+            boolean skip = (pairRequired && words.length < 2) || isAllowlisted(candidate, words, allowlist);
+            sb.append(text, last, m.start(2));
+            sb.append(skip ? candidate : NAME);
+            last = m.end(2);
+        } while (m.find());
+        sb.append(text, last, text.length());
+        return sb.toString();
+    }
+
+    private static boolean isAllowlisted(String candidate, String[] words, List<String> allowlist) {
+        for (String w : words) if (NEVER_A_NAME.contains(w.toLowerCase(Locale.ROOT))) return true;
+        for (String a : allowlist) {
+            if (a.equalsIgnoreCase(candidate)) return true;
+            for (String w : words) if (a.equalsIgnoreCase(w)) return true;
+        }
+        return false;
     }
 
     /** True when {@link #redact} would change the text. */
