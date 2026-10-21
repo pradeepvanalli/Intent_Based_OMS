@@ -48,6 +48,34 @@ All notable changes to Intent OMS are documented here. The format follows
     - Screens: the Tasks page opens decision escalations, shows the recommendation and records the choice. The return
       inspection dropdown offers only conditions the API accepts. The Learning console shows the perfect-order
       headline, a 4-week guardrail report, the critic's review and each live value's allowed range.
+  - Fixed after a fourth and fifth audit (all 18 distinct defects from the fourth; the fifth found 1 Medium, 7 Low,
+    confirming everything from the fourth already fixed):
+    - A store reject is handled exactly once (it was penalising the innocent replacement node too). A reservation
+      race carries no node blame, and the abandoned choice gets a definite, non-blaming outcome, including when a
+      single event rejects more than one fulfilment group at once. A carrier-reported return cost is used instead of
+      always falling back to the outbound cost; a damaged-but-undelivered parcel is not scored late before any scan.
+    - Learned values survive a decision-version rollback (five learners were scoped to the live version only).
+      Calibration declines explicitly when no learned bin covers the confidence, instead of recording nothing. A
+      decision-cache hit draws its own exploration instead of replaying a donor's, and the off-policy evaluator's
+      propensity clip no longer truncates a decision's own, legitimately lower, exploration floor — on every
+      evaluation path, not only the one fixed first.
+    - Nobody can grant a role or permission they do not hold; a kill-switch request with a missing or misspelled
+      field is rejected instead of silently switching something off; promote carries the same separation-of-duties
+      guard approve already has; a stopped canary no longer leaves an orphaned draft version; the template author's
+      weight proposals run the hard-constraint check like every other proposal path.
+    - Erasure also clears a customer's served fact values from decision inputs and pseudonymises their reference in
+      order-domain ledger events, not only learning events. Third-party names typed into a note (not only the
+      customer's own) are redacted where a cue word identifies them; this is a bounded heuristic, documented as such,
+      not generic name detection.
+    - The promise cache key includes the channel, so one channel's buffered date is never served to another's
+      shopper; the learned carrier a lane is calibrated against is the one a node's shipments agree on, not a
+      majority vote. The backorder learner ranks its options by learned conversion rate. The weekly digest's
+      computed north-star headline reaches the digest instead of being silently dropped; an ops-copilot query
+      template answers "what is the lift versus holdout" and "which experiments are running". The customer-safe
+      explanation tool never names a risk decision to a customer. The proposals list validates its status filter and
+      paginates; the MCP status tool reports true totals alongside its capped lists; an unknown-tool error lists only
+      the caller's own allowed tools, not the whole registry; the Changes list shows a flagged proposal's risky
+      second opinion without opening it.
   - Fixed after a third audit:
     - Security: nobody can grant a role or permission they do not hold. A tenant admin could create a user or API key
       with the platform-engineer role and from there flip the global kill switch or list every tenant; that and the
