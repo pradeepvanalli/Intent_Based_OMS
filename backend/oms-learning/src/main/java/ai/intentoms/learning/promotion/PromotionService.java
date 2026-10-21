@@ -156,6 +156,11 @@ public class PromotionService {
      */
     public Proposal promote(String proposalId, Actor by, String overrideReason) {
         Proposal p = proposals.get(proposalId);
+        // D5-8: separation of duties, mirroring LearningController.approve()'s author guard — the author of a
+        // proposal must not also be the one who takes it live, whoever else approved it in between. This method is
+        // only ever reached by a person promoting (POST /proposals/{id}/promote); the automatic sweep (tryAutoPromote)
+        // calls apply(...) directly with Actor.system("promotion-service"), so it is untouched by this check.
+        if (by.ref().equals(p.createdBy())) throw new ValidationException("The author of a proposal cannot promote it themselves");
         ai.intentoms.learning.model.ProposalLifecycle.require(p, ProposalStatus.PROMOTED, "promote");
         PromotionGuard.Context ctx = context(p);
         PromotionGuard.Result r = PromotionGuard.evaluateManualPromote(p, ctx, overrideReason);

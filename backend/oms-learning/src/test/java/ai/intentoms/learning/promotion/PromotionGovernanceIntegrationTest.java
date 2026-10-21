@@ -13,6 +13,7 @@ import ai.intentoms.learning.support.DecisionFabricTestBase;
 import ai.intentoms.platform.config.TenantConfigStore;
 import ai.intentoms.platform.error.ConflictException;
 import ai.intentoms.platform.error.OmsException;
+import ai.intentoms.platform.error.ValidationException;
 import ai.intentoms.platform.ids.Ids;
 import ai.intentoms.platform.ledger.Actor;
 import ai.intentoms.platform.ledger.EventStore;
@@ -222,5 +223,49 @@ class PromotionGovernanceIntegrationTest extends DecisionFabricTestBase {
             PolicyChangeset.RiskTier.T1);
         proposals.insert(new Proposal(Ids.prefixed("prop"), other, null, PolicyChangeset.RiskTier.T1, ProposalStatus.DRAFT, null, null, "system:band_threshold",
             Instant.now(), Instant.now(), null, null, null, null, null, null, null, null));
+    }
+
+    // ---------------------------------------------------------------- D5-8: separation of duties on promote
+
+    /** D5-8: the author of a proposal must not also be the one who promotes it, mirroring the existing author-can't-
+     * approve-it-themselves rule. A different person approving in between doesn't change that — only a third person
+     * (or the original approver) may promote. */
+    @Test
+    void theAuthorOfAProposalCannotPromoteItThemselvesEvenAfterSomeoneElseApproved() {
+        String name = installProbe("e_sod");
+        // proposal(...) with ProposalStatus.APPROVED both evaluates (positive, no-shadow evidence) and approves as "user:reviewer" —
+        // a person different from the author, exactly like the audit's repro ("author drafts, a different person approves").
+        Proposal p = proposal("user:alice", new ArtifactRef("decision", name), liveVersion(name), PolicyChangeset.RiskTier.T1, ProposalStatus.APPROVED,
+            new PolicyChange.ThresholdChange(name, "act", 0.8, 0.78));
+        assertThat(p.createdBy()).isEqualTo("user:alice");
+        assertThat(p.approvedBy()).isEqualTo("user:reviewer");
+
+        // The original author tries to promote their own (now approved-by-someone-else) proposal: refused, 422-mapped.
+        assertThatThrownBy(() -> promotion.promote(p.proposalId(), Actor.parse("user:alice")))
+            .isInstanceOf(ValidationException.class)
+            .hasMessageContaining("author").hasMessageContaining("cannot promote");
+        assertThat(proposals.get(p.proposalId()).status()).as("refused before promotion, still APPROVED").isEqualTo(ProposalStatus.APPROVED);
+
+        // A third person — neither the author nor the approver — promotes it successfully.
+        promotion.promote(p.proposalId(), Actor.parse("user:carol"));
+        assertThat(proposals.get(p.proposalId()).status()).isEqualTo(ProposalStatus.PROMOTED);
+    }
+
+    /** D5-8: the guard is for a *person* promoting only — the automatic sweep (which never routes through
+     * {@link PromotionService#promote(String, Actor, String)}, applying the change directly as {@code Actor.system(...)})
+     * must keep auto-promoting a system-authored T0 change with good evidence, exactly as before this fix. */
+    @Test
+    void theAutomaticSweepStillAutoPromotesASystemAuthoredProposalUnaffectedByTheSeparationOfDutiesGuard() {
+        String name = installProbe("e_sod_auto");
+        Proposal p = proposal("system:band_threshold", new ArtifactRef("decision", name), liveVersion(name), PolicyChangeset.RiskTier.T0, ProposalStatus.EVALUATED,
+            new PolicyChange.ThresholdChange(name, "act", 0.8, 0.78));
+        proposals.markEvaluated(p.proposalId(), Map.of("liftEstimate", 0.1, "confidenceInterval", Map.of("lower", 0.01, "upper", 0.2),
+            "shadow", Map.of("passed", true)), Instant.now());
+
+        // >= 1, not ==1: the shared "test" tenant may carry other EVALUATED/auto-promotable proposals left behind by
+        // other tests in this class; what matters here is that *this* proposal (system-authored, no person involved)
+        // still auto-promotes, unaffected by the new separation-of-duties guard on the person-driven promote() path.
+        assertThat(promotion.sweepOnce()).isGreaterThanOrEqualTo(1);
+        assertThat(proposals.get(p.proposalId()).status()).isEqualTo(ProposalStatus.PROMOTED);
     }
 }
