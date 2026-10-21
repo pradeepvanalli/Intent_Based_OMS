@@ -61,9 +61,11 @@ public class TemplateAuthor {
     private final PromptVersionService prompts;
     private final List<WeightLever.Evidence> weightEvidence;
     private final ai.intentoms.learning.event.LearningEvents events;
+    private final ai.intentoms.learning.promotion.HardConstraints hardConstraints;
 
     public TemplateAuthor(DecisionStudioService studio, DecisionDefinitionRepository definitions, HypothesisRepository hypotheses, ProposalRepository proposals,
-                          PromptVersionService prompts, List<WeightLever.Evidence> weightEvidence, ai.intentoms.learning.event.LearningEvents events) {
+                          PromptVersionService prompts, List<WeightLever.Evidence> weightEvidence, ai.intentoms.learning.event.LearningEvents events,
+                          ai.intentoms.learning.promotion.HardConstraints hardConstraints) {
         this.studio = studio;
         this.definitions = definitions;
         this.hypotheses = hypotheses;
@@ -71,6 +73,7 @@ public class TemplateAuthor {
         this.prompts = prompts;
         this.weightEvidence = weightEvidence == null ? List.of() : weightEvidence;
         this.events = events;
+        this.hardConstraints = hardConstraints;
     }
 
     public Optional<Proposal> draft(Hypothesis h) {
@@ -171,6 +174,18 @@ public class TemplateAuthor {
             null, null, null, null, null, null, null, null);
         proposals.insert(p);
         hypotheses.updateStatus(h.hypothesisId(), Hypothesis.Status.DRAFTED);
+        // D4-3 / §7: every proposal path runs the hard-constraint check before evaluation, including the Author's own
+        // (it used to mark itself EVALUATED directly, the one path that never entered ProposalEvaluationService.evaluate,
+        // where the check otherwise always runs).
+        Optional<ai.intentoms.learning.promotion.HardConstraints.Violation> violation = hardConstraints == null ? Optional.empty() : hardConstraints.check(changeset);
+        if (violation.isPresent()) {
+            String reason = "Hard constraint " + violation.get().code() + ": " + violation.get().reason();
+            proposals.reject(p.proposalId(), reason, now);
+            events.proposalRejected(p.proposalId(), ai.intentoms.platform.ledger.Actor.system("template-author"),
+                Map.of("target", changeset.target().toString(), "reason", reason, "constraint", violation.get().code()));
+            log.info("Template author: weight proposal {} from hypothesis {} rejected by hard constraint {}: {}", p.proposalId(), h.hypothesisId(), violation.get().code(), violation.get().reason());
+            return proposals.find(p.proposalId()).or(() -> Optional.of(p));
+        }
         Map<String, Object> report = evidence.report(lever.current(), lever.proposed());
         proposals.markEvaluated(p.proposalId(), report, now);
         events.proposalEvaluated(p.proposalId(), ai.intentoms.platform.ledger.Actor.system("template-author"), report);
