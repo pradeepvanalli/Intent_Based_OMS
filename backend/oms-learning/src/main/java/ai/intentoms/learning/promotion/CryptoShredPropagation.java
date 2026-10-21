@@ -96,7 +96,9 @@ public class CryptoShredPropagation {
             jdbc.sql("update segment set definition = :d where tenant_id = :t and segment_id = :id").param("d", ai.intentoms.platform.jdbc.Jsonb.of(out)).param("t", t).param("id", row.get("segment_id")).update();
             samples++;
         }
-        int ledger = scrubLearningEvents(t, customerId, alias != null ? alias : subjects == null ? null : subjects.key(customerId), names);
+        String token = alias != null ? alias : subjects == null ? null : subjects.key(customerId);
+        int ledger = scrubLearningEvents(t, customerId, token, names);
+        int orderEvents = scrubOrderDomainEvents(t, customerId, token);
         Map<String, Object> extra = new LinkedHashMap<>();
         extra.put("evidenceDeleted", evidence);
         extra.put("orderRefsDeleted", orderRefs);
@@ -104,6 +106,7 @@ public class CryptoShredPropagation {
         extra.put("pseudonymPurged", alias != null);
         extra.put("segmentSamplesScrubbed", samples);
         extra.put("learningEventsScrubbed", ledger);
+        extra.put("orderEventsScrubbed", orderEvents);
         return finish("customer", facts, 0, by, extra);
     }
 
@@ -145,6 +148,31 @@ public class CryptoShredPropagation {
                 with erasure as (select set_config('oms.legal_erasure', 'on', true) as on_)
                 update event set payload = :p from erasure where tenant_id = :t and event_id = :id and erasure.on_ = 'on'
                 """).param("p", ai.intentoms.platform.jdbc.Jsonb.of(out)).param("t", t).param("id", row.get("event_id")).update();
+        }
+        jdbc.sql("select set_config('oms.legal_erasure', '', true)").query(String.class).single();
+        return n;
+    }
+
+    /**
+     * C4-N3: order-domain ledger events (e.g. {@code order.captured}, {@code order.shipped}, {@code cs.wismo},
+     * {@code cs.complaint}) that still name the erased customer's raw reference in their payload — platform
+     * migration V119 extends the scoped legal-erasure exception from the {@code learning} aggregate to {@code order}
+     * for exactly this. Unlike a learning event, an order-domain event carries no digest chain and no learned value
+     * to drop: the reference becomes the pseudonym and nothing else about the event changes. Returns how many were
+     * rewritten.
+     */
+    int scrubOrderDomainEvents(String t, String ref, String token) {
+        if (token == null) return 0;
+        List<Map<String, Object>> rows = jdbc.sql("""
+            select event_id, payload::text as payload from event where tenant_id = :t and aggregate_type = 'order' and payload::text like :n
+            """).param("t", t).param("n", "%" + Json.write(ref) + "%").query().listOfRows();
+        int n = 0;
+        for (Map<String, Object> row : rows) {
+            Object replaced = replace(Json.readMap((String) row.get("payload")), ref, token);
+            n += jdbc.sql("""
+                with erasure as (select set_config('oms.legal_erasure', 'on', true) as on_)
+                update event set payload = :p from erasure where tenant_id = :t and event_id = :id and erasure.on_ = 'on'
+                """).param("p", ai.intentoms.platform.jdbc.Jsonb.of(replaced)).param("t", t).param("id", row.get("event_id")).update();
         }
         jdbc.sql("select set_config('oms.legal_erasure', '', true)").query(String.class).single();
         return n;
