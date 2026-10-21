@@ -265,6 +265,47 @@ class McpIntegrationTest extends AgentTestBase {
         }
     }
 
+    /** D5-6/MCP-1: learning_status caps proposalsPromotedRecently and recentRollbacks at 10, with no way to tell more
+     * exist. Seed well past the cap for both and assert the tool now names the true total alongside the sample. */
+    @Test
+    void learningStatusNamesTheTrueTotalAlongsideTheCappedPromotedAndRolledBackSamples() {
+        long baselinePromoted = proposalRepository.countByStatus("PROMOTED");
+        long baselineRolledBack = proposalRepository.countByStatus("ROLLED_BACK");
+        int seeded = 12; // comfortably past the cap of 10
+        for (int i = 0; i < seeded; i++) {
+            seedTerminalProposal("d5_6_promoted_" + i, true);
+            seedTerminalProposal("d5_6_rolledback_" + i, false);
+        }
+
+        TestAgent ops = registerAgent(3, List.of("learning_status"), new BigDecimal("0"), 600, List.of(), null);
+        JsonNode status = structured(mcp(ops, toolCall(1, "learning_status", Map.of())));
+
+        long promotedTotal = status.path("proposalsPromotedTotal").asLong();
+        long rollbacksTotal = status.path("rollbacksTotal").asLong();
+        assertThat(promotedTotal).isEqualTo(baselinePromoted + seeded);
+        assertThat(rollbacksTotal).isEqualTo(baselineRolledBack + seeded);
+        assertThat(promotedTotal).as("the cap is live-reachable here, not only on the audited instance").isGreaterThan(10);
+        assertThat(rollbacksTotal).isGreaterThan(10);
+        assertThat(status.path("proposalsPromotedRecently").size()).isLessThanOrEqualTo(10);
+        assertThat(status.path("recentRollbacks").size()).isLessThanOrEqualTo(10);
+    }
+
+    /** Drives a throwaway proposal straight to a terminal status (PROMOTED, or ROLLED_BACK on top of PROMOTED) through
+     * the repository directly, the same shortcut {@link #learningToolsExplainChangesWithHistoryAndShowPausesAndRollbacks}
+     * uses — no real change is applied; only the lifecycle status matters for this tool's counts. */
+    private void seedTerminalProposal(String targetSuffix, boolean promotedOnly) {
+        var cs = new ai.intentoms.learning.model.PolicyChangeset(new ai.intentoms.learning.model.ArtifactRef("config", "mcp1." + targetSuffix + "_" + Ids.shortId()), 0,
+            List.of(new ai.intentoms.learning.model.PolicyChange.ParameterChange("x", 1, 2)), "seed for D5-6", ai.intentoms.learning.model.PolicyChangeset.RiskTier.T1);
+        var now = java.time.Instant.now();
+        var p = new ai.intentoms.learning.model.Proposal(Ids.prefixed("prop"), cs, null, ai.intentoms.learning.model.PolicyChangeset.RiskTier.T1,
+            ai.intentoms.learning.model.ProposalStatus.DRAFT, null, null, "system:test", now, now, null, null, null, null, null, null, null, null);
+        proposalRepository.insert(p);
+        proposalRepository.markEvaluated(p.proposalId(), Map.of("liftEstimate", 0.01), now);
+        proposalRepository.approve(p.proposalId(), "user:admin", now);
+        proposalRepository.promote(p.proposalId(), now);
+        if (!promotedOnly) proposalRepository.rollback(p.proposalId(), "seed rollback for D5-6", now);
+    }
+
     @Autowired ai.intentoms.decision.runtime.DecisionService decisionService;
 
     /** XP-05: decision_why gives an agent the customer-safe view: no location ids, learned rates, scores, costs or backlog. */
