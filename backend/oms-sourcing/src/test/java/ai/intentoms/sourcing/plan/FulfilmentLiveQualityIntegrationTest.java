@@ -315,6 +315,39 @@ class FulfilmentLiveQualityIntegrationTest extends SourcingTestBase {
         }
     }
 
+    /**
+     * D5-3 (CX-02, audit 5): the promise cache key omitted {@code channel}, so two requests identical except channel
+     * (same sku/qty/zip3/shipMethod) within the 30 s TTL shared a cache entry even though the buffer served is
+     * channel-dependent — the second channel's shopper was served the first channel's buffered date.
+     */
+    @Test
+    void requestsThatDifferOnlyByChannelAreNotServedEachOthersCachedBuffer() {
+        stock("TEE-BLK-M", "DC-NJ", 50);
+        facts.number(SubjectType.SEGMENT, ai.intentoms.learning.learner.PromiseBufferLearner.segment("web"), FactKey.PROMISE_BUFFER_DAYS, 1, 100,
+            ai.intentoms.learning.learner.PromiseBufferLearner.KEY, 0.5);
+        facts.number(SubjectType.SEGMENT, ai.intentoms.learning.learner.PromiseBufferLearner.segment("marketplace"), FactKey.PROMISE_BUFFER_DAYS, 4, 100,
+            ai.intentoms.learning.learner.PromiseBufferLearner.KEY, 0.5);
+        config.set(ai.intentoms.learning.learner.PromiseBufferLearner.EXPLORATION_KEY, 0.0); // deterministic: never explore
+        parameters.promote(ai.intentoms.learning.learner.PromiseBufferLearner.PARAMETER, ai.intentoms.learning.learner.PromiseBufferLearner.KEY, 0.0, 10.0, null, null, "test");
+        factCache.invalidateAll();
+        promiseImpl.invalidateAll();
+
+        PromiseRequest web = new PromiseRequest(List.of(new PromiseRequest.PromiseLine("TEE-BLK-M", 1)), "10001", "NY", "web", "ground");
+        PromiseRequest marketplace = new PromiseRequest(List.of(new PromiseRequest.PromiseLine("TEE-BLK-M", 1)), "10001", "NY", "marketplace", "ground");
+
+        Promise webPromise = promise.promise(web);
+        assertThat(webPromise.bufferDays()).isEqualTo(1);
+        assertThat(webPromise.fromCache()).isFalse();
+
+        // Immediately, same sku/qty/zip3/shipMethod, only the channel differs: must be computed fresh with ITS OWN
+        // segment's buffer, not served the web request's cached (and wrong) one.
+        Promise marketplacePromise = promise.promise(marketplace);
+        assertThat(marketplacePromise.fromCache()).as("channel differs: must not be a cache replay of the web request").isFalse();
+        assertThat(marketplacePromise.bufferDays()).isEqualTo(4);
+        assertThat(marketplacePromise.date()).isAfter(webPromise.date());
+        promiseImpl.invalidateAll(); // leave no cache entries behind for a later test's cold-cache assumptions
+    }
+
     /** FS-05: a node whose learned curve says a breach is likely at its backlog loses the load before the breach. */
     @Test
     void sourcingShiftsLoadAwayFromANodeLikelyToBreach() {
