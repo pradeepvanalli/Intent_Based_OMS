@@ -118,6 +118,19 @@ public class ProposalRepository {
             .param("t", t).param("s", status).param("lim", limit).query().listOfRows().stream().map(ProposalRepository::hydrate).toList();
     }
 
+    /**
+     * R4: the same query, paged (offset/limit) with the total count for the status so a caller can tell whether more
+     * rows exist beyond this page. Additive overload — {@link #byStatus(String, int)} is unchanged for its many
+     * existing callers that only ever want the first page.
+     */
+    public ai.intentoms.platform.jdbc.Page<Proposal> byStatus(String status, int offset, int limit) {
+        String t = TenantContext.require();
+        long total = jdbc.sql("select count(*) from proposal where tenant_id = :t and status = :s").param("t", t).param("s", status).query(Long.class).single();
+        List<Proposal> items = jdbc.sql("select " + COLS + " from proposal where tenant_id = :t and status = :s order by created_at desc limit :lim offset :off")
+            .param("t", t).param("s", status).param("lim", limit).param("off", offset).query().listOfRows().stream().map(ProposalRepository::hydrate).toList();
+        return ai.intentoms.platform.jdbc.Page.of(items, total, offset, limit);
+    }
+
     /** Statuses in which a proposal is still in flight; a learner must not stack a second proposal on the same target. */
     public static final List<String> OPEN_STATUSES = List.of("DRAFT", "EVALUATED", "APPROVED", "CANARY");
 
