@@ -6,13 +6,18 @@ import ai.intentoms.finance.model.Money;
 import ai.intentoms.learning.model.Episode;
 import ai.intentoms.learning.service.RewardMaturityService;
 import ai.intentoms.learning.store.EpisodeRepository;
+import ai.intentoms.monitoring.exception.ExceptionQuery;
+import ai.intentoms.monitoring.exception.ExceptionService;
+import ai.intentoms.monitoring.exception.MonitoringEventSubscriber;
 import ai.intentoms.orchestration.OrchestrationTestBase;
 import ai.intentoms.orchestration.fraud.PaymentRiskGate;
 import ai.intentoms.orchestration.integration.LoggingCustomerNotifier;
 import ai.intentoms.order.capture.CaptureRequest;
 import ai.intentoms.order.model.FulfilmentGroup;
 import ai.intentoms.order.model.Order;
+import ai.intentoms.platform.ids.Ids;
 import ai.intentoms.platform.json.Json;
+import ai.intentoms.platform.ledger.Event;
 import ai.intentoms.sourcing.NodeRegistry;
 import ai.intentoms.statemachine.HoldService;
 import ai.intentoms.workflow.model.WorkflowStatus;
@@ -40,6 +45,8 @@ class OrderOutcomeFlowIntegrationTest extends OrchestrationTestBase {
     @Autowired DecisionService decisions;
     @Autowired HoldService holds;
     @Autowired LoggingCustomerNotifier notifier;
+    @Autowired MonitoringEventSubscriber monitoringSubscriber;
+    @Autowired ExceptionService exceptions;
 
     private List<Map<String, Object>> events(String orderId, String type) {
         return jdbc.sql("select payload::text as p from event where tenant_id = :t and aggregate_id = :o and type = :ty order by position").param("t", tenant).param("o", orderId).param("ty", type)
@@ -136,6 +143,33 @@ class OrderOutcomeFlowIntegrationTest extends OrchestrationTestBase {
         List<String> penalised = jdbc.sql("select payload->>'nodeId' from event where tenant_id = :t and type = 'node.penalised' and position > :p")
             .param("t", tenant).param("p", fromPosition).query(String.class).list();
         assertThat(penalised).isNotEmpty().allMatch(first::equals);
+    }
+
+    /**
+     * B4-1: the owning workflow (StandardShipOrderWorkflow#reject) already releases, re-sources, penalises and raises
+     * its own exception (playbook suppressed) for a store reject. The generic order.transitioned line-transition event
+     * it fires along the way must not be independently reclassified and re-acted on a second time by the monitoring
+     * subscriber, which would re-source and penalise the node the order happens to sit on when the event is delivered.
+     */
+    @Test
+    void aStoreRejectLineTransitionAloneDoesNotIndependentlyTriggerASecondReSourceOrPenalty() {
+        Order o = capture(webOrder("OUT-REJ-2", "tok_visa_ok"));
+        driveToStep(TYPE, o.id(), WorkflowStatus.WAITING_SIGNAL, "await_fulfilment");
+        String node = nodeOf(o);
+        String sku = o.lines().get(0).sku();
+        String lineId = o.lines().get(0).lineId();
+        assertThat(exceptions.list(ExceptionQuery.forOrder(o.id())).items()).isEmpty();
+        double before = nodes.penalty(node, sku);
+
+        Event transitioned = new Event(Ids.id(), tenant, "order", o.id(), 1, "order.transitioned",
+            Map.of("entityType", "order_line", "entityId", o.id() + ":" + lineId, "trigger", "event.store_rejected", "from", "released", "to", "awaiting_sourcing"),
+            SYSTEM, null, o.id(), Map.of(), time.now());
+        monitoringSubscriber.on(transitioned);
+        drainOutbox();
+
+        assertThat(exceptions.list(ExceptionQuery.forOrder(o.id())).items()).as("no independent second exception from the bare line transition").isEmpty();
+        assertThat(events(o.id(), "order.resourced")).as("no independent second re-sourcing").isEmpty();
+        assertThat(nodes.penalty(node, sku)).as("the node the order still sits on is not penalised for a reject it never raised here").isEqualTo(before);
     }
 
     private CaptureRequest cod(String ref, String customer) {
