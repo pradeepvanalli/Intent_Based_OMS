@@ -161,6 +161,10 @@ public class WeeklyLearningDigestService {
             if (report.get("holdout") == null) return null;
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("windowDays", report.get("windowDays"));
+            // XP-04: LiftService.lift() computes a rich perfect-order headline (§12 AC-2's north-star figure, the
+            // same shape /learning/lift itself returns) but this copy loop only ever whitelisted per-metric reward-
+            // term fields below it, so the headline was silently dropped before it ever reached the digest.
+            out.put("headline", report.get("headline"));
             List<Map<String, Object>> metrics = new ArrayList<>();
             for (Map<String, Object> m : (List<Map<String, Object>>) report.getOrDefault("metrics", List.of())) {
                 Map<String, Object> row = new LinkedHashMap<>();
