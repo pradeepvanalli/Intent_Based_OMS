@@ -552,8 +552,11 @@ public class DecisionRuntime implements DecisionService {
         if (ev.opts.mode() == Mode.LIVE || ev.opts.mode() == Mode.SHADOW) {
             double raw = ev.confidence;
             DecisionLearningHooks.Calibrated cal = safely(() -> hooks().calibrate(def.name(), def.version(), raw, routingKey(ev.opts)), new DecisionLearningHooks.Calibrated(raw, null));
-            if (cal.source() != null && cal.confidence() != raw) {
-                ev.confidence = Math.max(0.0, Math.min(1.0, cal.confidence()));
+            // DF-02 live source: a source is recorded whenever calibration was consulted, including an explicit
+            // decline (no bin covered this confidence) that leaves confidence unchanged (touched outside my scope:
+            // H-B/DF-02, see hb.md item 3; was `cal.source() != null && cal.confidence() != raw`).
+            if (cal.source() != null) {
+                if (cal.confidence() != raw) ev.confidence = Math.max(0.0, Math.min(1.0, cal.confidence()));
                 ev.details.put("rawConfidence", raw);
                 ev.details.put("calibration", cal.source());
             }
@@ -629,7 +632,7 @@ public class DecisionRuntime implements DecisionService {
         List<String> arms = armsOf(ev.def, ev.input, ev.details, ev.value, chosen);
         Optional<DecisionLearningHooks.Exploration> x = safely(() -> hooks().explore(ev.def.name(), ev.def.tier(), List.copyOf(arms), chosen, routingKey(ev.opts)), Optional.empty());
         if (x.isEmpty() || x.get().applied() == null || x.get().propensity() <= 0 || x.get().propensity() > 1) return;
-        applyExploration(ev, chosen, x.get().applied(), x.get().propensity(), x.get().share(), x.get().seed(), x.get().reason());
+        ev.value = applyExploration(ev.details, ev.reasonCodes, chosen, x.get().applied(), x.get().propensity(), x.get().share(), x.get().seed(), x.get().reason(), ev.value);
     }
 
     /** NF-04: a replay re-applies the arm the recorded decision explored, so it reproduces what was applied. */
@@ -640,10 +643,17 @@ public class DecisionRuntime implements DecisionService {
         double p = x.get("propensity") instanceof Number n ? n.doubleValue() : 1.0;
         double share = x.get("share") instanceof Number n ? n.doubleValue() : 0.0;
         long seed = x.get("seed") instanceof Number n ? n.longValue() : 0L;
-        applyExploration(ev, String.valueOf(ev.value), String.valueOf(x.get("applied")), p, share, seed, null);
+        ev.value = applyExploration(ev.details, ev.reasonCodes, String.valueOf(ev.value), String.valueOf(x.get("applied")), p, share, seed, null, ev.value);
     }
 
-    private void applyExploration(Eval ev, String chosen, String applied, double propensity, double share, long seed, String reason) {
+    /**
+     * Records the draw (true or no-op) in {@code details.exploration} and returns the value to apply: the explored
+     * arm, typed like {@code originalValue}, or {@code originalValue} unchanged when the normal arm was drawn.
+     * Pulled out of {@code ev} (D4-1/B4-2) so a cache hit can draw its own exploration the same way a miss does,
+     * instead of copying the donor record's draw.
+     */
+    private static Object applyExploration(Map<String, Object> details, List<String> reasonCodes, String chosen, String applied, double propensity, double share, long seed,
+                                            String reason, Object originalValue) {
         boolean explored = !applied.equals(chosen);
         Map<String, Object> info = new LinkedHashMap<>();
         info.put("share", share);
@@ -653,11 +663,30 @@ public class DecisionRuntime implements DecisionService {
         info.put("applied", applied);
         info.put("propensity", propensity);
         info.put("seed", seed);
-        ev.details.put("exploration", info);
-        if (!explored) return;
-        ev.details.put("modelAnswer", nullSafe(ev.value));
-        ev.value = typedLike(applied, ev.value);
-        ev.reasonCodes.add("explored");
+        details.put("exploration", info);
+        if (!explored) return originalValue;
+        details.put("modelAnswer", nullSafe(originalValue));
+        if (reasonCodes != null) reasonCodes.add("explored");
+        return typedLike(applied, originalValue);
+    }
+
+    /**
+     * D4-1 = B4-2: a cache hit must draw its own exploration at the currently governed share, exactly like a miss,
+     * instead of copying the donor record's draw and persisting it with the default propensity 1.0 (the audit's
+     * "25 of 28 cache hits logged propensity 1.0 while details still said 0.9"). Only non-exploring misses are ever
+     * cached (see {@code persist}), so the donor's {@code value} is always its normal answer. Returns the value to
+     * apply (the explored arm, or the donor's unchanged value) and leaves {@code details.exploration} honest either
+     * way: a fresh draw when this cache hit is for an exploring T0 decision, or no stale leftover otherwise.
+     */
+    private Object exploreCacheHit(Eval ev, DecisionResult c, Map<String, Object> details, List<String> reasonCodes) {
+        details.remove("exploration");
+        details.remove("modelAnswer");
+        if (!(ev.def.tier() == Tier.T0 && DecisionResult.ACT.equals(c.action()) && c.layer() == Layer.L1_SYSTEM_ONE)) return c.value();
+        String chosen = String.valueOf(c.value());
+        List<String> arms = armsOf(ev.def, ev.input, details, c.value(), chosen);
+        Optional<DecisionLearningHooks.Exploration> x = safely(() -> hooks().explore(ev.def.name(), ev.def.tier(), List.copyOf(arms), chosen, routingKey(ev.opts)), Optional.empty());
+        if (x.isEmpty() || x.get().applied() == null || x.get().propensity() <= 0 || x.get().propensity() > 1) return c.value();
+        return applyExploration(details, reasonCodes, chosen, x.get().applied(), x.get().propensity(), x.get().share(), x.get().seed(), x.get().reason(), c.value());
     }
 
     /** An arm (always a string) in the type of the value it replaces: a score level stays a number, a yes/no a boolean. */
@@ -849,15 +878,20 @@ public class DecisionRuntime implements DecisionService {
         long latency = ev.latencyMs();
         Map<String, Object> details = new LinkedHashMap<>(c.details());
         details.putAll(ev.details);
+        // D4-1 = B4-2: draw this hit's own exploration (or honestly record that none applies) before anything else
+        // reads `value`/`details.exploration`/propensity off it.
+        List<String> reasonCodes = new ArrayList<>(c.reasonCodes() == null ? List.of() : c.reasonCodes());
+        Object value = exploreCacheHit(ev, c, details, reasonCodes);
         details.put("cached", true);
         details.put("cachedFrom", c.recordId());
         details.put("mode", ev.opts.mode().name());
-        String chosenArm = appliedArm(ev.def, c.value(), c.action(), details);
-        List<String> arms = armsOf(ev.def, ev.input, details, c.value(), chosenArm);
+        String chosenArm = appliedArm(ev.def, value, c.action(), details);
+        List<String> arms = armsOf(ev.def, ev.input, details, value, chosenArm);
+        double propensity = details.get("exploration") instanceof Map<?, ?> x && x.get("propensity") instanceof Number p ? p.doubleValue() : 1.0;
         DecisionRecord record = new DecisionRecord(ev.recordId, ev.def.name(), ev.def.version(), ev.opts.mode(), ev.opts.subjectType(), ev.opts.subjectId(), ev.opts.correlationId(),
-            c.layer(), c.band(), c.action(), c.value(), c.answers(), c.confidence(), c.provider(), c.modelVersion(), ev.inputHash, Map.of(), ev.input, c.rulesFired(), c.reasonCodes(),
+            c.layer(), c.band(), c.action(), value, c.answers(), c.confidence(), c.provider(), c.modelVersion(), ev.inputHash, Map.of(), ev.input, c.rulesFired(), reasonCodes,
             latency, 0.0, 0, c.requiresHuman(), null, ev.opts.actor().ref(), details, null, null, null, null, Map.of(), ev.startedAt,
-            contextFeatures(ev), arms, chosenArm, 1.0, ev.def.version());
+            contextFeatures(ev), arms, chosenArm, propensity, ev.def.version());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("decision", ev.def.name());
         payload.put("version", ev.def.version());
@@ -865,7 +899,7 @@ public class DecisionRuntime implements DecisionService {
         payload.put("layer", c.layer().name());
         payload.put("band", c.band().name());
         payload.put("action", c.action());
-        payload.put("value", nullSafe(c.value()));
+        payload.put("value", nullSafe(value));
         payload.put("confidence", c.confidence());
         payload.put("requiresHuman", c.requiresHuman());
         payload.put("latencyMs", latency);
@@ -879,8 +913,8 @@ public class DecisionRuntime implements DecisionService {
             events.append("decision", ev.recordId, 0, List.of(new NewEvent("decision.evaluated", payload, ev.opts.actor(), null, ev.opts.correlationId(), meta)));
         });
         metrics.count("oms.decision.evaluated", "decision", ev.def.name(), "layer", c.layer().name(), "band", c.band().name(), "mode", ev.opts.mode().name());
-        return new DecisionResult(ev.recordId, c.decision(), c.version(), c.layer(), c.band(), c.value(), c.answers(), c.confidence(), c.action(), c.requiresHuman(),
-            null, c.rulesFired(), c.reasonCodes(), latency, 0.0, c.provider(), c.modelVersion(), details);
+        return new DecisionResult(ev.recordId, c.decision(), c.version(), c.layer(), c.band(), value, c.answers(), c.confidence(), c.action(), c.requiresHuman(),
+            null, c.rulesFired(), reasonCodes, latency, 0.0, c.provider(), c.modelVersion(), details);
     }
 
     private static Object mainValue(Answer main, QuestionDef q) {
