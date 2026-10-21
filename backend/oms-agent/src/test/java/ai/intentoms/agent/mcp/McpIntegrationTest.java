@@ -306,6 +306,26 @@ class McpIntegrationTest extends AgentTestBase {
         if (!promotedOnly) proposalRepository.rollback(p.proposalId(), "seed rollback for D5-6", now);
     }
 
+    /** MCP-3 (a): the unknown-tool JSON-RPC error used to list every registered tool name (13, confirmed via grep for
+     * "implements McpTool") regardless of the caller's own allowed actions — leaking names a restricted caller cannot
+     * invoke. tools/list (McpToolExecutor.tools(ToolContext)) already filters correctly; the error must use the same
+     * filter. An agent's principal permissions come straight from its own allowedActions (AgentRegistry.toPrincipal),
+     * so a 3-tool agent is both the agent-limits filter and the permission filter in one. */
+    @Test
+    void theUnknownToolErrorListsOnlyTheCallersOwnAllowedToolsNotTheWholeRegistry() {
+        List<String> allowed = List.of("learning_status", "explain_policy_change", "decision_why");
+        TestAgent restricted = registerAgent(3, allowed, new BigDecimal("0"), 600, List.of(), null);
+
+        JsonNode error = mcp(restricted, toolCall(1, "definitely_not_a_real_tool", Map.of())).path("error");
+        assertThat(error.path("code").asInt()).isEqualTo(-32602);
+        List<String> visible = new java.util.ArrayList<>();
+        error.path("data").path("tools").forEach(n -> visible.add(n.asText()));
+
+        assertThat(visible).as("only this caller's own allowed tools, not the full 13-tool registry")
+            .containsExactlyInAnyOrderElementsOf(allowed);
+        assertThat(visible).doesNotContain("order_create", "order_cancel", "task_complete", "task_list");
+    }
+
     @Autowired ai.intentoms.decision.runtime.DecisionService decisionService;
 
     /** XP-05: decision_why gives an agent the customer-safe view: no location ids, learned rates, scores, costs or backlog. */
