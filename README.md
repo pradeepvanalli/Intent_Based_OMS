@@ -25,34 +25,38 @@ show the customer why.
 
 ## Try it in 3 minutes
 
-Three paths. All of them end at http://localhost:8080 with four seeded tenants (`demo`, `retail`, `electronics`,
+All paths end at http://localhost:8080 with four seeded tenants (`demo`, `retail`, `electronics`,
 `apparel`) and six users each (`admin`/`admin`, `ops`/`ops`, `cs`/`cs`, `risk`/`risk`, `finance`/`finance`,
 `strategy`/`strategy`). Works without any AI key on rules and defaults; add `OPENROUTER_API_KEY` to switch on Jev and
 the LLM.
 
-**1. Docker, nothing else** (published image; no JDK, Node or checkout)
+**1. Docker, nothing else** (no JDK or Node needed; the image builds inside Docker)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/pradeepvanalli/Intent_Based_OMS/main/docker-compose.quickstart.yml -o docker-compose.yml && docker compose up -d
+git clone https://github.com/pradeepvanalli/Intent_Based_OMS.git && cd Intent_Based_OMS
+make try                  # builds the image (UI + backend, ~5-10 min the first time), starts Postgres, Redis and the service, prints logins, opens the browser
 ```
 
-Open http://localhost:8080, tenant `demo`, user `admin`, password `admin`.
+Open http://localhost:8080, tenant `demo`, user `admin`, password `admin`. `scripts/try.sh --down` stops, `--reset`
+starts over, `scripts/doctor.sh` checks your machine. Windows: `.\scripts\try.ps1`.
 
 **2. In the browser** with [GitHub Codespaces](https://codespaces.new/pradeepvanalli/Intent_Based_OMS?quickstart=1)
 
 The badge above builds and starts everything in a 2-core / 8 GB codespace. Click the **Intent OMS** port when it
 appears.
 
-**3. From source**
+**3. The published image** (no checkout at all — once a release is cut; see the Release badge above for the latest)
 
 ```bash
-git clone https://github.com/pradeepvanalli/Intent_Based_OMS.git && cd Intent_Based_OMS
-make try                  # Docker only: builds the image (UI + backend), starts Postgres, Redis and the service, prints logins, opens the browser
-scripts/bootstrap.sh      # or: local JDK 21 + Maven + Node 22 for development, service on :8080
+curl -fsSL https://raw.githubusercontent.com/pradeepvanalli/Intent_Based_OMS/main/docker-compose.quickstart.yml -o docker-compose.yml && docker compose up -d
 ```
 
-`scripts/try.sh --down` stops, `--reset` starts over, `--pull` uses the published image instead of building, and
-`scripts/doctor.sh` checks your machine. Windows: `.\scripts\try.ps1`. Everything else about running it: `docs/QUICKSTART.md`.
+Same logins as above. From a checkout, `scripts/try.sh --pull` does the same and falls back to building locally if no
+image is published yet for your platform.
+
+**4. Local development:** `scripts/bootstrap.sh` — local JDK 21 + Maven + Node 22, service on :8080, no Docker image.
+
+Everything else about running it: `docs/QUICKSTART.md`.
 
 Then open `/playground`, place an order and watch it decide. `scripts/demo.sh` drives one order end to end,
 `scripts/usecases/run-all.sh` runs the seven scenarios, `scripts/new-tenant.sh acme "Acme Outdoors"` creates your
